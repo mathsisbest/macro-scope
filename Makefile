@@ -8,6 +8,11 @@ ifneq ($(wildcard $(VENV)/bin/python),)
   BIN := $(VENV)/bin/
 endif
 
+# The local gate runs strictly against a local DuckDB file — never MotherDuck — even if the
+# developer's .env enables MotherDuck. Empty MotherDuck vars force use_motherduck = False.
+CI_DB := $(CURDIR)/data/ci.duckdb
+CI_ENV := MMI_MOTHERDUCK_DATABASE= MOTHERDUCK_TOKEN= MMI_DUCKDB_PATH=$(CI_DB)
+
 .PHONY: help setup install install-dev seed ingest dbt-build ml ai dashboard demo test lint format typecheck ci all clean
 
 help: ## Show this help
@@ -17,8 +22,8 @@ help: ## Show this help
 install: ## Install core package (editable)
 	$(PY) -m pip install -e .
 
-install-dev: ## Install with ml + dashboard + dev extras
-	$(PY) -m pip install -e ".[ml,dashboard,dev]"
+install-dev: ## Install with ml + dashboard + transform(dbt) + dev extras
+	$(PY) -m pip install -e ".[ml,dashboard,transform,dev]"
 
 seed: ## Create a small synthetic sample dataset in DuckDB (no network)
 	$(PY) -m mmi.cli seed
@@ -26,8 +31,8 @@ seed: ## Create a small synthetic sample dataset in DuckDB (no network)
 ingest: ## Pull live data from free APIs into DuckDB raw schema
 	$(PY) -m mmi.cli ingest
 
-dbt-build: ## Run dbt build (staging -> marts) against the DuckDB file
-	cd transform && dbt build --profiles-dir .
+dbt-build: ## Run dbt build (staging -> marts) against the local DuckDB file
+	$(BIN)dbt build --project-dir transform --profiles-dir transform --target dev
 
 ml: ## Train + score forecast and regime models
 	$(PY) -m mmi.cli ml
@@ -54,7 +59,9 @@ format: ## Auto-format with ruff
 typecheck: ## Type-check with mypy
 	$(BIN)mypy
 
-setup: ## One-time local setup: create .venv (needs `brew install python@3.11`) + install all extras
+setup: ## One-time local setup: create .venv + install all extras (needs Homebrew python@3.11)
+	@command -v brew >/dev/null 2>&1 || { echo "Homebrew not found — install from https://brew.sh, then: brew install python@3.11"; exit 1; }
+	@brew --prefix python@3.11 >/dev/null 2>&1 || { echo "python@3.11 not installed — run: brew install python@3.11"; exit 1; }
 	"$$(brew --prefix python@3.11)/bin/python3.11" -m venv .venv
 	$(VENV)/bin/python -m pip install --upgrade pip
 	$(VENV)/bin/pip install -e ".[all]"
@@ -64,9 +71,10 @@ ci: ## Full local gate — run before every PR; the reviewer runs this too (no G
 	$(BIN)ruff check .
 	$(BIN)ruff format --check .
 	$(BIN)mypy
-	MMI_DUCKDB_PATH=$(CURDIR)/data/ci.duckdb $(PY) -m mmi.cli seed
-	MMI_DUCKDB_PATH=$(CURDIR)/data/ci.duckdb $(BIN)dbt build --project-dir transform --profiles-dir transform --target dev
-	MMI_DUCKDB_PATH=$(CURDIR)/data/ci.duckdb PYTHONPATH=. $(PY) -c "from dashboard import data; assert not data.assets().empty, 'dashboard cannot read marts'; print('dashboard read-path OK')"
+	$(CI_ENV) $(PY) -m mmi.cli seed
+	$(CI_ENV) $(PY) -c "import duckdb, os; c = duckdb.connect(os.environ['MMI_DUCKDB_PATH']); c.execute('drop schema if exists marts cascade'); c.execute('drop schema if exists staging cascade'); c.close()"
+	$(CI_ENV) $(BIN)dbt build --project-dir transform --profiles-dir transform --target dev
+	$(CI_ENV) PYTHONPATH=. $(PY) scripts/dashboard_smoke.py
 	$(BIN)pytest
 	@echo "make ci: PASS"
 

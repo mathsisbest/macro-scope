@@ -10,8 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # CI is fully local + token-free: a local DuckDB file with deterministic seeded data.
-      # MotherDuck is only used on the scheduled/prod path, never in CI.
+      # MotherDuck vars are forced empty so use_motherduck stays False even if they leak in.
       MMI_DUCKDB_PATH: ${{ github.workspace }}/data/ci.duckdb
+      MMI_MOTHERDUCK_DATABASE: ""
+      MOTHERDUCK_TOKEN: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,9 +30,11 @@ jobs:
         run: mypy
       - name: Seed deterministic local data
         run: mmi seed
+      - name: Reset marts/staging so dbt is the sole producer
+        run: python -c "import duckdb, os; c = duckdb.connect(os.environ['MMI_DUCKDB_PATH']); c.execute('drop schema if exists marts cascade'); c.execute('drop schema if exists staging cascade'); c.close()"
       - name: dbt build + test (canonical transform, local DuckDB)
         run: dbt build --project-dir transform --profiles-dir transform --target dev
-      - name: Dashboard read-path smoke (guards BI <-> marts drift)
-        run: PYTHONPATH=. python -c "from dashboard import data; df = data.assets(); assert not df.empty, 'dashboard cannot read marts'; print('dashboard OK:', len(df), 'assets')"
+      - name: Dashboard read-path smoke (core marts accessors)
+        run: PYTHONPATH=. python scripts/dashboard_smoke.py
       - name: Tests
         run: pytest
