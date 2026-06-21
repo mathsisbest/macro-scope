@@ -28,6 +28,7 @@ dependencies = [
 ml = ["scikit-learn>=1.4", "numpy>=1.26"]
 dashboard = ["streamlit>=1.34", "plotly>=5.20"]
 transform = ["dbt-core>=1.7", "dbt-duckdb>=1.7"]
+portfolio = ["scipy>=1.11"]   # explicit: the risk-parity solver (was only transitive via sklearn)
 dev = [
     "ruff>=0.4",
     "mypy>=1.10",
@@ -38,7 +39,7 @@ dev = [
     "respx>=0.21",            # mock httpx in tests
 ]
 all = [
-    "markets-macro-intelligence[ml,dashboard,transform,dev]",
+    "markets-macro-intelligence[ml,dashboard,transform,portfolio,dev]",
 ]
 
 [project.scripts]
