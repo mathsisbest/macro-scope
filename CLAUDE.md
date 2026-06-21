@@ -60,8 +60,9 @@ and serves it through a Streamlit dashboard. It's an end-to-end data platform
 
 ## How to run
 ```bash
-make install-dev   # editable install + ml, dashboard, dev extras
-make demo          # seed sample data (+ build marts) and launch the dashboard
+make setup         # one-time: create the .venv + install everything (needs `brew install python@3.11`)
+make ci            # the local gate: lint, types, dbt build+tests, dashboard smoke, pytest
+make demo          # seed sample data (+ build dbt marts) and launch the dashboard
 # live data path (needs free keys in .env — see .env.example):
 make ingest && make dbt-build && make ml && make ai && make dashboard
 ```
@@ -82,7 +83,7 @@ make ingest && make dbt-build && make ml && make ai && make dashboard
 
 ## Repo map (see PLAN.md §6 for full tree)
 `src/mmi/{ingestion,ml,ai,utils}` · `transform/` (dbt) · `dashboard/` (Streamlit) ·
-`config/` · `tests/` · `.github/workflows/` (ci.yml + ingest.yml cron) · `docs/` (+ ADRs).
+`config/` · `tests/` · `.github/workflows/` (ci.yml — manual; ingest.yml — scheduled refresh, disabled by default) · `docs/` (+ ADRs).
 
 ## Immediate next steps / roadmap
 1. ✅ Pushed + reviewed by Codex (issue #1). **P0 hygiene** (this branch): honest token-free CI
