@@ -85,8 +85,9 @@ professional, free-tier-appropriate pattern is **scheduled micro-batch ingestion
 incremental, idempotent loads — which is how most real analytics platforms actually run:
 
 - **Scheduler:** GitHub Actions `schedule:` cron. Private repos get **2,000 free Linux
-  minutes/month** — a 60-second job every 30 min is ~1,440 min/month, comfortably inside the
-  quota. (We'll run crypto every 30 min during market-relevant hours, macro daily.)
+  minutes/month** — the shipped default is a ~60-second job every 6h (~120 min/month), well
+  inside the quota. (A 30-min crypto refresh is an aspirational upper bound, not the shipped
+  cadence.)
 - **Idempotency:** each extractor upserts on a natural key (`symbol + timestamp`) so re-runs
   never duplicate. *(Implemented.)* True per-source incremental watermarks are **roadmap** —
   today's loads are a full scheduled refresh (see the source-specific policy in §7.1).
@@ -305,7 +306,7 @@ markets-macro-intelligence/
 
 ## 9. Deployment (all free)
 
-1. **Code & CI:** private GitHub repo; Actions run CI on PRs and the ingest cron on schedule.
+1. **Code & CI:** private GitHub repo. The gate is local `make ci` — GitHub Actions CI is `workflow_dispatch`-only to preserve the free tier, and the ingest workflow runs on demand (its 6-hourly `schedule:` is commented out until `MOTHERDUCK_TOKEN` is configured).
 2. **Data:** the scheduled cron writes to **MotherDuck** (free tier) and the dashboard reads from
    it — the `.duckdb` binary is **not** committed to git. Local dev/CI use a local DuckDB file.
 3. **Dashboard:** **Streamlit Community Cloud**, connected to the private repo. It sets a
