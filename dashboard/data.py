@@ -1,0 +1,99 @@
+"""Cached, read-only access to the marts for the dashboard."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import duckdb
+import pandas as pd
+import streamlit as st
+
+from mmi.settings import settings
+
+
+def db_exists() -> bool:
+    return Path(settings.duckdb_path).exists()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def query(sql: str, params: tuple | None = None) -> pd.DataFrame:
+    """Run a read-only query; return an empty frame if the DB/table is missing."""
+    if not db_exists():
+        return pd.DataFrame()
+    con = duckdb.connect(str(settings.duckdb_path), read_only=True)
+    try:
+        return con.execute(sql, list(params) if params else []).df()
+    except Exception:
+        return pd.DataFrame()
+    finally:
+        con.close()
+
+
+def assets() -> pd.DataFrame:
+    return query("select symbol, asset_class from marts.dim_asset order by asset_class, symbol")
+
+
+def asset_daily(symbol: str) -> pd.DataFrame:
+    return query(
+        "select date, close, daily_return, vol_20d, ma_50 from marts.fct_asset_daily "
+        "where symbol = ? order by date",
+        (symbol,),
+    )
+
+
+def crypto_intraday(symbol: str) -> pd.DataFrame:
+    return query(
+        "select ts, price_usd, pct_change from marts.fct_crypto_intraday "
+        "where symbol = ? order by ts",
+        (symbol,),
+    )
+
+
+def crypto_symbols() -> list[str]:
+    df = query("select distinct symbol from marts.fct_crypto_intraday order by symbol")
+    return df["symbol"].tolist() if not df.empty else []
+
+
+def macro_ids() -> list[str]:
+    df = query("select distinct series_id from marts.fct_macro_indicator order by series_id")
+    return df["series_id"].tolist() if not df.empty else []
+
+
+def macro(series_id: str) -> pd.DataFrame:
+    return query(
+        "select date, value, change from marts.fct_macro_indicator "
+        "where series_id = ? order by date",
+        (series_id,),
+    )
+
+
+def market_macro() -> pd.DataFrame:
+    return query("select * from marts.fct_market_macro order by date")
+
+
+def model_metrics() -> pd.DataFrame:
+    return query("select model, symbol, metric, value, trained_at from marts.model_metrics")
+
+
+def ml_forecast() -> pd.DataFrame:
+    return query("select * from marts.ml_forecast")
+
+
+def regimes(symbol: str) -> pd.DataFrame:
+    return query(
+        "select date, vol_20d, regime from marts.fct_regime where symbol = ? order by date",
+        (symbol,),
+    )
+
+
+def latest_brief() -> pd.DataFrame:
+    return query(
+        "select created_at, engine, brief from marts.market_brief order by created_at desc limit 1"
+    )
+
+
+def pipeline_runs() -> pd.DataFrame:
+    return query(
+        "select source, rows, status, finished_at from raw.pipeline_runs "
+        "order by started_at desc limit 12"
+    )

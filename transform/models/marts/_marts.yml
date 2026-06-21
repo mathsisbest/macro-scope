@@ -1,0 +1,44 @@
+version: 2
+
+models:
+  - name: dim_asset
+    description: "One row per tracked asset (equities, FX, crypto)."
+    columns:
+      - name: symbol
+        tests: [not_null, unique]
+      - name: asset_class
+        tests:
+          - not_null
+          - accepted_values: { values: ["equities", "fx", "crypto"] }
+
+  - name: fct_asset_daily
+    description: "Daily OHLCV + simple return, rolling 20d vol and 50d MA per asset."
+    columns:
+      - name: symbol
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+      - name: daily_return
+        description: "Simple daily return; sanity-bounded by a singular test."
+
+  - name: fct_crypto_intraday
+    description: "Crypto snapshots with snapshot-over-snapshot pct change."
+    columns:
+      - name: symbol
+        tests: [not_null]
+      - name: ts
+        tests: [not_null]
+
+  - name: fct_macro_indicator
+    description: "Macro series values with period-over-period change."
+    columns:
+      - name: series_id
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+
+  - name: fct_market_macro
+    description: "SPY joined (ASOF) to 10Y/2Y yields and the 10Y-2Y curve."
+    columns:
+      - name: date
+        tests: [not_null, unique]

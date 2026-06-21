@@ -1,0 +1,153 @@
+"""Markets & Macro Intelligence — Streamlit dashboard (BI layer).
+
+Run: `streamlit run dashboard/app.py` (or `make dashboard`).
+Reads the dbt marts from DuckDB; everything visual is defined in code.
+"""
+
+from __future__ import annotations
+
+import duckdb
+import streamlit as st
+from dashboard import data
+from dashboard.components import charts
+from dashboard.components.kpi import metric_row
+from dashboard.theme import inject_css
+
+from mmi.settings import settings
+
+st.set_page_config(page_title="Markets & Macro Intelligence", page_icon="📈", layout="wide")
+inject_css()
+
+st.title("📈 Markets & Macro Intelligence")
+st.caption("Live markets + macro · ingest → dbt → ML → GenAI → BI · all on free tiers")
+
+if not data.db_exists():
+    st.warning(
+        "No database yet. Run `make demo` (or `mmi seed`) to populate sample data, then reload."
+    )
+    st.stop()
+
+
+# --------------------------------------------------------------------------- sidebar
+with st.sidebar:
+    st.subheader("⚙️ Pipeline health")
+    runs = data.pipeline_runs()
+    if runs.empty:
+        st.caption("Sample data seeded (no live ingestion runs yet).")
+    else:
+        st.dataframe(runs, hide_index=True, use_container_width=True)
+    st.divider()
+    st.caption(f"DuckDB · `{settings.duckdb_path.name}`")
+    st.caption(f"LLM provider · `{settings.llm_provider}`")
+
+
+# --------------------------------------------------------------------------- KPI row
+kpis: list[dict] = []
+csyms = data.crypto_symbols()
+if csyms:
+    cdf = data.crypto_intraday(csyms[0])
+    if len(cdf) > 25:
+        last, prev = cdf["price_usd"].iloc[-1], cdf["price_usd"].iloc[-25]
+        kpis.append(
+            {
+                "label": f"{csyms[0].title()} (USD)",
+                "value": f"${last:,.0f}",
+                "delta": f"{(last / prev - 1) * 100:+.1f}% 24h",
+            }
+        )
+
+spy = data.asset_daily("SPY")
+if not spy.empty:
+    r = spy["daily_return"].iloc[-1]
+    kpis.append(
+        {
+            "label": "SPY close",
+            "value": f"${spy['close'].iloc[-1]:,.2f}",
+            "delta": f"{(r or 0) * 100:+.2f}%",
+        }
+    )
+
+reg = data.regimes("SPY")
+if not reg.empty:
+    kpis.append({"label": "SPY vol regime", "value": str(reg["regime"].iloc[-1])})
+
+mm = data.market_macro()
+if not mm.empty and mm["yield_curve_10y_2y"].notna().any():
+    spread = mm["yield_curve_10y_2y"].dropna().iloc[-1]
+    kpis.append({"label": "10Y−2Y spread", "value": f"{spread:+.2f} pp"})
+
+if kpis:
+    metric_row(kpis)
+
+st.divider()
+
+# --------------------------------------------------------------------------- tabs
+tab_mkt, tab_macro, tab_ml, tab_ai = st.tabs(["Markets", "Macro", "ML forecast", "AI brief"])
+
+with tab_mkt:
+    adf = data.assets()
+    non_crypto = adf[adf["asset_class"] != "crypto"]["symbol"].tolist() if not adf.empty else []
+    col1, col2 = st.columns(2)
+    with col1:
+        if non_crypto:
+            sym = st.selectbox(
+                "Asset", non_crypto, index=non_crypto.index("SPY") if "SPY" in non_crypto else 0
+            )
+            d = data.asset_daily(sym)
+            if not d.empty:
+                st.plotly_chart(charts.price_chart(d, sym), use_container_width=True)
+                st.plotly_chart(charts.vol_chart(d, sym), use_container_width=True)
+    with col2:
+        if csyms:
+            c = st.selectbox("Crypto", csyms)
+            cd = data.crypto_intraday(c)
+            if not cd.empty:
+                st.plotly_chart(charts.crypto_chart(cd, c), use_container_width=True)
+
+with tab_macro:
+    ids = data.macro_ids()
+    if ids:
+        mid = st.selectbox("Series", ids)
+        md = data.macro(mid)
+        if not md.empty:
+            st.plotly_chart(charts.macro_chart(md, mid), use_container_width=True)
+    if not mm.empty:
+        st.plotly_chart(charts.yield_curve_chart(mm), use_container_width=True)
+
+with tab_ml:
+    metrics = data.model_metrics()
+    fc = data.ml_forecast()
+    if metrics.empty:
+        st.info("No ML results yet. Run `make ml` (or `mmi ml`).")
+    else:
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            st.plotly_chart(charts.forecast_bar(metrics, "SPY"), use_container_width=True)
+        with c2:
+            if not fc.empty:
+                pr = fc["predicted_next_return"].iloc[0]
+                st.metric("SPY predicted next-day return", f"{pr * 100:+.2f}%")
+            wide = metrics[metrics["symbol"] == "SPY"].pivot_table(
+                index="symbol", columns="metric", values="value"
+            )
+            st.dataframe(wide, use_container_width=True)
+        if not reg.empty:
+            st.plotly_chart(charts.regime_chart(reg, "SPY"), use_container_width=True)
+
+with tab_ai:
+    brief = data.latest_brief()
+    if brief.empty:
+        st.info("No brief yet. Run `make ai` (or `mmi ai`). Works offline without an LLM key.")
+    else:
+        st.markdown(brief["brief"].iloc[0])
+        st.caption(f"Generated by `{brief['engine'].iloc[0]}` · {brief['created_at'].iloc[0]}")
+    if st.button("🔄 Regenerate brief"):
+        from mmi.ai.narrative import generate_brief
+
+        con = duckdb.connect(str(settings.duckdb_path))
+        try:
+            generate_brief(con)
+        finally:
+            con.close()
+        st.cache_data.clear()
+        st.rerun()

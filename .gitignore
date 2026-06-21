@@ -1,0 +1,39 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+
+# --- Tooling caches ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage*
+htmlcov/
+
+# --- Data (keep samples + tracked parquet; ignore scratch & local DB) ---
+data/*.duckdb
+data/*.duckdb.wal
+data/scratch/
+data/briefs/*.md
+!data/samples/
+!data/samples/**
+
+# --- dbt ---
+transform/target/
+transform/dbt_packages/
+transform/logs/
+
+# --- Streamlit ---
+.streamlit/secrets.toml
+
+# --- OS / editor ---
+.DS_Store
+.idea/
+.vscode/
+*.swp

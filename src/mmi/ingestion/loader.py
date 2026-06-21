@@ -1,0 +1,101 @@
+"""Idempotent loading into DuckDB + a pipeline audit log.
+
+Design goals (data-engineering best practice):
+- **Idempotent**: re-running an extractor never duplicates rows (delete-then-insert on keys).
+- **Observable**: every run is recorded in ``raw.pipeline_runs`` (rows, duration, status).
+- **Incremental-ready**: ``watermark()`` lets extractors fetch only new data.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+
+import pandas as pd
+
+from mmi.utils.db import init_schemas
+from mmi.utils.logging import get_logger
+
+log = get_logger(__name__)
+
+_AUDIT_TABLE = "raw.pipeline_runs"
+
+
+class DuckDBLoader:
+    """Loads validated dataframes into the ``raw`` schema, idempotently."""
+
+    def __init__(self, con) -> None:
+        self.con = con
+        init_schemas(con)
+        self._ensure_audit_table()
+
+    # --- audit ---------------------------------------------------------------
+    def _ensure_audit_table(self) -> None:
+        self.con.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {_AUDIT_TABLE} (
+                run_id      VARCHAR,
+                source      VARCHAR,
+                rows        BIGINT,
+                started_at  TIMESTAMP,
+                finished_at TIMESTAMP,
+                status      VARCHAR,
+                message     VARCHAR
+            );
+            """
+        )
+
+    def start_run(self, source: str) -> str:
+        run_id = uuid.uuid4().hex[:12]
+        self.con.execute(
+            f"INSERT INTO {_AUDIT_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [run_id, source, 0, datetime.now(timezone.utc), None, "running", ""],
+        )
+        return run_id
+
+    def finish_run(self, run_id: str, rows: int, status: str, message: str = "") -> None:
+        self.con.execute(
+            f"""UPDATE {_AUDIT_TABLE}
+                SET rows = ?, finished_at = ?, status = ?, message = ?
+                WHERE run_id = ?""",
+            [rows, datetime.now(timezone.utc), status, message[:500], run_id],
+        )
+
+    # --- loading -------------------------------------------------------------
+    def upsert(self, table: str, df: pd.DataFrame, keys: list[str]) -> int:
+        """Delete-then-insert ``df`` into ``table`` keyed on ``keys``. Returns row count."""
+        if df.empty:
+            log.warning("upsert: empty dataframe for %s, skipping", table)
+            return 0
+
+        df = df.copy()
+        if "loaded_at" not in df.columns:
+            df["loaded_at"] = datetime.now(timezone.utc)
+
+        self.con.register("_incoming", df)
+        # Create the target table from the incoming schema if it does not exist.
+        self.con.execute(f"CREATE TABLE IF NOT EXISTS {table} AS SELECT * FROM _incoming LIMIT 0")
+
+        # Idempotent: remove rows whose keys appear in the incoming batch, then insert.
+        on = " AND ".join(f"t.{k} = s.{k}" for k in keys)
+        self.con.execute(
+            f"DELETE FROM {table} t WHERE EXISTS (SELECT 1 FROM _incoming s WHERE {on})"
+        )
+        self.con.execute(f"INSERT INTO {table} SELECT * FROM _incoming")
+        self.con.unregister("_incoming")
+
+        n = len(df)
+        log.info("upsert: %s rows -> %s", n, table)
+        return n
+
+    def watermark(self, table: str, ts_col: str) -> str | None:
+        """Return the max value of ``ts_col`` in ``table`` (for incremental pulls)."""
+        exists = self.con.execute(
+            "SELECT count(*) FROM information_schema.tables "
+            "WHERE table_schema || '.' || table_name = ?",
+            [table],
+        ).fetchone()[0]
+        if not exists:
+            return None
+        val = self.con.execute(f"SELECT max({ts_col}) FROM {table}").fetchone()[0]
+        return str(val) if val is not None else None

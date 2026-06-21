@@ -1,0 +1,11 @@
+# dbt connects to the same single DuckDB file the Python layer writes to.
+# Default path (../data/mmi.duckdb) resolves to <repo>/data/mmi.duckdb when run from transform/.
+# Override with an ABSOLUTE MMI_DUCKDB_PATH in CI.
+mmi:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('MMI_DUCKDB_PATH', '../data/mmi.duckdb') }}"
+      schema: main
+      threads: 4
