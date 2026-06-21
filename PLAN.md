@@ -347,6 +347,13 @@ markets-macro-intelligence/
 | **4 — GenAI** | Provider-agnostic narrative layer | Daily brief auto-generated & shown |
 | **5 — Polish** | README screenshots, ADRs, coverage badge, deploy to Streamlit Cloud | Public-quality private repo + live URL |
 | **6 — Optional** | Sports-odds module / real Kafka demo | See §13 |
+| **7 — Portfolio backtesting (capstone)** | Look-ahead-free allocation backtest (equal-wt / inverse-vol / true risk-parity; ML max-Sharpe frontier as a *measured* experiment), tested portfolio marts, bootstrap CIs, regime-conditional analysis, AI commentary | See **issue #7** + its critical review; built in sub-phases 0–D, **after** P1–P3 |
+
+> **Capstone (issue #7) — phased + dependency-noted.** The portfolio layer is the capstone
+> capstone but sits on top of P1–P3, so it's sequenced after them and built in slices: **0** data
+> foundation (Yahoo *adjusted-close* ingestion — in progress), **A** honest core backtest, **B**
+> statistical rigor + attribution, **C** ML frontier as a pre-registered experiment, **D** BTC window
+> + GenAI numeric-grounding. The full critical review (incl. verified free-tier data limits) is on issue #7.
 
 ---
 
