@@ -1,0 +1,28 @@
+# Declarative list of what the platform tracks.
+# Edit this file to change coverage — no code changes needed.
+
+crypto:            # CoinGecko ids
+  - bitcoin
+  - ethereum
+  - solana
+
+equities:          # Stooq / yfinance symbols (ETFs + indices work too)
+  - SPY            # S&P 500 ETF
+  - QQQ            # Nasdaq 100 ETF
+  - AAPL
+  - MSFT
+
+fx:                # Stooq FX pairs
+  - EURUSD
+  - GBPUSD
+
+macro:             # FRED series ids
+  - { id: CPIAUCSL, label: "US CPI (all items)" }
+  - { id: UNRATE,   label: "US Unemployment Rate" }
+  - { id: DGS10,    label: "US 10Y Treasury Yield" }
+  - { id: DGS2,     label: "US 2Y Treasury Yield" }
+  - { id: FEDFUNDS, label: "Effective Fed Funds Rate" }
+
+worldbank:         # World Bank indicator codes (global context)
+  - { id: "NY.GDP.MKTP.KD.ZG", label: "GDP growth (annual %)" }
+  - { id: "FP.CPI.TOTL.ZG",    label: "Inflation, consumer prices (annual %)" }

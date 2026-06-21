@@ -1,0 +1,48 @@
+name: Ingest (scheduled stream)
+
+# Scheduled micro-batch ingestion = the project's "streaming" mechanism.
+# Private repos get 2,000 free Actions minutes/month; every-6h keeps us well inside that.
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # 4x/day; tune higher for fresher crypto if you wish
+  workflow_dispatch:
+
+permissions:
+  contents: write           # to commit refreshed data back to the repo
+
+concurrency:
+  group: ingest
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml,transform]"
+      - name: Ingest -> dbt -> ML -> AI brief
+        env:
+          MMI_DUCKDB_PATH: ${{ github.workspace }}/data/mmi.duckdb
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          set -e
+          mmi ingest || echo "::warning::ingest had failures (continuing)"
+          (cd transform && dbt build --profiles-dir .) || echo "::warning::dbt build issue"
+          mmi ml  || echo "::warning::ml issue"
+          mmi ai  || echo "::warning::ai issue"
+      - name: Commit refreshed data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f data/mmi.duckdb data/briefs/ 2>/dev/null || true
+          git commit -m "chore(data): scheduled refresh [skip ci]" || { echo "no changes"; exit 0; }
+          git push
