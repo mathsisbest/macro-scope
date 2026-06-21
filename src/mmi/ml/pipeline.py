@@ -53,6 +53,6 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
     if forecast_rows:
         _write(con, "marts.ml_forecast", pd.DataFrame(forecast_rows))
 
-    summary = {r["symbol"] + "." + r["metric"]: r["value"] for r in metric_rows}
+    summary = {f"{r['symbol']}.{r['metric']}": r["value"] for r in metric_rows}
     log.info("ml complete: %s", summary)
     return summary
