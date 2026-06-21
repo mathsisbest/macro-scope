@@ -23,9 +23,15 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # Storage
+    # Storage.
+    # ``duckdb_path`` is ALWAYS a local file (dev / CI / offline demo). MotherDuck — the
+    # deployed shared store — is enabled separately via ``motherduck_database`` +
+    # ``motherduck_token``; we never overload ``duckdb_path`` with an ``md:`` URL, so its
+    # type stays a clean local Path.
     duckdb_path: Path = Field(default=REPO_ROOT / "data" / "mmi.duckdb", alias="MMI_DUCKDB_PATH")
     assets_path: Path = Field(default=REPO_ROOT / "config" / "assets.yml", alias="MMI_ASSETS_PATH")
+    motherduck_database: str = Field(default="", alias="MMI_MOTHERDUCK_DATABASE")
+    motherduck_token: str = Field(default="", alias="MOTHERDUCK_TOKEN")  # secret — never log/display
 
     # Data source keys
     fred_api_key: str = Field(default="", alias="FRED_API_KEY")
@@ -43,9 +49,21 @@ class Settings(BaseSettings):
     # Behaviour
     log_level: str = Field(default="INFO", alias="MMI_LOG_LEVEL")
 
+    @property
+    def use_motherduck(self) -> bool:
+        """True when the deployed/scheduled path should target MotherDuck."""
+        return bool(self.motherduck_database and self.motherduck_token)
+
+    def storage_label(self) -> str:
+        """Human-safe storage description for logs/UI — never includes the token."""
+        if self.use_motherduck:
+            return f"MotherDuck · {self.motherduck_database}"
+        return f"DuckDB · {self.duckdb_path.name}"
+
     def ensure_dirs(self) -> None:
-        """Create directories the pipeline writes to."""
-        self.duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+        """Create local directories the pipeline writes to (no-op on MotherDuck)."""
+        if not self.use_motherduck:
+            self.duckdb_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

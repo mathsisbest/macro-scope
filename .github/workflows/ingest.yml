@@ -1,14 +1,16 @@
-name: Ingest (scheduled stream)
+name: Ingest (scheduled refresh)
 
-# Scheduled micro-batch ingestion = the project's "streaming" mechanism.
-# Private repos get 2,000 free Actions minutes/month; every-6h keeps us well inside that.
+# Scheduled micro-batch refresh into MotherDuck (the deployed shared store).
+# DISABLED by default: uncomment the `schedule:` block once MOTHERDUCK_TOKEN is configured
+# (see .github/workflows/deploy-note.md). Until then, run on demand via "Run workflow".
 on:
-  schedule:
-    - cron: "0 */6 * * *"   # 4x/day; tune higher for fresher crypto if you wish
   workflow_dispatch:
+  # schedule:
+  #   - cron: "0 */6 * * *"   # every 6h — well inside the 2,000 free private-repo minutes/mo
 
+# Read-only: we no longer commit data back to the repo (state lives in MotherDuck).
 permissions:
-  contents: write           # to commit refreshed data back to the repo
+  contents: read
 
 concurrency:
   group: ingest
@@ -17,32 +19,36 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    env:
+      MMI_MOTHERDUCK_DATABASE: mmi
+      MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+      LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install
+      - name: Install (ml + transform)
         run: python -m pip install -e ".[ml,transform]"
-      - name: Ingest -> dbt -> ML -> AI brief
-        env:
-          MMI_DUCKDB_PATH: ${{ github.workspace }}/data/mmi.duckdb
-          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
-          LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      - name: Require MotherDuck token
         run: |
-          set -e
-          mmi ingest || echo "::warning::ingest had failures (continuing)"
-          (cd transform && dbt build --profiles-dir .) || echo "::warning::dbt build issue"
-          mmi ml  || echo "::warning::ml issue"
-          mmi ai  || echo "::warning::ai issue"
-      - name: Commit refreshed data
+          if [ -z "${MOTHERDUCK_TOKEN}" ]; then
+            echo "::error::MOTHERDUCK_TOKEN is not set — add it as a repo secret (see deploy-note.md)."
+            exit 1
+          fi
+      # Required ingest -> dbt -> ML -> AI. `set -e` + no `|| echo`: any failure fails the job,
+      # so a broken pipeline can never go green, and ML/AI/dashboard state is only updated
+      # after required ingest + dbt build/tests pass. No partial/broken output is committed
+      # or deployed (state lives in MotherDuck; nothing is pushed back to the repo).
+      - name: Refresh MotherDuck
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f data/mmi.duckdb data/briefs/ 2>/dev/null || true
-          git commit -m "chore(data): scheduled refresh [skip ci]" || { echo "no changes"; exit 0; }
-          git push
+          set -euo pipefail
+          mmi ingest
+          dbt build --project-dir transform --profiles-dir transform --target prod
+          mmi ml
+          mmi ai
