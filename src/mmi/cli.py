@@ -31,11 +31,9 @@ def cmd_ingest(_: argparse.Namespace) -> int:
     on a broken pipeline. *Optional* sources (e.g. unofficial endpoints like Stooq) are recorded
     in ``raw.pipeline_runs`` and surfaced as warnings, but do not fail the ingest step.
 
-    Caveat: "optional" only protects the *ingest step*. If an optional source is the sole
-    producer of a raw table that dbt requires (Stooq -> raw.asset_prices), the downstream
-    ``dbt build`` still fails on a *fresh* database where that table has never loaded; on a
-    populated database a transient failure is tolerated (prior data remains). First-run
-    robustness is tracked as a follow-up.
+    Optional sources stay non-fatal even on a *fresh* database: ``DuckDBLoader`` pre-creates the
+    raw source tables empty (``ensure_raw_tables``), so dbt builds empty marts for a not-yet-loaded
+    source instead of erroring on a missing one. A *required* failure still fails the run.
     """
     from mmi.ingestion import EXTRACTORS, DuckDBLoader
 

@@ -20,6 +20,35 @@ log = get_logger(__name__)
 
 _AUDIT_TABLE = "raw.pipeline_runs"
 
+# Canonical schemas for the raw landing tables dbt reads as sources. Created empty up-front
+# (idempotently) so a *fresh* DB always has dbt's sources even if an optional extractor fails or
+# returns nothing on the first run — dbt then builds empty marts instead of erroring on a missing
+# source. Columns mirror what the extractors load (so ``upsert ... BY NAME`` stays clean) and
+# cover every column the staging models select.
+_RAW_TABLES = {
+    "raw.asset_prices": (
+        "symbol VARCHAR, asset_class VARCHAR, date TIMESTAMPTZ, open DOUBLE, high DOUBLE, "
+        "low DOUBLE, close DOUBLE, volume DOUBLE, source VARCHAR, loaded_at TIMESTAMPTZ"
+    ),
+    "raw.crypto_prices": (
+        "symbol VARCHAR, ts TIMESTAMPTZ, price_usd DOUBLE, market_cap DOUBLE, "
+        "volume_24h DOUBLE, source VARCHAR, loaded_at TIMESTAMPTZ"
+    ),
+    "raw.macro_series": (
+        "series_id VARCHAR, date TIMESTAMPTZ, value DOUBLE, source VARCHAR, loaded_at TIMESTAMPTZ"
+    ),
+    "raw.worldbank": (
+        "indicator_id VARCHAR, country VARCHAR, date VARCHAR, value DOUBLE, "
+        "source VARCHAR, loaded_at TIMESTAMPTZ"
+    ),
+}
+
+
+def ensure_raw_tables(con) -> None:
+    """Create the raw source tables (empty) if absent, so dbt always has its sources."""
+    for table, schema in _RAW_TABLES.items():
+        con.execute(f"CREATE TABLE IF NOT EXISTS {table} ({schema})")
+
 
 class DuckDBLoader:
     """Loads validated dataframes into the ``raw`` schema, idempotently."""
@@ -27,6 +56,7 @@ class DuckDBLoader:
     def __init__(self, con) -> None:
         self.con = con
         init_schemas(con)
+        ensure_raw_tables(con)
         self._ensure_audit_table()
 
     # --- audit ---------------------------------------------------------------
@@ -81,7 +111,8 @@ class DuckDBLoader:
         self.con.execute(
             f"DELETE FROM {table} t WHERE EXISTS (SELECT 1 FROM _incoming s WHERE {on})"
         )
-        self.con.execute(f"INSERT INTO {table} SELECT * FROM _incoming")
+        # BY NAME: match columns by name so a pre-created (canonical) table can't break on order.
+        self.con.execute(f"INSERT INTO {table} BY NAME SELECT * FROM _incoming")
         self.con.unregister("_incoming")
 
         n = len(df)
