@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 import streamlit as st
 
@@ -18,13 +19,18 @@ def db_exists() -> bool:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def query(sql: str, params: tuple | None = None) -> pd.DataFrame:
-    """Run a read-only query; return an empty frame if the DB/table is missing."""
+    """Run a read-only query.
+
+    A *missing table* (e.g. ML/AI marts before those steps run) returns an empty frame.
+    Connection/auth errors and schema drift (a missing column) are NOT swallowed — they must
+    surface rather than silently rendering every panel blank.
+    """
     if not db_exists():
         return pd.DataFrame()
     con = connect(read_only=True)
     try:
         return con.execute(sql, list(params) if params else []).df()
-    except Exception:
+    except duckdb.CatalogException:
         return pd.DataFrame()
     finally:
         con.close()

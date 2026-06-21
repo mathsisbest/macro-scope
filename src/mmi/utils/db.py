@@ -26,10 +26,12 @@ def connect(path: Path | None = None, read_only: bool = False) -> duckdb.DuckDBP
     the extension reads — never embedded in a connection string we build, log or display.
     """
     if path is None and settings.use_motherduck:
-        os.environ.setdefault("motherduck_token", settings.motherduck_token)
-        # MotherDuck manages concurrency server-side; the local read_only flag
-        # does not apply to ``md:`` connections.
-        return duckdb.connect(f"md:{settings.motherduck_database}")
+        # The configured token is authoritative — overwrite (not setdefault) so a stale
+        # lowercase ``motherduck_token`` from a prior export/rotation can't silently win.
+        os.environ["motherduck_token"] = settings.motherduck_token  # noqa: SIM112
+        # Honor read_only on MotherDuck too: the public dashboard must never receive a
+        # writable handle to the shared prod store.
+        return duckdb.connect(f"md:{settings.motherduck_database}", read_only=read_only)
     db_path = Path(path or settings.duckdb_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     return duckdb.connect(str(db_path), read_only=read_only)
