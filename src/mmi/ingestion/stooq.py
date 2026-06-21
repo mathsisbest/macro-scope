@@ -23,6 +23,8 @@ class StooqExtractor(Extractor):
     table = "raw.asset_prices"
     keys = ["symbol", "date"]
     required_columns = ["symbol", "date", "close"]
+    # Stooq uses unofficial CSV endpoints — treat as best-effort, never fail the run on it.
+    required = False
 
     def fetch(self) -> pd.DataFrame:
         assets = load_assets()

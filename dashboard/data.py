@@ -4,15 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import duckdb
 import pandas as pd
 import streamlit as st
 
 from mmi.settings import settings
+from mmi.utils.db import connect
 
 
 def db_exists() -> bool:
-    return Path(settings.duckdb_path).exists()
+    # On MotherDuck the store is remote; locally we check the file exists.
+    return True if settings.use_motherduck else Path(settings.duckdb_path).exists()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -20,7 +21,7 @@ def query(sql: str, params: tuple | None = None) -> pd.DataFrame:
     """Run a read-only query; return an empty frame if the DB/table is missing."""
     if not db_exists():
         return pd.DataFrame()
-    con = duckdb.connect(str(settings.duckdb_path), read_only=True)
+    con = connect(read_only=True)
     try:
         return con.execute(sql, list(params) if params else []).df()
     except Exception:

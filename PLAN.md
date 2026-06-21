@@ -7,6 +7,14 @@
 
 **Author:** mathsisbest · **Status:** Plan + working scaffold · **Cost target:** £0 / $0 forever
 
+> **Implementation status (P0 hygiene pass).** The scaffold is real and CI-gated: ingestion
+> (CoinGecko/Stooq/FRED/World Bank), a complete dbt project (staging→intermediate→marts + tests),
+> an ML forecast + regime layer, a provider-agnostic GenAI brief, and the Streamlit dashboard all
+> run on seeded data in CI. **Roadmap (described below but not yet built):** yfinance & DBnomics
+> sources, per-source incremental watermarks + `make backfill`, full Pydantic payload models, dbt
+> source-freshness surfaced in the UI, and macro ML features. **Storage:** local DuckDB for dev/CI;
+> **MotherDuck** free tier for the deployed/scheduled path (the `.duckdb` binary is not committed).
+
 ---
 
 ## 1. Why this project (goals & rationale)
@@ -67,6 +75,9 @@ narrative: **treating markets and the economy as a single system you can measure
 | **DBnomics** | Aggregator over ECB/Eurostat/IMF/OECD | None | Weekly | None |
 | *(optional)* **The Odds API** | Sports odds & line movement | Free key | 2–3×/day | 500 credits/month |
 
+> **Implemented today:** CoinGecko, Stooq, FRED, World Bank. **Roadmap:** yfinance (fallback)
+> and DBnomics are part of the design but not yet implemented.
+
 ### 3.2 The "streaming" strategy on £0
 
 True always-on streaming (Kafka/Kinesis) costs money and is overkill for this data. The
@@ -77,10 +88,12 @@ incremental, idempotent loads — which is how most real analytics platforms act
   minutes/month** — a 60-second job every 30 min is ~1,440 min/month, comfortably inside the
   quota. (We'll run crypto every 30 min during market-relevant hours, macro daily.)
 - **Idempotency:** each extractor upserts on a natural key (`symbol + timestamp`) so re-runs
-  never duplicate. Loads are incremental (only fetch since last watermark).
-- **Freshness as a first-class signal:** dbt `source freshness` + a `pipeline_runs` audit
-  table make staleness visible in the dashboard (a real DE concern, not an afterthought).
-- **Backfill path:** a `make backfill` target pulls full history once; crons only top up.
+  never duplicate. *(Implemented.)* True per-source incremental watermarks are **roadmap** —
+  today's loads are a full scheduled refresh (see the source-specific policy in §7.1).
+- **Freshness (roadmap):** dbt `source freshness` surfaced in the dashboard is planned. The
+  `pipeline_runs` audit table exists today; the dbt freshness + UI surface are not yet built.
+- **Backfill path (roadmap):** a `make backfill` target to pull full history once is planned,
+  not yet implemented.
 
 > If you ever want literal streaming as a follow-on, Phase 4 (§12) adds an optional Kafka-style
 > demo using **Redpanda Serverless free tier** or a local `kafka-python` producer/consumer —
@@ -144,7 +157,7 @@ tested SQL.
 |---|---|---|
 | Language | **Python 3.11+** | Ubiquitous for data/ML; one language across all layers |
 | Ingestion | **httpx + pandas + pydantic** | Typed, testable extractors |
-| Storage | **DuckDB** (single file) + **Parquet** committed to repo | Zero-infra OLAP DB; data is small enough to live in the (private) repo. Optional **MotherDuck** free tier (500 MB) for a cloud copy |
+| Storage | **DuckDB** (local dev/CI) + **MotherDuck** free tier (deployed) | Zero-infra OLAP engine; the scheduled cron + dashboard share state via MotherDuck. The `.duckdb` binary is **not** committed to git |
 | Transform | **dbt-core + dbt-duckdb** | Industry-standard analytics engineering; 100% open-source |
 | ML | **scikit-learn, statsmodels** | Classic, explainable, no GPU needed |
 | Experiment tracking | **JSON metrics + DuckDB `model_metrics` table** | Free, no MLflow server needed (MLflow optional later) |
@@ -229,10 +242,13 @@ markets-macro-intelligence/
 
 ### 7.1 Data Engineering (`src/mmi/ingestion/`)
 - An `Extractor` abstract base class enforces the contract `fetch() → validate() → load()`.
-- Pydantic models validate every payload before it touches storage (fail fast, no dirty data).
+  *(Implemented.)* Schema/column validation runs today; **full Pydantic payload models are roadmap.**
 - `loader.py` does **idempotent upserts** into DuckDB `raw.*` tables keyed on natural keys and
   writes a row to `raw.pipeline_runs` (source, rows, duration, status) for observability.
-- A **watermark** per source means crons only pull new data → fast, cheap, inside free quota.
+  *(Implemented.)*
+- A **watermark** helper exists, but **per-source incremental pulls are roadmap.** Planned policy:
+  CoinGecko snapshot upsert (symbol + provider timestamp); Stooq/FRED use last-loaded-date bounds;
+  World Bank stays a full refresh (slow-changing reference data). Today: full scheduled refresh.
 
 ### 7.2 Analytics Engineering (`transform/` — dbt)
 - **staging**: typed, renamed, de-duplicated views (one per source table).
@@ -290,8 +306,8 @@ markets-macro-intelligence/
 ## 9. Deployment (all free)
 
 1. **Code & CI:** private GitHub repo; Actions run CI on PRs and the ingest cron on schedule.
-2. **Data:** DuckDB file + Parquet are committed (data is small; repo is private). The cron
-   commits refreshed data back, or pushes to MotherDuck free tier if you prefer a cloud DB.
+2. **Data:** the scheduled cron writes to **MotherDuck** (free tier) and the dashboard reads from
+   it — the `.duckdb` binary is **not** committed to git. Local dev/CI use a local DuckDB file.
 3. **Dashboard:** **Streamlit Community Cloud**, connected to the private repo. It sets a
    webhook, so **every push auto-redeploys**. Secrets (API keys) go in Streamlit's encrypted
    secrets box, not the repo.
@@ -305,7 +321,7 @@ markets-macro-intelligence/
 |---|---|---|
 | Source data | CoinGecko / Stooq / FRED / World Bank / DBnomics | £0 |
 | Compute / scheduling | GitHub Actions (2,000 min/mo private) | £0 |
-| Storage | DuckDB + Parquet in repo (+ optional MotherDuck free) | £0 |
+| Storage | DuckDB (local) + MotherDuck free tier (deployed) | £0 |
 | Transform | dbt-core (OSS) | £0 |
 | Dashboard hosting | Streamlit Community Cloud | £0 |
 | GenAI | Google Gemini / Groq free tier | £0 |

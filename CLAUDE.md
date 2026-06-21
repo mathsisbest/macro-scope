@@ -19,14 +19,14 @@ and serves it through a Streamlit dashboard. It's an end-to-end data platform
 ## Key decisions (and why)
 1. **Domain = Markets & Macro** (chosen on free-data availability):
    - Crypto via **CoinGecko** (free, 100 calls/min) → the genuine high-frequency "streaming" story.
-   - Equities/ETFs/FX via **Stooq** (no key) + yfinance fallback → deep history for ML.
+   - Equities/ETFs/FX via **Stooq** (no key); yfinance fallback is roadmap → deep history for ML.
    - Macro via **FRED** (free key) + **World Bank** (no key) → analytical backbone.
    - **Sports betting is an OPTIONAL Phase-2 module** (PLAN §13), not core: The Odds API free
      tier (~500 credits/mo) is too thin to anchor streaming.
 2. **"Streaming" = scheduled micro-batch** via GitHub Actions cron (2,000 free private-repo
    mins/mo). Incremental, idempotent loads. True Kafka is out of scope/cost (ADR-0003).
-3. **Stack:** Python 3.10+, **DuckDB** (single-file warehouse) + Parquet, **dbt-duckdb**
-   (medallion: staging→intermediate→marts), **scikit-learn**, **Streamlit + Plotly**.
+3. **Stack:** Python 3.10+, **DuckDB** (local dev/CI) + **MotherDuck** free tier (deployed),
+   **dbt-duckdb** (medallion: staging→intermediate→marts), **scikit-learn**, **Streamlit + Plotly**.
 4. **GenAI is provider-agnostic** (`src/mmi/ai/llm.py`): `LLM_PROVIDER` = gemini|groq|claude.
    Defaults to **free Gemini/Groq**; falls back to a deterministic template if no key.
    ⚠️ **The Claude API is metered/not free** — the owner's Claude subscription does NOT cover it.
@@ -37,17 +37,13 @@ and serves it through a Streamlit dashboard. It's an end-to-end data platform
 - ✅ `pytest` → 5/5 pass, 72% coverage.
 - ✅ Full pipeline ran end-to-end on synthetic sample data: `mmi seed` → marts → `mmi ml`
   → `mmi ai` (offline template brief). All marts populate.
-- ⚠️ **dbt itself was NOT run yet** — only the Python SQL fallback (`mmi build` /
-  `src/mmi/transform_fallback.py`) was exercised. **TODO: install `dbt-duckdb` and verify
-  `cd transform && dbt build` + `dbt test` actually compile/pass.** The fallback mirrors the
-  dbt marts so the demo runs without dbt, but dbt is the canonical transform layer.
-- ⚠️ **Not pushed to GitHub.** It was scaffolded in an isolated sandbox with no GitHub auth.
-  A local commit exists but the sandbox left stale `.git` lock files. **Start git fresh:**
-  ```bash
-  rm -rf .git && git init -b main && git add -A
-  git commit -m "feat: initial scaffold — markets & macro intelligence"
-  gh repo create mathsisbest/markets-macro-intelligence --private --source=. --remote=origin --push
-  ```
+- **dbt is the canonical transform layer** and runs in CI (`dbt build` + tests on seeded data,
+  `--target dev`). The Python SQL fallback (`mmi build` / `src/mmi/transform_fallback.py`) is
+  **demo-only** — it mirrors the dbt marts so `make demo` works without dbt; it is not canonical.
+  (The first green CI run verifies dbt compiles/passes end-to-end.)
+- ✅ **Pushed to GitHub:** `mathsisbest/markets-macro-intelligence` (private), default branch `main`.
+- ✅ **Storage (owner-confirmed):** DuckDB locally (dev/CI) + **MotherDuck** free tier for the
+  deployed/scheduled path; the `.duckdb` binary is **not** committed to git.
 
 ## How to run
 ```bash
@@ -60,7 +56,9 @@ make ingest && make dbt-build && make ml && make ai && make dashboard
 ## Conventions
 - Package code under `src/mmi/` (installable, `mmi` CLI). No loose scripts.
 - Typed config via `pydantic-settings` (`src/mmi/settings.py`); secrets via `.env` (gitignored)
-  / GH Actions secrets / Streamlit secrets. Never commit keys.
+  / GH Actions secrets / Streamlit secrets. Never commit keys. **MotherDuck:** enable via
+  `MMI_MOTHERDUCK_DATABASE` + `MOTHERDUCK_TOKEN`; the token goes through env only and must never
+  appear in a connection string, log, or the dashboard UI.
 - Ingestion: one `Extractor` per source (`fetch → validate → load`), idempotent upserts
   (delete-then-insert on natural keys), audited in `raw.pipeline_runs`.
 - dbt: medallion layout + tests + source freshness; custom schema-name macro keeps schemas
@@ -74,8 +72,10 @@ make ingest && make dbt-build && make ml && make ai && make dashboard
 `config/` · `tests/` · `.github/workflows/` (ci.yml + ingest.yml cron) · `docs/` (+ ADRs).
 
 ## Immediate next steps / roadmap
-1. Push to GitHub (above), then the owner will review with **Codex** and bring back suggestions.
-2. **Verify dbt** (`dbt build` + `dbt test`) and reconcile any drift vs the fallback marts.
+1. ✅ Pushed + reviewed by Codex (issue #1). **P0 hygiene** (this branch): honest token-free CI
+   (incl. dbt), MotherDuck storage plumbing, precise cron failure semantics, doc alignment.
+2. Wire `MOTHERDUCK_TOKEN` (see deploy-note.md) + run the scheduled refresh; then P1: reconcile any
+   dbt-vs-fallback drift, source-specific watermarks, macro ML features, dashboard polish.
 3. Get free keys (FRED, CoinGecko, Gemini); run live `make ingest`; deploy to **Streamlit
    Community Cloud** (deploys from private repos; auto-redeploys on push). See
    `.github/workflows/deploy-note.md`.
@@ -85,7 +85,7 @@ make ingest && make dbt-build && make ml && make ai && make dashboard
 - **ML baseline:** on synthetic sample data the model *trails* the naive baseline — expected
   (no signal). On real data, re-evaluate; consider classification (direction) + proper CV,
   and don't oversell predictive power.
-- **Data-in-git:** the cron commits the DuckDB binary back to the repo to feed Streamlit.
-  Tidy but noisy; the documented cleaner option is **MotherDuck** (free) — consider switching.
+- **Data-in-git:** RESOLVED in P0 — the cron writes to **MotherDuck** instead of committing the
+  `.duckdb` binary; nothing data-related is pushed back to the repo.
 - **Secrets & freshness:** ensure no keys leak; surface dbt source-freshness in the UI.
 - **yfinance/Stooq** are unofficial — treat as best-effort; FRED/World Bank are the reliable core.

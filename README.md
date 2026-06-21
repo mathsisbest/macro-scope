@@ -30,10 +30,10 @@ free APIs ──> ingestion (DE) ──> DuckDB raw ──> dbt (AE) ──> mar
 
 - **Streaming, for free:** GitHub Actions cron does scheduled, incremental, idempotent
   micro-batch ingestion (the realistic, free-tier way to "stream").
-- **Sources:** CoinGecko (crypto), Stooq/yfinance (equities & FX), FRED + World Bank (macro).
+- **Sources:** CoinGecko (crypto), Stooq (equities & FX), FRED + World Bank (macro). *(yfinance fallback is planned, not yet implemented.)*
 - **Everything in code:** charts, theme and layout are defined in Python — no Power BI/Tableau.
 
-## Quickstart (runs with bundled sample data, no API keys)
+## Quickstart (runs with generated sample data, no API keys)
 
 ```bash
 # 1. install (editable) with dashboard + ml extras
@@ -61,7 +61,7 @@ make dashboard   # serve
 | Layer | Tooling |
 |---|---|
 | Ingestion | Python · httpx · pydantic · pandas |
-| Storage | DuckDB + Parquet (optional MotherDuck free) |
+| Storage | DuckDB (local dev/CI) · MotherDuck free tier (deployed) |
 | Transform | dbt-core + dbt-duckdb |
 | ML/AI | scikit-learn · numpy |
 | GenAI | provider-agnostic → Gemini/Groq free (Claude optional) |

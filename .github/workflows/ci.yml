@@ -8,19 +8,29 @@ on:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    env:
+      # CI is fully local + token-free: a local DuckDB file with deterministic seeded data.
+      # MotherDuck is only used on the scheduled/prod path, never in CI.
+      MMI_DUCKDB_PATH: ${{ github.workspace }}/data/ci.duckdb
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install
-        run: python -m pip install -e ".[ml,dashboard,dev]"
+      - name: Install (ml + dashboard + transform + dev)
+        run: python -m pip install -e ".[ml,dashboard,transform,dev]"
       - name: Lint (ruff)
         run: ruff check .
       - name: Format check (ruff)
         run: ruff format --check .
-      - name: Type check (mypy, advisory)
-        run: mypy || true
+      - name: Type check (mypy)
+        run: mypy
+      - name: Seed deterministic local data
+        run: mmi seed
+      - name: dbt build + test (canonical transform, local DuckDB)
+        run: dbt build --project-dir transform --profiles-dir transform --target dev
+      - name: Dashboard read-path smoke (guards BI <-> marts drift)
+        run: PYTHONPATH=. python -c "from dashboard import data; df = data.assets(); assert not df.empty, 'dashboard cannot read marts'; print('dashboard OK:', len(df), 'assets')"
       - name: Tests
         run: pytest
