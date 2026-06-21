@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import traceback
 from abc import ABC, abstractmethod
 
 import pandas as pd
 
 from mmi.ingestion.loader import DuckDBLoader
 from mmi.utils.logging import get_logger
+from mmi.utils.redact import redact
 
 
 class Extractor(ABC):
@@ -53,6 +55,8 @@ class Extractor(ABC):
             self.loader.finish_run(run_id, rows, "success")
             return rows
         except Exception as exc:  # noqa: BLE001 - we re-raise after recording
-            self.log.exception("extractor failed")
-            self.loader.finish_run(run_id, 0, "failed", str(exc))
+            # Redact before logging/persisting: httpx errors embed the request URL, which for
+            # FRED/Gemini carries the API key as a query param.
+            self.log.error("extractor failed:\n%s", redact(traceback.format_exc()))
+            self.loader.finish_run(run_id, 0, "failed", redact(str(exc)))
             raise
