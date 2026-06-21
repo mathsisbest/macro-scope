@@ -1,7 +1,14 @@
 .DEFAULT_GOAL := help
 PY ?= python3
 
-.PHONY: help install install-dev seed ingest dbt-build ml ai dashboard demo test lint format typecheck all clean
+# Prefer the project virtualenv if present, so `make ci` works without activating it.
+VENV := $(CURDIR)/.venv
+ifneq ($(wildcard $(VENV)/bin/python),)
+  PY := $(VENV)/bin/python
+  BIN := $(VENV)/bin/
+endif
+
+.PHONY: help setup install install-dev seed ingest dbt-build ml ai dashboard demo test lint format typecheck ci all clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -36,16 +43,32 @@ demo: seed ## Seed sample data, build marts (if dbt installed), launch dashboard
 	streamlit run dashboard/app.py
 
 test: ## Run the test suite
-	pytest
+	$(BIN)pytest
 
 lint: ## Lint with ruff
-	ruff check .
+	$(BIN)ruff check .
 
 format: ## Auto-format with ruff
-	ruff format .
+	$(BIN)ruff format .
 
 typecheck: ## Type-check with mypy
-	mypy
+	$(BIN)mypy
+
+setup: ## One-time local setup: create .venv (needs `brew install python@3.11`) + install all extras
+	"$$(brew --prefix python@3.11)/bin/python3.11" -m venv .venv
+	$(VENV)/bin/python -m pip install --upgrade pip
+	$(VENV)/bin/pip install -e ".[all]"
+	@echo "Setup complete. Run: make ci"
+
+ci: ## Full local gate — run before every PR; the reviewer runs this too (no GitHub Actions)
+	$(BIN)ruff check .
+	$(BIN)ruff format --check .
+	$(BIN)mypy
+	MMI_DUCKDB_PATH=$(CURDIR)/data/ci.duckdb $(PY) -m mmi.cli seed
+	MMI_DUCKDB_PATH=$(CURDIR)/data/ci.duckdb $(BIN)dbt build --project-dir transform --profiles-dir transform --target dev
+	MMI_DUCKDB_PATH=$(CURDIR)/data/ci.duckdb PYTHONPATH=. $(PY) -c "from dashboard import data; assert not data.assets().empty, 'dashboard cannot read marts'; print('dashboard read-path OK')"
+	$(BIN)pytest
+	@echo "make ci: PASS"
 
 all: seed dbt-build ml ai ## Run the whole offline pipeline end-to-end
 

@@ -1,9 +1,9 @@
 name: CI
 
 on:
-  pull_request:
-  push:
-    branches: [main]
+  # Manual-only: local `make ci` is the gate (this preserves the free GitHub Actions tier).
+  # The job below mirrors `make ci`; re-add `pull_request:` / `push:` here to restore hosted CI.
+  workflow_dispatch:
 
 jobs:
   quality:
