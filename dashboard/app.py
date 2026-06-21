@@ -6,7 +6,6 @@ Reads the dbt marts from DuckDB; everything visual is defined in code.
 
 from __future__ import annotations
 
-import duckdb
 import streamlit as st
 from dashboard import data
 from dashboard.components import charts
@@ -14,6 +13,7 @@ from dashboard.components.kpi import metric_row
 from dashboard.theme import inject_css
 
 from mmi.settings import settings
+from mmi.utils.db import connect
 
 st.set_page_config(page_title="Markets & Macro Intelligence", page_icon="📈", layout="wide")
 inject_css()
@@ -37,7 +37,7 @@ with st.sidebar:
     else:
         st.dataframe(runs, hide_index=True, use_container_width=True)
     st.divider()
-    st.caption(f"DuckDB · `{settings.duckdb_path.name}`")
+    st.caption(f"`{settings.storage_label()}`")
     st.caption(f"LLM provider · `{settings.llm_provider}`")
 
 
@@ -144,7 +144,7 @@ with tab_ai:
     if st.button("🔄 Regenerate brief"):
         from mmi.ai.narrative import generate_brief
 
-        con = duckdb.connect(str(settings.duckdb_path))
+        con = connect()
         try:
             generate_brief(con)
         finally:

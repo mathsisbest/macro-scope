@@ -23,10 +23,22 @@ def cmd_seed(_: argparse.Namespace) -> int:
 
 
 def cmd_ingest(_: argparse.Namespace) -> int:
-    """Run every extractor against the live free APIs."""
+    """Run every extractor against the live free APIs.
+
+    A failure in a *required* source fails the run (exit 1) so scheduled jobs cannot go green
+    on a broken pipeline. *Optional* sources (e.g. unofficial endpoints like Stooq) are recorded
+    in ``raw.pipeline_runs`` and surfaced as warnings, but do not fail the ingest step.
+
+    Caveat: "optional" only protects the *ingest step*. If an optional source is the sole
+    producer of a raw table that dbt requires (Stooq -> raw.asset_prices), the downstream
+    ``dbt build`` still fails on a *fresh* database where that table has never loaded; on a
+    populated database a transient failure is tolerated (prior data remains). First-run
+    robustness is tracked as a follow-up.
+    """
     from mmi.ingestion import EXTRACTORS, DuckDBLoader
 
-    failures = 0
+    required_failures = 0
+    optional_failures = 0
     with connect() as con:
         loader = DuckDBLoader(con)
         for cls in EXTRACTORS:
@@ -34,10 +46,16 @@ def cmd_ingest(_: argparse.Namespace) -> int:
             try:
                 rows = extractor.run()
                 log.info("%s: %s rows", extractor.source, rows)
-            except Exception as exc:  # noqa: BLE001 - keep ingesting other sources
-                failures += 1
-                log.error("%s failed: %s", extractor.source, exc)
-    return 1 if failures else 0
+            except Exception as exc:  # noqa: BLE001 - record, classify, keep going
+                if getattr(extractor, "required", True):
+                    required_failures += 1
+                    log.error("REQUIRED source %s failed: %s", extractor.source, exc)
+                else:
+                    optional_failures += 1
+                    log.warning("optional source %s failed (continuing): %s", extractor.source, exc)
+    if optional_failures:
+        log.warning("%d optional source(s) failed; run still successful", optional_failures)
+    return 1 if required_failures else 0
 
 
 def cmd_build(_: argparse.Namespace) -> int:

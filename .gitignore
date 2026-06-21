@@ -28,6 +28,7 @@ data/briefs/*.md
 transform/target/
 transform/dbt_packages/
 transform/logs/
+transform/.user.yml
 
 # --- Streamlit ---
 .streamlit/secrets.toml
