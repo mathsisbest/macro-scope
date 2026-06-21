@@ -31,7 +31,8 @@ class Settings(BaseSettings):
     duckdb_path: Path = Field(default=REPO_ROOT / "data" / "mmi.duckdb", alias="MMI_DUCKDB_PATH")
     assets_path: Path = Field(default=REPO_ROOT / "config" / "assets.yml", alias="MMI_ASSETS_PATH")
     motherduck_database: str = Field(default="", alias="MMI_MOTHERDUCK_DATABASE")
-    motherduck_token: str = Field(default="", alias="MOTHERDUCK_TOKEN")  # secret — never log/display
+    # secret — never log or display
+    motherduck_token: str = Field(default="", alias="MOTHERDUCK_TOKEN")
 
     # Data source keys
     fred_api_key: str = Field(default="", alias="FRED_API_KEY")
