@@ -16,6 +16,19 @@ and serves it through a Streamlit dashboard. It's a **portfolio project** for th
 - **Private GitHub repo.** Future-proof; deliberately uses GenAI.
 - Owner is a product designer (SaaS/AI) in London — values clarity and good SWE hygiene.
 
+## Dev workflow (two-Claude: implementer + reviewer)
+- **Small, single-concern PRs.** One concern per PR (~1–5 files), branch `pNN-slug`, with a
+  structured body (concern / what changed / risk / `make ci` result / questions). Move fast.
+- **Local-first testing is the gate — NOT GitHub Actions.** Run `make ci` (ruff, ruff format,
+  mypy, seed, `dbt build`+tests, dashboard smoke, pytest) before every PR and paste the result in
+  the PR body. One-time setup: `make setup` (needs `brew install python@3.11`).
+- **GitHub Actions is disabled** (`ci.yml` is `workflow_dispatch`-only) to preserve the free tier.
+  Don't re-enable auto-runs without the owner's say-so.
+- **Reviewer = a separate Claude session** that runs `/review-pr <n>` and follows
+  `docs/REVIEW_GUIDE.md` (skeptical checklist + hard constraints; posts the verdict via
+  `gh pr review`). Implementer and reviewer interact only through the repo + PR comments — never
+  via chat relay.
+
 ## Key decisions (and why)
 1. **Domain = Markets & Macro** (chosen on free-data availability):
    - Crypto via **CoinGecko** (free, 100 calls/min) → the genuine high-frequency "streaming" story.
