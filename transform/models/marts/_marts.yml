@@ -2,14 +2,14 @@ version: 2
 
 models:
   - name: dim_asset
-    description: "One row per tracked asset (equities, FX, crypto)."
+    description: "One row per tracked asset (equities, bonds, commodities, FX, crypto)."
     columns:
       - name: symbol
         tests: [not_null, unique]
       - name: asset_class
         tests:
           - not_null
-          - accepted_values: { values: ["equities", "fx", "crypto"] }
+          - accepted_values: { values: ["equities", "bonds", "commodities", "fx", "crypto"] }
 
   - name: fct_asset_daily
     description: "Daily OHLCV + simple return, rolling 20d vol and 50d MA per asset."

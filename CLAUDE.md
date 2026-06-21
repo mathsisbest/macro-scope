@@ -90,10 +90,13 @@ make ingest && make dbt-build && make ml && make ai && make dashboard
    (incl. dbt), MotherDuck storage plumbing, precise cron failure semantics, doc alignment.
 2. Wire `MOTHERDUCK_TOKEN` (see deploy-note.md) + run the scheduled refresh; then P1: reconcile any
    dbt-vs-fallback drift, source-specific watermarks, macro ML features, dashboard polish.
-3. Get free keys (FRED, CoinGecko, Gemini); run live `make ingest`; deploy to **Streamlit
+3. **Capstone = issue #7** (portfolio backtesting / analytics / AI), sequenced **after** P1–P3 and
+   built in slices 0–D (see PLAN §11). Phase 0 — Yahoo *adjusted-close* ingestion replacing the broken
+   Stooq path — is the prerequisite and is in progress. The phased plan + critical review live on issue #7.
+4. Get free keys (FRED, CoinGecko, Gemini); run live `make ingest`; deploy to **Streamlit
    Community Cloud** (deploys from private repos; auto-redeploys on push). See
    `.github/workflows/deploy-note.md`.
-4. Work PLAN §11 phases (DE → AE → ML → GenAI → polish) as clean per-skill PR sets.
+5. Work PLAN §11 phases (DE → AE → ML → GenAI → polish) as clean per-skill PR sets.
 
 ## Likely review talking points (be ready to discuss/improve)
 - **ML baseline:** on synthetic sample data the model *trails* the naive baseline — expected
