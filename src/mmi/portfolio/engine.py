@@ -20,8 +20,12 @@ def equal_weight(n: int) -> np.ndarray:
 
 
 def inverse_volatility(cov: np.ndarray) -> np.ndarray:
-    """Weights proportional to the inverse of each asset's volatility, normalised to sum to 1."""
-    inv = 1.0 / np.sqrt(np.diag(cov))
+    """Weights proportional to the inverse of each asset's volatility, normalised to sum to 1.
+
+    Volatilities are floored at a tiny epsilon so a zero-variance asset yields a finite (large)
+    weight rather than NaN/inf.
+    """
+    inv = 1.0 / np.sqrt(np.maximum(np.diag(cov), 1e-12))
     return inv / inv.sum()
 
 

@@ -21,6 +21,13 @@ def test_inverse_volatility_weights():
     assert np.isclose(w.sum(), 1.0)
 
 
+def test_inverse_volatility_floors_zero_variance():
+    cov = np.array([[0.04, 0.0], [0.0, 0.0]])  # second asset has zero variance
+    w = inverse_volatility(cov)
+    assert np.isfinite(w).all()  # finite, not NaN/inf
+    assert np.isclose(w.sum(), 1.0)
+
+
 def test_risk_parity_matches_inverse_vol_when_uncorrelated():
     # A known property: with zero correlations, ERC == inverse-vol.
     cov = np.diag([0.04, 0.01, 0.0025])
