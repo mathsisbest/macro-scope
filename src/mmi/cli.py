@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+import traceback
 
 from mmi.utils.db import connect
 from mmi.utils.logging import get_logger
+from mmi.utils.redact import redact
 
 log = get_logger("cli")
 
@@ -49,10 +51,14 @@ def cmd_ingest(_: argparse.Namespace) -> int:
             except Exception as exc:  # noqa: BLE001 - record, classify, keep going
                 if getattr(extractor, "required", True):
                     required_failures += 1
-                    log.error("REQUIRED source %s failed: %s", extractor.source, exc)
+                    log.error("REQUIRED source %s failed: %s", extractor.source, redact(str(exc)))
                 else:
                     optional_failures += 1
-                    log.warning("optional source %s failed (continuing): %s", extractor.source, exc)
+                    log.warning(
+                        "optional source %s failed (continuing): %s",
+                        extractor.source,
+                        redact(str(exc)),
+                    )
     if optional_failures:
         log.warning("%d optional source(s) failed; run still successful", optional_failures)
     return 1 if required_failures else 0
@@ -104,7 +110,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except Exception:  # noqa: BLE001 - redact any error before it reaches stderr / CI logs
+        log.error("command '%s' failed:\n%s", args.command, redact(traceback.format_exc()))
+        return 1
 
 
 if __name__ == "__main__":
