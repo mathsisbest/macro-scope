@@ -25,9 +25,15 @@ def cmd_seed(_: argparse.Namespace) -> int:
 def cmd_ingest(_: argparse.Namespace) -> int:
     """Run every extractor against the live free APIs.
 
-    A failure in a *required* source fails the run (exit 1) so scheduled jobs cannot go
-    green on a broken pipeline. *Optional* sources (e.g. unofficial endpoints) are recorded
-    in ``raw.pipeline_runs`` and surfaced as warnings, but do not fail the run.
+    A failure in a *required* source fails the run (exit 1) so scheduled jobs cannot go green
+    on a broken pipeline. *Optional* sources (e.g. unofficial endpoints like Stooq) are recorded
+    in ``raw.pipeline_runs`` and surfaced as warnings, but do not fail the ingest step.
+
+    Caveat: "optional" only protects the *ingest step*. If an optional source is the sole
+    producer of a raw table that dbt requires (Stooq -> raw.asset_prices), the downstream
+    ``dbt build`` still fails on a *fresh* database where that table has never loaded; on a
+    populated database a transient failure is tolerated (prior data remains). First-run
+    robustness is tracked as a follow-up.
     """
     from mmi.ingestion import EXTRACTORS, DuckDBLoader
 

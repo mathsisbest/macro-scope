@@ -23,7 +23,9 @@ class StooqExtractor(Extractor):
     table = "raw.asset_prices"
     keys = ["symbol", "date"]
     required_columns = ["symbol", "date", "close"]
-    # Stooq uses unofficial CSV endpoints — treat as best-effort, never fail the run on it.
+    # Stooq uses unofficial CSV endpoints — best-effort, so a transient failure must not fail
+    # the ingest step. NOTE: it is still the sole producer of raw.asset_prices (which dbt
+    # requires), so on a *fresh* DB a Stooq failure cascades into dbt build — see follow-up.
     required = False
 
     def fetch(self) -> pd.DataFrame:
