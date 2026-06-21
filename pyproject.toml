@@ -75,4 +75,4 @@ files = ["src", "config"]
 [tool.pytest.ini_options]
 addopts = "-q --cov=mmi --cov-report=term-missing"
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]  # "." so tests can import the top-level `dashboard` package
