@@ -9,21 +9,28 @@ import pandas as pd
 import streamlit as st
 
 from mmi.settings import settings
+from mmi.utils.db import connect
 
 
 def db_exists() -> bool:
-    return Path(settings.duckdb_path).exists()
+    # On MotherDuck the store is remote; locally we check the file exists.
+    return True if settings.use_motherduck else Path(settings.duckdb_path).exists()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def query(sql: str, params: tuple | None = None) -> pd.DataFrame:
-    """Run a read-only query; return an empty frame if the DB/table is missing."""
+    """Run a read-only query.
+
+    A *missing table* (e.g. ML/AI marts before those steps run) returns an empty frame.
+    Connection/auth errors and schema drift (a missing column) are NOT swallowed — they must
+    surface rather than silently rendering every panel blank.
+    """
     if not db_exists():
         return pd.DataFrame()
-    con = duckdb.connect(str(settings.duckdb_path), read_only=True)
+    con = connect(read_only=True)
     try:
         return con.execute(sql, list(params) if params else []).df()
-    except Exception:
+    except duckdb.CatalogException:
         return pd.DataFrame()
     finally:
         con.close()

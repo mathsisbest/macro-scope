@@ -25,6 +25,8 @@ class Extractor(ABC):
     keys: list[str] = []
     #: Required columns the fetched frame must contain.
     required_columns: list[str] = []
+    #: If True, a failure here fails the whole run; if False, it's a warn-and-continue source.
+    required: bool = True
 
     def __init__(self, loader: DuckDBLoader) -> None:
         self.loader = loader

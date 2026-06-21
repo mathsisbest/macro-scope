@@ -1,11 +1,21 @@
-# dbt connects to the same single DuckDB file the Python layer writes to.
-# Default path (../data/mmi.duckdb) resolves to <repo>/data/mmi.duckdb when run from transform/.
-# Override with an ABSOLUTE MMI_DUCKDB_PATH in CI.
+# dbt connects to DuckDB. Two targets:
+#   dev  (default) — local DuckDB file; used by CI and the offline demo. No secrets.
+#   prod           — MotherDuck (the deployed shared store); token from MOTHERDUCK_TOKEN env.
+# CI/local use the default `dev`; the scheduled cron passes `--target prod`.
+# When run with --project-dir from the repo root, set an ABSOLUTE MMI_DUCKDB_PATH.
 mmi:
   target: dev
   outputs:
     dev:
       type: duckdb
       path: "{{ env_var('MMI_DUCKDB_PATH', '../data/mmi.duckdb') }}"
+      schema: main
+      threads: 4
+    prod:
+      type: duckdb
+      # MotherDuck. The token is supplied out-of-band via the `motherduck_token` env var the
+      # extension reads — never embedded in this path, so it can't surface in a rendered DSN
+      # or a `dbt debug` traceback.
+      path: "md:{{ env_var('MMI_MOTHERDUCK_DATABASE', 'mmi') }}"
       schema: main
       threads: 4
