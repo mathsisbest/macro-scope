@@ -6,13 +6,21 @@ crypto:            # CoinGecko ids
   - ethereum
   - solana
 
-equities:          # Stooq / yfinance symbols (ETFs + indices work too)
+equities:          # Yahoo v8 chart symbols (ETFs + indices + stocks)
   - SPY            # S&P 500 ETF
   - QQQ            # Nasdaq 100 ETF
   - AAPL
   - MSFT
+  - VEA            # Developed ex-US equities (inception 2007)
 
-fx:                # Stooq FX pairs
+bonds:             # Yahoo — fixed-income ETFs (total return via adjusted close)
+  - TLT            # 20+yr US Treasuries
+  - TIP            # US TIPS (inception 2003)
+
+commodities:       # Yahoo — commodity ETFs
+  - GLD            # Gold (inception 2004)
+
+fx:                # Yahoo FX pairs (fetched as e.g. EURUSD=X)
   - EURUSD
   - GBPUSD
 
