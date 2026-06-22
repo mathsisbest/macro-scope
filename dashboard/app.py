@@ -208,3 +208,21 @@ with tab_portfolio:
                 f"Stationary block-bootstrap ({stats['n_boot'].iloc[0]:,} resamples, "
                 f"{stats['n_obs'].iloc[0]} obs). Distinguishable = Sharpe-diff CI excludes 0."
             )
+
+        # Return attribution — what drove each strategy's return.
+        attr = data.portfolio_attribution()
+        if not attr.empty:
+            st.subheader("Return attribution")
+            astrat = st.selectbox(
+                "Strategy", sorted(attr["strategy"].unique()), key="attribution_strategy"
+            )
+            st.plotly_chart(charts.attribution_chart(attr, astrat), use_container_width=True)
+
+        # Regime-conditional performance — behaviour across market volatility regimes.
+        regime = data.portfolio_regime_performance()
+        if not regime.empty:
+            st.subheader("Performance by market volatility regime")
+            st.plotly_chart(charts.regime_sharpe_chart(regime), use_container_width=True)
+            st.caption(
+                "Market regime = SPY 20-day-vol terciles; stats over each strategy's invested days."
+            )

@@ -69,6 +69,20 @@ def portfolio_strategy_pairs() -> pd.DataFrame:
     )
 
 
+def portfolio_attribution() -> pd.DataFrame:
+    return query(
+        "select strategy, symbol, contribution_to_return, contribution_to_risk "
+        "from marts.fct_performance_attribution order by strategy, contribution_to_return"
+    )
+
+
+def portfolio_regime_performance() -> pd.DataFrame:
+    return query(
+        "select strategy, regime, n_days, day_share, ann_return, ann_vol, ann_sharpe "
+        "from marts.fct_portfolio_regime_performance"
+    )
+
+
 def crypto_intraday(symbol: str) -> pd.DataFrame:
     return query(
         "select ts, price_usd, pct_change from marts.fct_crypto_intraday "
