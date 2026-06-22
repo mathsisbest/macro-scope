@@ -81,3 +81,13 @@ models:
         tests: [not_null]
       - name: symbol
         tests: [not_null]
+
+  - name: fct_portfolio_regime_performance
+    description: "Each strategy's annualised return / vol / Sharpe conditioned on the market volatility regime (SPY 20d-vol terciles, matching ml.regime). Grain: (strategy, regime)."
+    columns:
+      - name: strategy
+        tests: [not_null]
+      - name: regime
+        tests:
+          - not_null
+          - accepted_values: { values: ["Low", "Medium", "High"] }
