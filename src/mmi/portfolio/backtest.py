@@ -14,10 +14,19 @@ import pandas as pd
 from mmi.portfolio import engine
 
 STRATEGIES = ("equal_weight", "inverse_vol", "risk_parity")
+# A fixed-weight benchmark (e.g. 60/40) is NOT a solver strategy: it is run through this same
+# engine — same rebalance cadence, drift, turnover cost, return clipping and point-in-time warmup —
+# so its track record is a like-for-like comparison rather than a flattering, zero-cost SQL series.
+FIXED_WEIGHT = "fixed_weight"
 
 
-def _solve(strategy: str, window: pd.DataFrame) -> np.ndarray:
+def _solve(
+    strategy: str, window: pd.DataFrame, fixed_weights: np.ndarray | None = None
+) -> np.ndarray:
     n = window.shape[1]
+    if strategy == FIXED_WEIGHT:
+        assert fixed_weights is not None  # caller-supplied target, validated in run_backtest
+        return np.asarray(fixed_weights, dtype=float)
     if strategy == "equal_weight" or n == 1:
         return engine.equal_weight(n)  # a single asset is trivially 100% weight
     cov = np.atleast_2d(np.cov(window.to_numpy(), rowvar=False))
@@ -49,6 +58,7 @@ def run_backtest(
     lookback: int = 252,
     freq: str = "M",
     cost: float = 0.001,
+    fixed_weights: np.ndarray | None = None,
 ) -> pd.DataFrame:
     """Backtest ``strategy`` over a daily-returns panel.
 
@@ -62,10 +72,15 @@ def run_backtest(
     from the drifting wealth base; and the most recent partial month/quarter rebalances on its last
     available day, so the final reported point is provisional until that period completes.
     """
-    if strategy not in STRATEGIES:
+    if strategy not in STRATEGIES and strategy != FIXED_WEIGHT:
         raise ValueError(f"unknown strategy: {strategy} (expected one of {STRATEGIES})")
     panel = returns.dropna(how="any").sort_index()
     symbols = list(panel.columns)
+    if strategy == FIXED_WEIGHT:
+        if fixed_weights is None or len(fixed_weights) != len(symbols):
+            raise ValueError("fixed_weight requires fixed_weights aligned to the panel columns")
+        if not np.isfinite(fixed_weights).all() or not np.isclose(np.sum(fixed_weights), 1.0):
+            raise ValueError("fixed_weights must be finite and sum to 1")
     rebals = set(rebalance_dates(panel.index, freq, lookback))
 
     weights: pd.Series | None = None
@@ -76,7 +91,7 @@ def run_backtest(
         if date in rebals:
             window = panel.loc[:date].iloc[:-1].tail(lookback)  # strictly BEFORE `date`
             if len(window) >= lookback:
-                target = pd.Series(_solve(strategy, window), index=symbols)
+                target = pd.Series(_solve(strategy, window, fixed_weights), index=symbols)
                 if not np.isfinite(target.to_numpy()).all():
                     raise ValueError(f"non-finite weights from {strategy} at {date}")
                 prior = weights if weights is not None else pd.Series(0.0, index=symbols)

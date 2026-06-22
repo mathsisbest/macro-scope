@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 import mmi.portfolio.backtest as bt
-from mmi.portfolio.backtest import rebalance_dates, run_backtest
+from mmi.portfolio.backtest import FIXED_WEIGHT, rebalance_dates, run_backtest
 
 
 def _panel(n_days: int, n_assets: int = 3, seed: int = 0) -> pd.DataFrame:
@@ -27,9 +27,9 @@ def test_no_lookahead_window_ends_strictly_before_each_rebalance(monkeypatch):
     seen: list[tuple] = []
     original = bt._solve
 
-    def spy(strategy, window):
+    def spy(strategy, window, fixed_weights=None):
         seen.append((window.index.max(), len(window)))
-        return original(strategy, window)
+        return original(strategy, window, fixed_weights)
 
     monkeypatch.setattr(bt, "_solve", spy)
     run_backtest(panel, strategy="risk_parity", lookback=lookback, freq=freq)
@@ -119,3 +119,53 @@ def test_output_shape_and_columns():
 def test_unknown_strategy_raises():
     with pytest.raises(ValueError):
         run_backtest(_panel(100), strategy="nope", lookback=20)
+
+
+def test_fixed_weight_benchmark_runs_and_differs_from_equal_weight():
+    # A 60/40 on two assets must track its target, not collapse to equal_weight's 50/50.
+    panel = _panel(200, n_assets=2)
+    bench = run_backtest(
+        panel, strategy=FIXED_WEIGHT, lookback=60, freq="M", cost=0.0, fixed_weights=[0.6, 0.4]
+    )
+    eq = run_backtest(panel, strategy="equal_weight", lookback=60, freq="M", cost=0.0)
+    assert list(bench.columns) == ["daily_return", "cumulative_return"]
+    assert bench["daily_return"].notna().all()
+    assert not np.allclose(bench["daily_return"].to_numpy(), eq["daily_return"].to_numpy())
+
+
+def test_fixed_weight_first_rebalance_matches_target_blend():
+    # On the first rebalance the (cost-free) portfolio return must equal 0.6*r0 + 0.4*r1 exactly.
+    panel = _panel(200, n_assets=2)
+    t0 = sorted(rebalance_dates(panel.index, "M", 60))[0]
+    bench = run_backtest(
+        panel, strategy=FIXED_WEIGHT, lookback=60, freq="M", cost=0.0, fixed_weights=[0.6, 0.4]
+    )
+    row = panel.loc[t0]
+    assert np.isclose(bench.loc[t0, "daily_return"], 0.6 * row.iloc[0] + 0.4 * row.iloc[1])
+
+
+@pytest.mark.parametrize("bad", [None, [0.6, 0.4, 0.0], [0.6, 0.5]])
+def test_fixed_weight_rejects_misaligned_or_unnormalised_weights(bad):
+    with pytest.raises(ValueError):
+        run_backtest(_panel(100, n_assets=2), strategy=FIXED_WEIGHT, lookback=20, fixed_weights=bad)
+
+
+def test_fixed_weight_benchmark_pays_same_entry_cost_as_solvers():
+    # The benchmark must NOT be a flattering zero-cost series: entry-from-cash turnover = 1.0, so
+    # the first-rebalance drag is cost/2 — the identical round-trip cost model the solvers pay.
+    panel = _panel(200, n_assets=2)
+    lb, freq = 60, "M"
+    t0 = sorted(rebalance_dates(panel.index, freq, lb))[0]
+
+    def bench(cost):
+        return run_backtest(
+            panel,
+            strategy=FIXED_WEIGHT,
+            lookback=lb,
+            freq=freq,
+            cost=cost,
+            fixed_weights=[0.6, 0.4],
+        )
+
+    drag = float(bench(0.0).loc[t0, "daily_return"] - bench(0.01).loc[t0, "daily_return"])
+    assert np.isclose(drag, 0.01 * 0.5)

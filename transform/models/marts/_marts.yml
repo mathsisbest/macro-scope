@@ -49,6 +49,7 @@ models:
       - name: strategy
         tests:
           - not_null
-          - accepted_values: { values: ["equal_weight", "inverse_vol", "risk_parity"] }
+          - accepted_values:
+              values: ["equal_weight", "inverse_vol", "risk_parity", "sixty_forty"]
       - name: date
         tests: [not_null]
