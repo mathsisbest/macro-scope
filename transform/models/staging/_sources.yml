@@ -29,3 +29,5 @@ sources:
         description: "Per-strategy Sharpe + bootstrap CIs, computed by `mmi portfolio`."
       - name: portfolio_strategy_pairs
         description: "Pairwise Sharpe-difference bootstrap CIs, computed by `mmi portfolio`."
+      - name: portfolio_attribution
+        description: "Per-(strategy, symbol) return + risk contribution, computed by `mmi portfolio`."

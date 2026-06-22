@@ -51,7 +51,7 @@ def rebalance_dates(index: pd.DatetimeIndex, freq: str, warmup: int) -> list:
     return list(eligible.groupby(keys).last())
 
 
-def run_backtest(
+def run_backtest_full(
     returns: pd.DataFrame,
     *,
     strategy: str,
@@ -59,10 +59,16 @@ def run_backtest(
     freq: str = "M",
     cost: float = 0.001,
     fixed_weights: np.ndarray | None = None,
-) -> pd.DataFrame:
-    """Backtest ``strategy`` over a daily-returns panel.
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Backtest ``strategy`` and also return per-asset daily return contributions.
 
-    Returns a frame indexed by date with ``daily_return`` (net of costs) and ``cumulative_return``.
+    Returns ``(returns, contributions)``:
+    - ``returns`` — indexed by date with ``daily_return`` (net of costs) and ``cumulative_return``.
+    - ``contributions`` — indexed by the *invested* dates, one column per symbol holding that day's
+      gross contribution ``w_{t-1} * r_t``, plus a ``__cost__`` column (the negative cost drag).
+      Per-asset gross contributions sum to the gross daily return; gross plus ``__cost__`` is the
+      net ``daily_return``. Used for performance attribution.
+
     ``cost`` is a **round-trip** transaction cost; a rebalance pays ``cost * 0.5 * turnover`` where
     ``turnover = sum |w_target - w_drifted|`` (so one-way trades, including the initial buy from
     cash, cost ``cost / 2`` per unit). Per-asset daily returns are clipped at -100% (a long
@@ -85,6 +91,7 @@ def run_backtest(
 
     weights: pd.Series | None = None
     records: list[tuple] = []
+    contributions: list[dict] = []
     for date, row in panel.iterrows():
         ret = row.clip(lower=-1.0)  # a long position can lose at most 100% (guards bad ticks)
         cost_today = 0.0
@@ -101,7 +108,9 @@ def run_backtest(
         if weights is None:
             records.append((date, 0.0))  # pre-warmup: uninvested
             continue
-        records.append((date, float((weights * ret).sum()) - cost_today))
+        gross = weights * ret  # per-asset gross contribution to the day's return
+        records.append((date, float(gross.sum()) - cost_today))
+        contributions.append({"date": date, "__cost__": -cost_today, **gross.to_dict()})
         drifted = weights * (1.0 + ret)  # let weights float into the next day
         total = float(drifted.sum())
         weights = (
@@ -112,4 +121,29 @@ def run_backtest(
 
     out = pd.DataFrame(records, columns=["date", "daily_return"]).set_index("date")
     out["cumulative_return"] = (1.0 + out["daily_return"]).cumprod() - 1.0
-    return out
+    contrib = (
+        pd.DataFrame(contributions).set_index("date")
+        if contributions
+        else pd.DataFrame(columns=["__cost__", *symbols])
+    )
+    return out, contrib
+
+
+def run_backtest(
+    returns: pd.DataFrame,
+    *,
+    strategy: str,
+    lookback: int = 252,
+    freq: str = "M",
+    cost: float = 0.001,
+    fixed_weights: np.ndarray | None = None,
+) -> pd.DataFrame:
+    """Backtest ``strategy``; return the per-day returns frame (see :func:`run_backtest_full`)."""
+    return run_backtest_full(
+        returns,
+        strategy=strategy,
+        lookback=lookback,
+        freq=freq,
+        cost=cost,
+        fixed_weights=fixed_weights,
+    )[0]
