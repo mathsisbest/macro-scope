@@ -89,3 +89,72 @@ def regime_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
         )
     fig.update_layout(title=f"{symbol} — volatility regimes")
     return style_fig(fig, height=300)
+
+
+# --------------------------------------------------------------------------- portfolio
+_STRATEGY_LABELS = {
+    "equal_weight": "Equal weight",
+    "inverse_vol": "Inverse vol",
+    "risk_parity": "Risk parity",
+    "sixty_forty": "60/40 benchmark",
+}
+
+
+def _strategy_line(strategy: str, idx: int) -> dict:
+    """Stable per-strategy style; the 60/40 benchmark is a dashed muted reference line."""
+    if strategy == "sixty_forty":
+        return dict(color=PALETTE["muted"], dash="dash")
+    return dict(color=PALETTE["series"][idx % len(PALETTE["series"])])
+
+
+def _by_strategy(df: pd.DataFrame, column: str) -> go.Figure:
+    fig = go.Figure()
+    for idx, strategy in enumerate(sorted(df["strategy"].unique())):
+        grp = df[df["strategy"] == strategy]
+        fig.add_scatter(
+            x=grp["date"],
+            y=grp[column],
+            name=_STRATEGY_LABELS.get(strategy, strategy),
+            line=_strategy_line(strategy, idx),
+        )
+    return fig
+
+
+def portfolio_cumulative_chart(df: pd.DataFrame) -> go.Figure:
+    fig = _by_strategy(df, "cumulative_return")
+    fig.update_layout(title="Cumulative return by strategy (vs 60/40 benchmark)")
+    fig.update_yaxes(tickformat=".0%")
+    return style_fig(fig)
+
+
+def portfolio_drawdown_chart(df: pd.DataFrame) -> go.Figure:
+    fig = _by_strategy(df, "drawdown")
+    fig.update_layout(title="Drawdown from running peak")
+    fig.update_yaxes(tickformat=".0%")
+    return style_fig(fig, height=300)
+
+
+def portfolio_sharpe_chart(df: pd.DataFrame) -> go.Figure:
+    fig = _by_strategy(df, "rolling_sharpe_252")
+    fig.update_layout(title="Rolling 252-day Sharpe (annualised)")
+    return style_fig(fig, height=300)
+
+
+def portfolio_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """Per-strategy headline stats for the comparison table (latest values + worst drawdown)."""
+    summary = df.groupby("strategy").agg(
+        total_return=("cumulative_return", "last"),
+        max_drawdown=("drawdown", "min"),
+        ann_vol=("daily_return", lambda s: float(s.std() * (252**0.5))),
+        sharpe_252=("rolling_sharpe_252", "last"),
+    )
+    summary.index = [_STRATEGY_LABELS.get(s, s) for s in summary.index]
+    summary.index.name = "Strategy"
+    return summary.rename(
+        columns={
+            "total_return": "Total return",
+            "max_drawdown": "Max drawdown",
+            "ann_vol": "Ann. vol",
+            "sharpe_252": "Sharpe (252d)",
+        }
+    )
