@@ -72,6 +72,7 @@ ci: ## Full local gate — run before every PR; the reviewer runs this too (no G
 	$(BIN)ruff format --check .
 	$(BIN)mypy
 	$(CI_ENV) $(PY) -m mmi.cli seed
+	$(CI_ENV) $(PY) -m mmi.cli portfolio
 	$(CI_ENV) $(PY) -c "import duckdb, os; c = duckdb.connect(os.environ['MMI_DUCKDB_PATH']); c.execute('drop schema if exists marts cascade'); c.execute('drop schema if exists staging cascade'); c.close()"
 	$(CI_ENV) $(BIN)dbt build --project-dir transform --profiles-dir transform --target dev
 	$(CI_ENV) PYTHONPATH=. $(PY) scripts/dashboard_smoke.py

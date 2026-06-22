@@ -23,3 +23,5 @@ sources:
         description: "World Bank cross-country indicators."
       - name: pipeline_runs
         description: "Ingestion audit log (run_id, rows, status, timings)."
+      - name: portfolio_returns
+        description: "Per-strategy daily portfolio returns, computed by `mmi portfolio` (backtest)."
