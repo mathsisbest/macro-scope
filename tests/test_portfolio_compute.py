@@ -35,6 +35,7 @@ def test_compute_portfolio_returns_covers_all_strategies_and_benchmark():
         "equal_weight",
         "inverse_vol",
         "risk_parity",
+        "mvo_histmean",
         "sixty_forty",
     }
     assert list(out.columns) == ["strategy", "date", "daily_return", "cumulative_return"]
@@ -43,7 +44,9 @@ def test_compute_portfolio_returns_covers_all_strategies_and_benchmark():
 def test_benchmark_skipped_when_its_tickers_absent():
     out = compute_portfolio_returns(_long(150, ("A", "B", "C")), lookback=30, freq="M")
     assert "sixty_forty" not in set(out["strategy"].unique())
-    assert {"equal_weight", "inverse_vol", "risk_parity"} == set(out["strategy"].unique())
+    assert {"equal_weight", "inverse_vol", "risk_parity", "mvo_histmean"} == set(
+        out["strategy"].unique()
+    )
 
 
 def test_cmd_portfolio_lands_raw_portfolio_returns(monkeypatch, tmp_path):
@@ -66,5 +69,6 @@ def test_cmd_portfolio_lands_raw_portfolio_returns(monkeypatch, tmp_path):
         "equal_weight",
         "inverse_vol",
         "risk_parity",
+        "mvo_histmean",
         "sixty_forty",
     }

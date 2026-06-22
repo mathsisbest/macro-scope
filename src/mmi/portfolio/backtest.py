@@ -13,7 +13,7 @@ import pandas as pd
 
 from mmi.portfolio import engine
 
-STRATEGIES = ("equal_weight", "inverse_vol", "risk_parity")
+STRATEGIES = ("equal_weight", "inverse_vol", "risk_parity", "mvo_histmean")
 # A fixed-weight benchmark (e.g. 60/40) is NOT a solver strategy: it is run through this same
 # engine — same rebalance cadence, drift, turnover cost, return clipping and point-in-time warmup —
 # so its track record is a like-for-like comparison rather than a flattering, zero-cost SQL series.
@@ -34,6 +34,10 @@ def _solve(
         return engine.inverse_volatility(cov)
     if strategy == "risk_parity":
         return engine.risk_parity(cov)
+    if strategy == "mvo_histmean":
+        # Max-Sharpe with the trailing-window mean as expected returns (the honest MVO baseline;
+        # the ML-forecast mu + covariance shrinkage land in a later slice).
+        return engine.max_sharpe(cov, window.to_numpy().mean(axis=0))
     raise ValueError(f"unknown strategy: {strategy} (expected one of {STRATEGIES})")
 
 
