@@ -10,7 +10,8 @@ import mmi.cli as cli
 from mmi.portfolio.compute import build_returns_panel, compute_portfolio_returns
 
 
-def _long(n_days: int = 120, assets: tuple = ("A", "B", "C"), seed: int = 0) -> pd.DataFrame:
+# Use real benchmark tickers (SPY + a bond) so the 60/40 benchmark is produced too.
+def _long(n_days: int = 120, assets: tuple = ("SPY", "TLT", "QQQ"), seed: int = 0) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     idx = pd.bdate_range("2015-01-01", periods=n_days)
     rows = []
@@ -28,10 +29,21 @@ def test_build_returns_panel_pivots_to_wide():
     assert panel.index.is_monotonic_increasing
 
 
-def test_compute_portfolio_returns_covers_all_strategies():
+def test_compute_portfolio_returns_covers_all_strategies_and_benchmark():
     out = compute_portfolio_returns(_long(150), lookback=30, freq="M", cost=0.001)
-    assert set(out["strategy"].unique()) == {"equal_weight", "inverse_vol", "risk_parity"}
+    assert set(out["strategy"].unique()) == {
+        "equal_weight",
+        "inverse_vol",
+        "risk_parity",
+        "sixty_forty",
+    }
     assert list(out.columns) == ["strategy", "date", "daily_return", "cumulative_return"]
+
+
+def test_benchmark_skipped_when_its_tickers_absent():
+    out = compute_portfolio_returns(_long(150, ("A", "B", "C")), lookback=30, freq="M")
+    assert "sixty_forty" not in set(out["strategy"].unique())
+    assert {"equal_weight", "inverse_vol", "risk_parity"} == set(out["strategy"].unique())
 
 
 def test_cmd_portfolio_lands_raw_portfolio_returns(monkeypatch, tmp_path):
@@ -50,4 +62,9 @@ def test_cmd_portfolio_lands_raw_portfolio_returns(monkeypatch, tmp_path):
         strategies = check.execute("select distinct strategy from raw.portfolio_returns").fetchall()
     finally:
         check.close()
-    assert {s[0] for s in strategies} == {"equal_weight", "inverse_vol", "risk_parity"}
+    assert {s[0] for s in strategies} == {
+        "equal_weight",
+        "inverse_vol",
+        "risk_parity",
+        "sixty_forty",
+    }
