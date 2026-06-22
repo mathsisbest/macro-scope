@@ -48,6 +48,13 @@ def asset_daily(symbol: str) -> pd.DataFrame:
     )
 
 
+def portfolio_returns() -> pd.DataFrame:
+    return query(
+        "select strategy, date, daily_return, cumulative_return, drawdown, rolling_sharpe_252 "
+        "from marts.fct_portfolio_returns order by strategy, date"
+    )
+
+
 def crypto_intraday(symbol: str) -> pd.DataFrame:
     return query(
         "select ts, price_usd, pct_change from marts.fct_crypto_intraday "

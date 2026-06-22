@@ -82,7 +82,9 @@ if kpis:
 st.divider()
 
 # --------------------------------------------------------------------------- tabs
-tab_mkt, tab_macro, tab_ml, tab_ai = st.tabs(["Markets", "Macro", "ML forecast", "AI brief"])
+tab_mkt, tab_macro, tab_ml, tab_ai, tab_portfolio = st.tabs(
+    ["Markets", "Macro", "ML forecast", "AI brief", "Portfolio"]
+)
 
 with tab_mkt:
     adf = data.assets()
@@ -151,3 +153,30 @@ with tab_ai:
             con.close()
         st.cache_data.clear()
         st.rerun()
+
+with tab_portfolio:
+    pf = data.portfolio_returns()
+    if pf.empty:
+        st.info("No portfolio backtest yet. Run `mmi portfolio` to compute strategy returns.")
+    else:
+        st.caption(
+            "Walk-forward backtest: three allocation strategies vs a 60/40 benchmark — same dates, "
+            "monthly rebalancing and round-trip costs, so the comparison is like-for-like."
+        )
+        st.plotly_chart(charts.portfolio_cumulative_chart(pf), use_container_width=True)
+        cda, cdb = st.columns(2)
+        with cda:
+            st.plotly_chart(charts.portfolio_drawdown_chart(pf), use_container_width=True)
+        with cdb:
+            st.plotly_chart(charts.portfolio_sharpe_chart(pf), use_container_width=True)
+        st.dataframe(
+            charts.portfolio_summary(pf).style.format(
+                {
+                    "Total return": "{:+.1%}",
+                    "Max drawdown": "{:.1%}",
+                    "Ann. vol": "{:.1%}",
+                    "Sharpe (252d)": "{:.2f}",
+                }
+            ),
+            use_container_width=True,
+        )
