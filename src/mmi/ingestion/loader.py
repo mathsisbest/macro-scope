@@ -58,6 +58,10 @@ _RAW_TABLES = {
         "sharpe_diff DOUBLE, diff_lo DOUBLE, diff_hi DOUBLE, distinguishable BOOLEAN, "
         "loaded_at TIMESTAMPTZ"
     ),
+    "raw.portfolio_attribution": (
+        "strategy VARCHAR, symbol VARCHAR, contribution_to_return DOUBLE, "
+        "contribution_to_risk DOUBLE, strategy_gross_return DOUBLE, loaded_at TIMESTAMPTZ"
+    ),
 }
 
 
