@@ -18,10 +18,19 @@ from mmi.utils.logging import get_logger
 log = get_logger("ai.narrative")
 
 _SYSTEM = (
-    "You are a concise markets analyst. Given structured facts, write a 4-6 sentence daily "
-    "brief for an informed reader. Be specific with numbers, neutral in tone, no financial "
-    "advice, no hype. End with one sentence on what to watch."
+    "You are a concise markets analyst. Given structured facts (JSON-like), write a 4-6 sentence "
+    "daily brief for an informed reader. Use ONLY the numbers present in the facts — never invent, "
+    "estimate, or round away figures. Be specific, neutral in tone, no financial advice, no hype. "
+    "If portfolio strategy stats are present, include one sentence comparing the allocation "
+    "strategies against the 60/40 benchmark. End with one sentence on what to watch."
 )
+
+_STRATEGY_LABELS = {
+    "equal_weight": "Equal weight",
+    "inverse_vol": "Inverse vol",
+    "risk_parity": "Risk parity",
+    "sixty_forty": "60/40 benchmark",
+}
 
 
 def _q(con, sql: str) -> pd.DataFrame:
@@ -68,6 +77,25 @@ def gather_facts(con) -> dict:
     if not curve.empty:
         facts["yields"] = curve.iloc[0].to_dict()
 
+    # Portfolio strategy stats, computed in SQL so the brief is grounded in the real backtest
+    # numbers (same definition as the dashboard summary): final cumulative return, worst drawdown,
+    # annualised vol, latest rolling Sharpe — one row per strategy incl. the 60/40 benchmark.
+    portfolio = _q(
+        con,
+        """
+        select strategy,
+               arg_max(cumulative_return, date) as total_return,
+               min(drawdown) as max_drawdown,
+               stddev_samp(daily_return) * sqrt(252) as ann_vol,
+               arg_max(rolling_sharpe_252, date) as sharpe
+        from marts.fct_portfolio_returns
+        group by strategy
+        order by strategy
+        """,
+    )
+    if not portfolio.empty:
+        facts["portfolio"] = portfolio.to_dict("records")
+
     return facts
 
 
@@ -95,6 +123,16 @@ def _offline_brief(facts: dict) -> str:
         lines.append(
             f"- 10Y {y['us_10y']:.2f}% / 2Y {y['us_2y']:.2f}% → 10Y-2Y spread {spread:+.2f}pp."
         )
+    if facts.get("portfolio"):
+        lines += ["", "**Strategy comparison** (walk-forward, net of costs):"]
+        for p in facts["portfolio"]:
+            name = _STRATEGY_LABELS.get(p["strategy"], p["strategy"])
+            sharpe = p.get("sharpe")
+            sharpe_str = f"{sharpe:.2f}" if sharpe is not None and not pd.isna(sharpe) else "n/a"
+            lines.append(
+                f"- {name}: {p['total_return'] * 100:+.1f}% total return, "
+                f"max drawdown {p['max_drawdown'] * 100:.1f}%, Sharpe {sharpe_str}."
+            )
     lines += ["", "_Watch: macro releases and any shift in the yield-curve spread._"]
     return "\n".join(lines)
 
