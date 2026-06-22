@@ -50,7 +50,7 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ["equal_weight", "inverse_vol", "risk_parity", "sixty_forty"]
+              values: ["equal_weight", "inverse_vol", "risk_parity", "sixty_forty", "mvo_histmean"]
       - name: date
         tests: [not_null]
 
@@ -62,7 +62,7 @@ models:
           - not_null
           - unique
           - accepted_values:
-              values: ["equal_weight", "inverse_vol", "risk_parity", "sixty_forty"]
+              values: ["equal_weight", "inverse_vol", "risk_parity", "sixty_forty", "mvo_histmean"]
 
   - name: fct_portfolio_strategy_pairs
     description: "Pairwise bootstrap Sharpe-difference CIs; distinguishable = the difference CI excludes zero. Grain: one row per unordered strategy pair."
