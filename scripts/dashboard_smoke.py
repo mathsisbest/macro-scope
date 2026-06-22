@@ -42,4 +42,25 @@ if not pf.empty:
     charts.portfolio_summary(pf)
     print(f"portfolio read-path OK ({pf['strategy'].nunique()} strategies)")
 
+# Bootstrap scorecard read-path + builders (the uncertainty-quantification marts).
+stats = data.portfolio_strategy_stats()
+if not stats.empty:
+    assert {"strategy", "sharpe", "sharpe_lo", "sharpe_hi", "n_obs", "n_boot", "ci_pct"} <= set(
+        stats.columns
+    ), f"fct_portfolio_strategy_stats columns drifted: {set(stats.columns)}"
+    charts.portfolio_scorecard(stats)
+pairs = data.portfolio_strategy_pairs()
+if not pairs.empty:
+    assert {
+        "strategy_a",
+        "strategy_b",
+        "sharpe_diff",
+        "diff_lo",
+        "diff_hi",
+        "distinguishable",
+    } <= set(pairs.columns), f"fct_portfolio_strategy_pairs columns drifted: {set(pairs.columns)}"
+    charts.portfolio_pairs_table(pairs)
+    assert isinstance(charts.distinguishability_verdict(pairs), str)
+    print(f"bootstrap scorecard read-path OK ({len(pairs)} pairs)")
+
 print(f"dashboard read-path OK ({len(assets)} assets, core marts accessors exercised)")
