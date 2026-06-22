@@ -89,3 +89,20 @@ def max_sharpe(cov: np.ndarray, mu: np.ndarray, *, max_weight: float = 0.40) -> 
     weights = np.clip(np.asarray(result.x, dtype=float), 0.0, None)
     total = float(weights.sum())
     return weights / total if total > 0 else equal_weight(n)
+
+
+def ledoit_wolf_cov(returns: np.ndarray) -> np.ndarray:
+    """Ledoit-Wolf shrunk covariance of a ``(n_obs, n_assets)`` return window.
+
+    Shrinking the sample covariance toward a scaled identity conditions the estimate so the
+    max-Sharpe optimiser does not chase a near-singular sample matrix — the mean-variance
+    instability that a noisy (ML-forecast) ``mu`` would otherwise amplify. Thin wrapper over
+    scikit-learn's reference implementation; falls back to the sample covariance for < 2 rows.
+    """
+    from sklearn.covariance import ledoit_wolf
+
+    x = np.asarray(returns, dtype=float)
+    if x.shape[0] < 2:
+        return np.atleast_2d(np.cov(x, rowvar=False))
+    cov, _shrinkage = ledoit_wolf(x)
+    return cov
