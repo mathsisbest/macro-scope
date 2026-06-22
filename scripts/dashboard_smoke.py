@@ -63,4 +63,20 @@ if not pairs.empty:
     assert isinstance(charts.distinguishability_verdict(pairs), str)
     print(f"bootstrap scorecard read-path OK ({len(pairs)} pairs)")
 
+# Attribution + regime-conditional read-path + chart builders.
+attr = data.portfolio_attribution()
+if not attr.empty:
+    assert {"strategy", "symbol", "contribution_to_return", "contribution_to_risk"} <= set(
+        attr.columns
+    ), f"fct_performance_attribution columns drifted: {set(attr.columns)}"
+    for strat in attr["strategy"].unique():
+        charts.attribution_chart(attr, strat)
+regime = data.portfolio_regime_performance()
+if not regime.empty:
+    assert {"strategy", "regime", "ann_return", "ann_vol", "ann_sharpe"} <= set(regime.columns), (
+        f"fct_portfolio_regime_performance columns drifted: {set(regime.columns)}"
+    )
+    charts.regime_sharpe_chart(regime)
+    print(f"attribution + regime read-path OK ({len(attr)} attr rows, {len(regime)} regime rows)")
+
 print(f"dashboard read-path OK ({len(assets)} assets, core marts accessors exercised)")
