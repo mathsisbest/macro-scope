@@ -42,3 +42,13 @@ models:
     columns:
       - name: date
         tests: [not_null, unique]
+
+  - name: fct_portfolio_returns
+    description: "Per-strategy daily portfolio returns + drawdown + rolling 252d Sharpe (from raw.portfolio_returns; grain (strategy, date) asserted by a singular test)."
+    columns:
+      - name: strategy
+        tests:
+          - not_null
+          - accepted_values: { values: ["equal_weight", "inverse_vol", "risk_parity"] }
+      - name: date
+        tests: [not_null]

@@ -30,6 +30,8 @@ jobs:
         run: mypy
       - name: Seed deterministic local data
         run: mmi seed
+      - name: Backtest portfolio strategies (lands raw.portfolio_returns)
+        run: mmi portfolio
       - name: Reset marts/staging so dbt is the sole producer
         run: python -c "import duckdb, os; c = duckdb.connect(os.environ['MMI_DUCKDB_PATH']); c.execute('drop schema if exists marts cascade'); c.execute('drop schema if exists staging cascade'); c.close()"
       - name: dbt build + test (canonical transform, local DuckDB)
