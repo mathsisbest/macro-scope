@@ -2,7 +2,19 @@
 -- volatility regimes? The regime is SPY's 20-day-vol terciles (the same definition as ml.regime,
 -- but derived here in SQL so it needs no ML run), joined to each strategy's daily returns. Pure
 -- dbt over two marts — tested SQL, not ad-hoc Python. Grain: (strategy, regime).
-with spy_regime as (
+--
+-- IMPORTANT: each strategy sits in cash (daily_return = 0) until its first rebalance (~lookback
+-- days). Those warm-up zeros are trimmed here so the regime stats are computed over the INVESTED
+-- period only — matching the bootstrap (#19) and attribution (#22) marts. Including them would
+-- pull every return toward 0 and understate vol (zeros add no variance), distorting Sharpe.
+with first_invested as (
+    select strategy, min(date) as start_date
+    from {{ ref('fct_portfolio_returns') }}
+    where daily_return <> 0
+    group by strategy
+),
+
+spy_regime as (
     select
         date,
         case ntile(3) over (order by vol_20d)
@@ -17,6 +29,7 @@ with spy_regime as (
 joined as (
     select p.strategy, r.regime, p.daily_return
     from {{ ref('fct_portfolio_returns') }} as p
+    join first_invested as fi on fi.strategy = p.strategy and p.date >= fi.start_date
     join spy_regime as r on r.date = p.date
 )
 
