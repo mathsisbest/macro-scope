@@ -41,6 +41,23 @@ _RAW_TABLES = {
         "indicator_id VARCHAR, country VARCHAR, date VARCHAR, value DOUBLE, "
         "source VARCHAR, loaded_at TIMESTAMPTZ"
     ),
+    # Portfolio tables are landed by `mmi portfolio` (not an extractor). Pre-created so the dbt
+    # portfolio marts always have their sources even on a fresh DB / before a backtest has run, and
+    # so a degenerate single-strategy run (which yields no strategy pairs) still leaves an empty
+    # table for dbt rather than a missing source.
+    "raw.portfolio_returns": (
+        "strategy VARCHAR, date TIMESTAMP, daily_return DOUBLE, cumulative_return DOUBLE, "
+        "loaded_at TIMESTAMPTZ"
+    ),
+    "raw.portfolio_strategy_stats": (
+        "strategy VARCHAR, sharpe DOUBLE, sharpe_lo DOUBLE, sharpe_hi DOUBLE, "
+        "n_obs BIGINT, n_boot BIGINT, ci_pct DOUBLE, block_days BIGINT, loaded_at TIMESTAMPTZ"
+    ),
+    "raw.portfolio_strategy_pairs": (
+        "strategy_a VARCHAR, strategy_b VARCHAR, sharpe_a DOUBLE, sharpe_b DOUBLE, "
+        "sharpe_diff DOUBLE, diff_lo DOUBLE, diff_hi DOUBLE, distinguishable BOOLEAN, "
+        "loaded_at TIMESTAMPTZ"
+    ),
 }
 
 
