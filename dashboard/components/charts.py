@@ -203,3 +203,33 @@ def distinguishability_verdict(pairs: pd.DataFrame) -> str:
 
     named = ", ".join(f"{lab(r.strategy_a)} vs {lab(r.strategy_b)}" for r in distinct.itertuples())
     return f"{len(distinct)} of {n} comparisons are statistically distinguishable: {named}."
+
+
+def attribution_chart(attr: pd.DataFrame, strategy: str) -> go.Figure:
+    """Horizontal bar of each asset's contribution to a strategy's return (greens up, reds down)."""
+    df = attr[attr["strategy"] == strategy].sort_values("contribution_to_return")
+    colors = [PALETTE["up"] if v >= 0 else PALETTE["down"] for v in df["contribution_to_return"]]
+    fig = go.Figure()
+    fig.add_bar(
+        x=df["contribution_to_return"], y=df["symbol"], orientation="h", marker_color=colors
+    )
+    fig.update_xaxes(tickformat=".1%")
+    label = _STRATEGY_LABELS.get(strategy, strategy)
+    fig.update_layout(title=f"{label} — return contribution by asset")
+    return style_fig(fig, height=340)
+
+
+def regime_sharpe_chart(regime: pd.DataFrame) -> go.Figure:
+    """Grouped bars: annualised Sharpe by market volatility regime, one bar per strategy."""
+    order = ["Low", "Medium", "High"]
+    fig = go.Figure()
+    for idx, strategy in enumerate(sorted(regime["strategy"].unique())):
+        grp = regime[regime["strategy"] == strategy].set_index("regime").reindex(order)
+        fig.add_bar(
+            x=order,
+            y=grp["ann_sharpe"],
+            name=_STRATEGY_LABELS.get(strategy, strategy),
+            marker_color=_strategy_line(strategy, idx)["color"],
+        )
+    fig.update_layout(title="Annualised Sharpe by market volatility regime", barmode="group")
+    return style_fig(fig, height=340)

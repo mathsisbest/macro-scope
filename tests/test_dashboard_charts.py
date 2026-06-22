@@ -53,3 +53,33 @@ def test_scorecard_shape_and_labels():
     sc = charts.portfolio_scorecard(stats)
     assert list(sc.columns) == ["Sharpe", "CI low", "CI high"]
     assert "60/40 benchmark" in sc.index  # raw key mapped to a display label
+
+
+def test_attribution_chart_uses_only_the_selected_strategy():
+    attr = pd.DataFrame(
+        {
+            "strategy": ["equal_weight", "equal_weight", "sixty_forty"],
+            "symbol": ["SPY", "TLT", "SPY"],
+            "contribution_to_return": [0.02, -0.01, 0.05],
+            "contribution_to_risk": [0.6, 0.4, 1.0],
+        }
+    )
+    fig = charts.attribution_chart(attr, "equal_weight")
+    bar = fig.data[0]
+    assert set(bar.y) == {"SPY", "TLT"}  # only the selected strategy's assets, not sixty_forty's
+    assert len(bar.x) == 2
+
+
+def test_regime_sharpe_chart_one_trace_per_strategy_in_low_med_high_order():
+    regime = pd.DataFrame(
+        {
+            "strategy": ["equal_weight"] * 3 + ["sixty_forty"] * 3,
+            "regime": ["High", "Low", "Medium"] * 2,  # unordered on purpose
+            "ann_return": [0.0] * 6,
+            "ann_vol": [0.1] * 6,
+            "ann_sharpe": [-0.3, -2.0, 1.1, 3.99, 1.66, 2.84],
+        }
+    )
+    fig = charts.regime_sharpe_chart(regime)
+    assert len(fig.data) == 2  # one grouped trace per strategy
+    assert list(fig.data[0].x) == ["Low", "Medium", "High"]  # reindexed to a sensible order
