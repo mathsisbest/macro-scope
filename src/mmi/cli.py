@@ -92,9 +92,10 @@ def cmd_ai(_: argparse.Namespace) -> int:
 
 
 def cmd_portfolio(_: argparse.Namespace) -> int:
-    """Backtest the portfolio strategies and land results in raw.portfolio_returns."""
+    """Backtest the strategies, land returns + bootstrap-CI stats in raw.portfolio_*."""
     from mmi.ingestion import DuckDBLoader
     from mmi.portfolio.compute import compute_portfolio_returns
+    from mmi.portfolio.stats import bootstrap_strategy_stats
 
     with connect() as con:
         loader = DuckDBLoader(con)
@@ -103,7 +104,17 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         ).df()
         results = compute_portfolio_returns(asset_daily)
         rows = loader.upsert("raw.portfolio_returns", results, ["strategy", "date"])
-    log.info("portfolio: %s rows across %s strategies", rows, results["strategy"].nunique())
+        # Honest uncertainty: stationary block-bootstrap Sharpe CIs + pairwise distinguishability.
+        per_strategy, pairs = bootstrap_strategy_stats(results)
+        loader.upsert("raw.portfolio_strategy_stats", per_strategy, ["strategy"])
+        loader.upsert("raw.portfolio_strategy_pairs", pairs, ["strategy_a", "strategy_b"])
+    log.info(
+        "portfolio: %s rows across %s strategies; bootstrap CIs for %s strategies, %s pairs",
+        rows,
+        results["strategy"].nunique(),
+        len(per_strategy),
+        len(pairs),
+    )
     return 0
 
 
