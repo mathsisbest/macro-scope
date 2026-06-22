@@ -91,6 +91,22 @@ def cmd_ai(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_portfolio(_: argparse.Namespace) -> int:
+    """Backtest the portfolio strategies and land results in raw.portfolio_returns."""
+    from mmi.ingestion import DuckDBLoader
+    from mmi.portfolio.compute import compute_portfolio_returns
+
+    with connect() as con:
+        loader = DuckDBLoader(con)
+        asset_daily = con.execute(
+            "select symbol, date, daily_return from marts.fct_asset_daily"
+        ).df()
+        results = compute_portfolio_returns(asset_daily)
+        rows = loader.upsert("raw.portfolio_returns", results, ["strategy", "date"])
+    log.info("portfolio: %s rows across %s strategies", rows, results["strategy"].nunique())
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mmi", description="Markets & Macro Intelligence CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -100,6 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("build", cmd_build, "Build marts from raw (SQL fallback)"),
         ("ml", cmd_ml, "Train/score ML models"),
         ("ai", cmd_ai, "Generate GenAI market brief"),
+        ("portfolio", cmd_portfolio, "Backtest portfolio strategies -> raw.portfolio_returns"),
     ]:
         p = sub.add_parser(name, help=help_)
         p.set_defaults(func=fn)
