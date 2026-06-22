@@ -1,11 +1,14 @@
 """Portfolio weight solvers — long-only, sum-to-1, pure functions on a covariance matrix.
 
-Three strategies of escalating sophistication:
+Four strategies of escalating sophistication:
 - ``equal_weight``       — the benchmark; 1/N.
 - ``inverse_volatility`` — w_i proportional to 1/sigma_i.
 - ``risk_parity``        — TRUE equal-risk-contribution (each asset contributes equally to
   portfolio variance), solved numerically. This is the proper Bridgewater-style formulation and
   is distinct from naive inverse-vol — the two coincide only when assets are uncorrelated.
+- ``max_sharpe``         — Markowitz tangency portfolio (max Sharpe), long-only with a per-asset
+  cap. The expected-returns vector ``mu`` is supplied by the caller (a trailing-window mean for the
+  honest baseline; an ML forecast later), so this module stays a pure solver.
 """
 
 from __future__ import annotations
@@ -56,3 +59,33 @@ def risk_parity(cov: np.ndarray) -> np.ndarray:
     )
     weights = np.asarray(result.x, dtype=float)
     return weights / weights.sum()
+
+
+def max_sharpe(cov: np.ndarray, mu: np.ndarray, *, max_weight: float = 0.40) -> np.ndarray:
+    """Long-only max-Sharpe (tangency) weights: maximise ``(w·mu) / sqrt(w'cov w)``, summing to 1.
+
+    A per-asset cap curbs the concentration mean-variance optimisation is prone to; it is relaxed
+    to ``1/n`` when the requested cap would make a fully-invested long-only portfolio infeasible
+    (too few assets). Solved with SLSQP. ``mu`` and ``cov`` may be on any consistent scale — the
+    Sharpe ratio (hence the argmax) is invariant to a positive rescaling of either.
+    """
+    n = len(mu)
+    cap = max(max_weight, 1.0 / n)
+
+    def neg_sharpe(w: np.ndarray) -> float:
+        variance = float(w @ cov @ w)
+        if variance <= 0.0:
+            return 0.0
+        return -float(w @ mu) / np.sqrt(variance)
+
+    result = minimize(
+        neg_sharpe,
+        np.full(n, 1.0 / n),
+        method="SLSQP",
+        bounds=[(0.0, cap)] * n,
+        constraints=({"type": "eq", "fun": lambda w: float(w.sum() - 1.0)},),
+        options={"ftol": 1e-12, "maxiter": 1000},
+    )
+    weights = np.clip(np.asarray(result.x, dtype=float), 0.0, None)
+    total = float(weights.sum())
+    return weights / total if total > 0 else equal_weight(n)
