@@ -73,3 +73,11 @@ models:
         tests: [not_null]
       - name: distinguishable
         tests: [not_null]
+
+  - name: fct_performance_attribution
+    description: "Per-(strategy, symbol) contribution to return + to realised variance; a '(costs)' row carries the cost drag. A singular test asserts the per-asset return contributions reconcile to the strategy's gross return."
+    columns:
+      - name: strategy
+        tests: [not_null]
+      - name: symbol
+        tests: [not_null]
