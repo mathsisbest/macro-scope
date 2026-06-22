@@ -54,9 +54,21 @@ def _assets() -> pd.DataFrame:
     today = pd.Timestamp.now(tz="UTC").normalize()
     days = 400
     dates = pd.bdate_range(end=today, periods=days)
-    starts = {"SPY": 520, "QQQ": 440, "AAPL": 190, "MSFT": 420, "EURUSD": 1.08, "GBPUSD": 1.27}
+    starts = {
+        "SPY": 520,
+        "QQQ": 440,
+        "AAPL": 190,
+        "MSFT": 420,
+        "VEA": 50,
+        "TLT": 90,
+        "TIP": 108,
+        "GLD": 215,
+        "EURUSD": 1.08,
+        "GBPUSD": 1.27,
+    }
     rows = []
-    for kind in ("equities", "fx"):
+    # All price-bearing classes (incl. bonds/commodities) so the 60/40 benchmark has its legs.
+    for kind in ("equities", "bonds", "commodities", "fx"):
         for sym in assets.get(kind, []):
             close = _walk(starts.get(sym, 100), len(dates), 0.012)
             for d, c in zip(dates, close, strict=False):
