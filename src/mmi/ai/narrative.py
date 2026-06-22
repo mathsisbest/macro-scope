@@ -21,8 +21,10 @@ _SYSTEM = (
     "You are a concise markets analyst. Given structured facts (JSON-like), write a 4-6 sentence "
     "daily brief for an informed reader. Use ONLY the numbers present in the facts — never invent, "
     "estimate, or round away figures. Be specific, neutral in tone, no financial advice, no hype. "
-    "If portfolio strategy stats are present, include one sentence comparing the allocation "
-    "strategies against the 60/40 benchmark. End with one sentence on what to watch."
+    "If portfolio strategy stats are present, compare the allocation strategies against the 60/40 "
+    "benchmark in one sentence; when a Sharpe confidence interval is wide or a pair is not "
+    "distinguishable (see portfolio_pairs), say so plainly rather than implying an edge. "
+    "End with one sentence on what to watch."
 )
 
 _STRATEGY_LABELS = {
@@ -77,30 +79,73 @@ def gather_facts(con) -> dict:
     if not curve.empty:
         facts["yields"] = curve.iloc[0].to_dict()
 
-    # Portfolio strategy stats, computed in SQL so the brief is grounded in the real backtest
-    # numbers (same definition as the dashboard summary): final cumulative return, worst drawdown,
-    # annualised vol, latest rolling Sharpe — one row per strategy incl. the 60/40 benchmark.
+    # Portfolio facts grounded in the real marts: returns-derived total return + worst drawdown,
+    # joined to the bootstrap full-sample Sharpe + its confidence interval (one row per strategy).
     portfolio = _q(
         con,
         """
-        select strategy,
-               arg_max(cumulative_return, date) as total_return,
-               min(drawdown) as max_drawdown,
-               stddev_samp(daily_return) * sqrt(252) as ann_vol,
-               arg_max(rolling_sharpe_252, date) as sharpe
-        from marts.fct_portfolio_returns
-        group by strategy
-        order by strategy
+        select s.strategy,
+               agg.total_return,
+               agg.max_drawdown,
+               s.sharpe,
+               s.sharpe_lo,
+               s.sharpe_hi
+        from marts.fct_portfolio_strategy_stats s
+        join (
+            select strategy,
+                   arg_max(cumulative_return, date) as total_return,
+                   min(drawdown) as max_drawdown
+            from marts.fct_portfolio_returns
+            group by strategy
+        ) agg on agg.strategy = s.strategy
+        order by s.sharpe desc
         """,
     )
     if not portfolio.empty:
         facts["portfolio"] = portfolio.to_dict("records")
+
+    # Pairwise distinguishability so the brief can hedge when differences are within noise.
+    pairs = _q(
+        con,
+        "select strategy_a, strategy_b, distinguishable from marts.fct_portfolio_strategy_pairs",
+    )
+    if not pairs.empty:
+        facts["portfolio_pairs"] = pairs.to_dict("records")
 
     return facts
 
 
 def _build_prompt(facts: dict) -> str:
     return "Here are today's structured market facts (JSON-like). Write the brief.\n\n" + str(facts)
+
+
+def _sharpe_phrase(p: dict) -> str:
+    """'Sharpe X [lo, hi]' from the bootstrap stats, degrading gracefully if a value is absent."""
+    sharpe = p.get("sharpe")
+    if sharpe is None or pd.isna(sharpe):
+        return "Sharpe n/a"
+    lo, hi = p.get("sharpe_lo"), p.get("sharpe_hi")
+    if lo is None or hi is None or pd.isna(lo) or pd.isna(hi):
+        return f"Sharpe {sharpe:.2f}"
+    return f"Sharpe {sharpe:.2f} [{lo:.2f}, {hi:.2f}]"
+
+
+def _distinguishability_note(pairs: list) -> str:
+    """One honest sentence: are any strategy Sharpe differences beyond bootstrap noise?"""
+    if not pairs:
+        return ""
+    distinct = [p for p in pairs if p["distinguishable"]]
+    if not distinct:
+        return (
+            "_Statistical note: at the 90% level no pair of strategies is distinguishable by "
+            "Sharpe — the differences are within bootstrap noise._"
+        )
+    named = ", ".join(
+        f"{_STRATEGY_LABELS.get(p['strategy_a'], p['strategy_a'])} vs "
+        f"{_STRATEGY_LABELS.get(p['strategy_b'], p['strategy_b'])}"
+        for p in distinct
+    )
+    return f"_Statistical note: only {named} differ beyond bootstrap noise (90% CI)._"
 
 
 def _offline_brief(facts: dict) -> str:
@@ -127,12 +172,13 @@ def _offline_brief(facts: dict) -> str:
         lines += ["", "**Strategy comparison** (walk-forward, net of costs):"]
         for p in facts["portfolio"]:
             name = _STRATEGY_LABELS.get(p["strategy"], p["strategy"])
-            sharpe = p.get("sharpe")
-            sharpe_str = f"{sharpe:.2f}" if sharpe is not None and not pd.isna(sharpe) else "n/a"
             lines.append(
                 f"- {name}: {p['total_return'] * 100:+.1f}% total return, "
-                f"max drawdown {p['max_drawdown'] * 100:.1f}%, Sharpe {sharpe_str}."
+                f"max drawdown {p['max_drawdown'] * 100:.1f}%, {_sharpe_phrase(p)}."
             )
+        note = _distinguishability_note(facts.get("portfolio_pairs", []))
+        if note:
+            lines.append(note)
     lines += ["", "_Watch: macro releases and any shift in the yield-curve spread._"]
     return "\n".join(lines)
 
