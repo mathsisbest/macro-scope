@@ -158,3 +158,48 @@ def portfolio_summary(df: pd.DataFrame) -> pd.DataFrame:
             "sharpe_252": "Sharpe (252d)",
         }
     )
+
+
+def portfolio_scorecard(stats: pd.DataFrame) -> pd.DataFrame:
+    """Per-strategy full-sample Sharpe with its bootstrap CI — the risk-adjusted scorecard."""
+    out = stats.assign(Strategy=stats["strategy"].map(lambda s: _STRATEGY_LABELS.get(s, s)))
+    out = out.set_index("Strategy")[["sharpe", "sharpe_lo", "sharpe_hi"]]
+    return out.rename(columns={"sharpe": "Sharpe", "sharpe_lo": "CI low", "sharpe_hi": "CI high"})
+
+
+def portfolio_pairs_table(pairs: pd.DataFrame) -> pd.DataFrame:
+    """Pairwise Sharpe-difference + CI + distinguishability, labelled for display."""
+
+    def lab(strategy: str) -> str:
+        return _STRATEGY_LABELS.get(strategy, strategy)
+
+    rows = {
+        "Pair": [
+            f"{lab(a)} − {lab(b)}"
+            for a, b in zip(pairs["strategy_a"], pairs["strategy_b"], strict=True)
+        ],
+        "Δ Sharpe": pairs["sharpe_diff"].to_numpy(),
+        "CI low": pairs["diff_lo"].to_numpy(),
+        "CI high": pairs["diff_hi"].to_numpy(),
+        "Distinguishable": pairs["distinguishable"].to_numpy(),
+    }
+    return pd.DataFrame(rows).set_index("Pair")
+
+
+def distinguishability_verdict(pairs: pd.DataFrame) -> str:
+    """One honest line: are any strategy Sharpe differences statistically distinguishable?"""
+    if pairs.empty:
+        return "Not enough strategies to compare."
+    distinct = pairs[pairs["distinguishable"]]
+    n = len(pairs)
+    if distinct.empty:
+        return (
+            f"None of the {n} strategy comparisons is statistically distinguishable by Sharpe — "
+            "every difference CI includes zero, i.e. the gaps are within noise at this sample size."
+        )
+
+    def lab(strategy: str) -> str:
+        return _STRATEGY_LABELS.get(strategy, strategy)
+
+    named = ", ".join(f"{lab(r.strategy_a)} vs {lab(r.strategy_b)}" for r in distinct.itertuples())
+    return f"{len(distinct)} of {n} comparisons are statistically distinguishable: {named}."

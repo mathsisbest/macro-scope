@@ -55,6 +55,20 @@ def portfolio_returns() -> pd.DataFrame:
     )
 
 
+def portfolio_strategy_stats() -> pd.DataFrame:
+    return query(
+        "select strategy, sharpe, sharpe_lo, sharpe_hi, n_obs, n_boot, ci_pct "
+        "from marts.fct_portfolio_strategy_stats order by sharpe desc"
+    )
+
+
+def portfolio_strategy_pairs() -> pd.DataFrame:
+    return query(
+        "select strategy_a, strategy_b, sharpe_diff, diff_lo, diff_hi, distinguishable "
+        "from marts.fct_portfolio_strategy_pairs order by strategy_a, strategy_b"
+    )
+
+
 def crypto_intraday(symbol: str) -> pd.DataFrame:
     return query(
         "select ts, price_usd, pct_change from marts.fct_crypto_intraday "

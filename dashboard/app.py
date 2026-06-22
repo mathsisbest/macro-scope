@@ -163,6 +163,10 @@ with tab_portfolio:
             "Walk-forward backtest: three allocation strategies vs a 60/40 benchmark — same dates, "
             "monthly rebalancing and round-trip costs, so the comparison is like-for-like."
         )
+        # Findings, promoted to the top: the honest bootstrap verdict before any chart.
+        pairs = data.portfolio_strategy_pairs()
+        if not pairs.empty:
+            st.info("📊 " + charts.distinguishability_verdict(pairs))
         st.plotly_chart(charts.portfolio_cumulative_chart(pf), use_container_width=True)
         cda, cdb = st.columns(2)
         with cda:
@@ -180,3 +184,27 @@ with tab_portfolio:
             ),
             use_container_width=True,
         )
+
+        # Risk-adjusted scorecard: full-sample Sharpe + bootstrap CIs + pairwise distinguishability.
+        stats = data.portfolio_strategy_stats()
+        if not stats.empty:
+            ci = int(round(stats["ci_pct"].iloc[0] * 100))
+            st.subheader(f"Risk-adjusted scorecard — Sharpe with {ci}% bootstrap CI")
+            sc1, sc2 = st.columns(2)
+            with sc1:
+                st.dataframe(
+                    charts.portfolio_scorecard(stats).style.format("{:.2f}"),
+                    use_container_width=True,
+                )
+            with sc2:
+                if not pairs.empty:
+                    st.dataframe(
+                        charts.portfolio_pairs_table(pairs).style.format(
+                            {"Δ Sharpe": "{:.2f}", "CI low": "{:.2f}", "CI high": "{:.2f}"}
+                        ),
+                        use_container_width=True,
+                    )
+            st.caption(
+                f"Stationary block-bootstrap ({stats['n_boot'].iloc[0]:,} resamples, "
+                f"{stats['n_obs'].iloc[0]} obs). Distinguishable = Sharpe-diff CI excludes 0."
+            )
