@@ -53,3 +53,23 @@ models:
               values: ["equal_weight", "inverse_vol", "risk_parity", "sixty_forty"]
       - name: date
         tests: [not_null]
+
+  - name: fct_portfolio_strategy_stats
+    description: "Per-strategy annualised Sharpe with stationary block-bootstrap confidence intervals (uncertainty quantification). Grain: one row per strategy."
+    columns:
+      - name: strategy
+        tests:
+          - not_null
+          - unique
+          - accepted_values:
+              values: ["equal_weight", "inverse_vol", "risk_parity", "sixty_forty"]
+
+  - name: fct_portfolio_strategy_pairs
+    description: "Pairwise bootstrap Sharpe-difference CIs; distinguishable = the difference CI excludes zero. Grain: one row per unordered strategy pair."
+    columns:
+      - name: strategy_a
+        tests: [not_null]
+      - name: strategy_b
+        tests: [not_null]
+      - name: distinguishable
+        tests: [not_null]
