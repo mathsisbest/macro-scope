@@ -10,8 +10,10 @@ endif
 
 # The local gate runs strictly against a local DuckDB file — never MotherDuck — even if the
 # developer's .env enables MotherDuck. Empty MotherDuck vars force use_motherduck = False.
+# It also clears the LLM provider keys so `mmi ai` always takes the deterministic offline
+# template (no network, no metered API call) — the gate stays hermetic and £0 regardless of .env.
 CI_DB := $(CURDIR)/data/ci.duckdb
-CI_ENV := MMI_MOTHERDUCK_DATABASE= MOTHERDUCK_TOKEN= MMI_DUCKDB_PATH=$(CI_DB)
+CI_ENV := MMI_MOTHERDUCK_DATABASE= MOTHERDUCK_TOKEN= MMI_DUCKDB_PATH=$(CI_DB) GEMINI_API_KEY= GROQ_API_KEY= ANTHROPIC_API_KEY=
 # The dev DuckDB (matches settings.duckdb_path = REPO_ROOT/data/mmi.duckdb). Absolute, so dbt
 # resolves it correctly when run with --project-dir from the repo root (the profile default
 # `../data/mmi.duckdb` is relative to transform/ and otherwise resolves one dir too high).
@@ -82,6 +84,8 @@ ci: ## Full local gate — run before every PR; the reviewer runs this too (no G
 	$(CI_ENV) $(PY) -m mmi.cli portfolio
 	$(CI_ENV) $(PY) -c "import duckdb, os; c = duckdb.connect(os.environ['MMI_DUCKDB_PATH']); c.execute('drop schema if exists marts cascade'); c.execute('drop schema if exists staging cascade'); c.close()"
 	$(CI_ENV) $(BIN)dbt build --project-dir transform --profiles-dir transform --target dev
+	$(CI_ENV) $(PY) -m mmi.cli ml
+	$(CI_ENV) $(PY) -m mmi.cli ai
 	$(CI_ENV) PYTHONPATH=. $(PY) scripts/dashboard_smoke.py
 	$(BIN)pytest
 	@echo "make ci: PASS"
