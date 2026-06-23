@@ -1,6 +1,7 @@
 """Markets & Macro Intelligence — Streamlit dashboard (BI layer).
 
-Run: `streamlit run dashboard/app.py` (or `make dashboard`).
+Run: `make dashboard` (or `make demo`). A bare `streamlit run dashboard/app.py` needs the repo
+root on PYTHONPATH (so `from dashboard import ...` resolves) — the make targets set that for you.
 Reads the dbt marts from DuckDB; everything visual is defined in code.
 """
 
