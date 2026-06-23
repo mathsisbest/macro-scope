@@ -1,9 +1,9 @@
 """Dashboard read-path smoke: exercise the marts-backed accessors so schema drift fails CI.
 
-Run after `mmi seed` + `dbt build` against a local DuckDB. Because dashboard.data.query() only
-swallows missing-table errors, a renamed/removed column on any marts table raises here.
-(The ML/AI marts — model_metrics/ml_forecast/fct_regime/market_brief — are intentionally not
-exercised: `make ci` does not run `mmi ml`/`mmi ai`, so those tables don't exist in ci.duckdb.)
+Run after `mmi seed` + `dbt build` + `mmi ml` + `mmi ai` against a local DuckDB. Because
+dashboard.data.query() only swallows missing-table errors, a renamed/removed column on any marts
+table raises here. The ML/AI marts (model_metrics/ml_forecast/fct_regime/market_brief) are now
+exercised too, since `make ci` runs `mmi ml`/`mmi ai` before this smoke.
 """
 
 from dashboard import data
@@ -102,5 +102,38 @@ if not btc_effect.empty:
     charts.btc_effect_chart(btc_effect)
     assert isinstance(charts.btc_effect_verdict(btc_effect), str)
     print(f"btc effect read-path OK ({len(btc_effect)} strategies)")
+
+# ML/AI read-path: `make ci` now runs `mmi ml` + `mmi ai` before this smoke, so these marts exist
+# and drift on the ML/AI dashboard tabs is caught here too. model_metrics/ml_forecast are only
+# populated when a symbol has enough history to backtest (guard on non-empty); the regime labels
+# and the brief are always written, so the brief is asserted present.
+metrics = data.model_metrics()
+if not metrics.empty:
+    assert {"model", "symbol", "metric", "value", "trained_at"} <= set(metrics.columns), (
+        f"marts.model_metrics columns drifted: {set(metrics.columns)}"
+    )
+forecast = data.ml_forecast()
+if not forecast.empty:
+    assert {"symbol", "as_of", "predicted_next_return", "model"} <= set(forecast.columns), (
+        f"marts.ml_forecast columns drifted: {set(forecast.columns)}"
+    )
+# fct_regime is always written by `mmi ml`; require at least one asset to carry labelled regimes
+# (the accessor's explicit SELECT also raises on a renamed column, so drift fails regardless).
+regime_found = False
+for sym in assets["symbol"].tolist():
+    reg = data.regimes(sym)
+    if not reg.empty:
+        assert {"date", "vol_20d", "regime"} <= set(reg.columns), (
+            f"marts.fct_regime columns drifted: {set(reg.columns)}"
+        )
+        regime_found = True
+        break
+assert regime_found, "marts.fct_regime has no rows for any asset — `mmi ml` did not label regimes"
+brief = data.latest_brief()
+assert not brief.empty, "marts.market_brief is empty — `mmi ai` did not persist a brief"
+assert {"created_at", "engine", "brief"} <= set(brief.columns), (
+    f"marts.market_brief columns drifted: {set(brief.columns)}"
+)
+print(f"ml/ai read-path OK (brief engine: {brief.iloc[0]['engine']}, {len(metrics)} metric rows)")
 
 print(f"dashboard read-path OK ({len(assets)} assets, core marts accessors exercised)")
