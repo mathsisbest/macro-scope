@@ -15,26 +15,35 @@ and serves it through a Streamlit dashboard. It's a **portfolio project** for th
 - **High-code, not BI tools.** No Power BI / Tableau; all charts/layout defined in Python.
 - **Private GitHub repo.** Future-proof; deliberately uses GenAI.
 - Owner is a product designer (SaaS/AI) in London — values clarity and good SWE hygiene.
+- **Commit identity:** author commits as `mathsisbest` (`33107428+mathsisbest@users.noreply.github.com`).
+  Never let an unrelated work email author.
 
-## Dev workflow (two-Claude: implementer + reviewer)
+## Dev workflow
 - **Small, single-concern PRs.** One concern per PR (~1–5 files), branch `pNN-slug`, with a
   structured body (concern / what changed / risk / `make ci` result / questions). Move fast.
 - **Local-first testing is the gate — NOT GitHub Actions.** Run `make ci` (ruff, ruff format,
   mypy, seed, `dbt build`+tests, dashboard smoke, pytest) before every PR and paste the result in
   the PR body. One-time setup: `make setup` (needs `brew install python@3.11`).
-- **GitHub Actions is disabled** (`ci.yml` is `workflow_dispatch`-only) to preserve the free tier.
-  Don't re-enable auto-runs without the owner's say-so.
-- **Reviewer = a separate Claude session** that runs `/review-pr <n>` and follows
-  `docs/REVIEW_GUIDE.md` (skeptical checklist + hard constraints; posts the verdict via
-  `gh pr review`). Implementer and reviewer interact only through the repo + PR comments — never
-  via chat relay.
+- **GitHub Actions is disabled by default** (`ci.yml` is `workflow_dispatch`-only) to preserve the
+  free tier; enable a workflow only to run the scheduled MotherDuck ingest, with the owner's say-so.
+
+## Roles & session kickoff (three-Claude)
+Three separate Claude Code sessions, each a fresh `/clear`ed terminal. `CLAUDE.md` + `MEMORY.md`
+auto-load, so a kickoff only needs the role + the task.
+- **Claude 1 — Implementer.** Builds one small single-concern PR (branch `pNN-slug`, `make ci`,
+  structured body). Kickoff: `Implementer: build <issue #N / task>.`
+- **Claude 2 — Reviewer.** Separate session; runs `/review-pr <n>` (follows `docs/REVIEW_GUIDE.md`,
+  posts the verdict via `gh pr review`). Interacts with the implementer only through the repo +
+  PR comments — never chat relay. Kickoff: `/review-pr <n>`.
+- **Claude 3 — Architect.** Read-only strategy / Q&A; **no commits**. Catches up via open issues +
+  `gh pr list` + recent `git log` before answering, then hands specs to #1. Kickoff: `Architect: <question>.`
 
 ## Key decisions (and why)
 1. **Domain = Markets & Macro** (chosen on free-data availability):
    - Crypto via **CoinGecko** (free, 100 calls/min) → the genuine high-frequency "streaming" story.
-   - Equities/ETFs/FX + daily BTC via **Yahoo** v8 chart (adjusted close = total return, no
-     key) → deep history for ML. Stooq is a dormant fallback (its free CSV now returns a JS
-     challenge); it is out of `EXTRACTORS` and untested.
+   - Equities/ETFs/bonds/commodities/FX/daily-crypto via the **Yahoo v8 chart** extractor (no key,
+     adjusted close = total return) → deep daily history for ML. (Stooq retired — its free endpoint
+     now returns a JS challenge, not CSV.)
    - Macro via **FRED** (free key) + **World Bank** (no key) → analytical backbone.
    - **Sports betting is an OPTIONAL Phase-2 module** (PLAN §13), not core: The Odds API free
      tier (~500 credits/mo) is too thin to anchor streaming.
@@ -47,18 +56,9 @@ and serves it through a Streamlit dashboard. It's a **portfolio project** for th
    ⚠️ **The Claude API is metered/not free** — the owner's Claude subscription does NOT cover it.
    Keep the free default; Claude is an opt-in switch.
 
-## Current state (verified in the scaffolding session)
-- ✅ `ruff check` clean, `ruff format --check` clean.
-- ✅ `pytest` → 5/5 pass, 72% coverage.
-- ✅ Full pipeline ran end-to-end on synthetic sample data: `mmi seed` → marts → `mmi ml`
-  → `mmi ai` (offline template brief). All marts populate.
-- **dbt is the canonical transform layer** and runs in CI (`dbt build` + tests on seeded data,
-  `--target dev`). The Python SQL fallback (`mmi build` / `src/mmi/transform_fallback.py`) is
-  **demo-only** — it mirrors the dbt marts so `make demo` works without dbt; it is not canonical.
-  (The first green CI run verifies dbt compiles/passes end-to-end.)
-- ✅ **Pushed to GitHub:** `mathsisbest/markets-macro-intelligence` (private), default branch `main`.
-- ✅ **Storage (owner-confirmed):** DuckDB locally (dev/CI) + **MotherDuck** free tier for the
-  deployed/scheduled path; the `.duckdb` binary is **not** committed to git.
+## Current status — read the live sources, not this file
+Status drifts, so it's NOT hand-maintained here. For where things stand, read: **open issues**,
+`gh pr list`, recent `git log`, and the milestone plan in **PLAN.md §11 / issue #7**.
 
 ## How to run
 ```bash
@@ -79,6 +79,8 @@ make ingest && make dbt-build && make ml && make ai && make dashboard
   (delete-then-insert on natural keys), audited in `raw.pipeline_runs`.
 - dbt: medallion layout + tests + source freshness; custom schema-name macro keeps schemas
   clean (`staging`, `marts`). Asset universe is declarative in `config/assets.yml`.
+  **dbt is the canonical transform layer**; the Python SQL fallback (`transform_fallback.py` /
+  `mmi build`) is **demo-only** — it mirrors the marts so `make demo` runs without dbt.
 - ML: leakage-free features, **walk-forward** backtest, **explicit baselines** (honesty over
   leaderboard-chasing). Metrics persisted to `marts.model_metrics`.
 - Lint/format: ruff (line length 100). Tests: pytest. Pre-commit configured.
@@ -87,27 +89,12 @@ make ingest && make dbt-build && make ml && make ai && make dashboard
 `src/mmi/{ingestion,ml,ai,utils}` · `transform/` (dbt) · `dashboard/` (Streamlit) ·
 `config/` · `tests/` · `.github/workflows/` (ci.yml — manual; ingest.yml — scheduled refresh, disabled by default) · `docs/` (+ ADRs).
 
-## Immediate next steps / roadmap
-1. ✅ Pushed + reviewed by Codex (issue #1). **P0 hygiene** (this branch): honest token-free CI
-   (incl. dbt), MotherDuck storage plumbing, precise cron failure semantics, doc alignment.
-2. Wire `MOTHERDUCK_TOKEN` (see deploy-note.md) + run the scheduled refresh; then P1: reconcile any
-   dbt-vs-fallback drift, source-specific watermarks, macro ML features, dashboard polish.
-3. **Capstone = issue #7** (portfolio backtesting / analytics / AI), built in slices 0–D
-   (see PLAN §11). Phase 0 (Yahoo adjusted-close ingestion, which replaced the broken Stooq
-   path) and the full capstone (A–D: honest backtest → bootstrap stats → gated ML experiment →
-   BTC window + grounded brief) are **complete and merged to main**. Focus now = go-live
-   (public hosting, live keyless feed). The phased plan + critical review live on issue #7.
-4. Get free keys (FRED, CoinGecko, Gemini); run live `make ingest`; deploy to **Streamlit
-   Community Cloud** (deploys from private repos; auto-redeploys on push). See
-   `.github/workflows/deploy-note.md`.
-5. Work PLAN §11 phases (DE → AE → ML → GenAI → polish) as clean per-skill PR sets.
-
 ## Likely review talking points (be ready to discuss/improve)
 - **ML baseline:** on synthetic sample data the model *trails* the naive baseline — expected
   (no signal). On real data, re-evaluate; consider classification (direction) + proper CV,
   and don't oversell predictive power.
-- **Data-in-git:** RESOLVED in P0 — the cron writes to **MotherDuck** instead of committing the
-  `.duckdb` binary; nothing data-related is pushed back to the repo.
+- **No data in git:** the scheduled cron writes to **MotherDuck**; the `.duckdb` binary and any
+  ingested data are never committed.
 - **Secrets & freshness:** ensure no keys leak; surface dbt source-freshness in the UI.
-- **Yahoo** (v8 chart) is an unofficial endpoint — treat as best-effort; FRED/World Bank are the
-  reliable core. (Stooq is dormant.)
+- **Yahoo v8** is an unofficial endpoint — treat as best-effort; **FRED / World Bank** are the
+  reliable core.
