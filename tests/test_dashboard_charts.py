@@ -117,3 +117,36 @@ def test_ml_verdict_reports_edge_when_distinguishable():
     verdict = charts.ml_verdict(_gate(0.20), _ml_pair(distinguishable=True))
     assert "distinguishable" in verdict
     assert "did not beat" not in verdict
+
+
+def _btc_effect(rows: list) -> pd.DataFrame:
+    cols = [
+        "strategy",
+        "sharpe_ex",
+        "sharpe_inc",
+        "sharpe_diff",
+        "diff_lo",
+        "diff_hi",
+        "distinguishable",
+    ]
+    return pd.DataFrame(rows, columns=cols)
+
+
+def test_btc_effect_verdict_reports_distinguishable_hurt():
+    eff = _btc_effect(
+        [
+            ["equal_weight", 1.26, -0.32, -1.58, -2.76, -0.32, True],
+            ["sixty_forty", 3.73, 3.73, 0.0, 0.0, 0.0, False],
+        ]
+    )
+    verdict = charts.btc_effect_verdict(eff)
+    assert "1 of 2" in verdict and "hurt" in verdict and "Equal weight" in verdict
+
+
+def test_btc_effect_verdict_reports_none_when_all_within_noise():
+    eff = _btc_effect([["mvo_ml", -0.6, -0.51, 0.09, -0.24, 0.37, False]])
+    assert "no statistically distinguishable difference" in charts.btc_effect_verdict(eff)
+
+
+def test_btc_effect_verdict_handles_empty():
+    assert "not computed" in charts.btc_effect_verdict(_btc_effect([]))
