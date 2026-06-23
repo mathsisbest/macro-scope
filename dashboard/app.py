@@ -82,6 +82,13 @@ if kpis:
 st.divider()
 
 # --------------------------------------------------------------------------- tabs
+# Human labels for the Phase-D backtest windows (the selector in the Portfolio tab).
+_WINDOW_LABELS = {
+    "ex_btc_2002": "2002–present · ex-BTC",
+    "ex_btc_2015": "2015–present · ex-BTC (BTC era)",
+    "inc_btc_2015": "2015–present · incl. BTC",
+}
+
 tab_mkt, tab_macro, tab_ml, tab_ai, tab_portfolio = st.tabs(
     ["Markets", "Macro", "ML forecast", "AI brief", "Portfolio"]
 )
@@ -155,16 +162,28 @@ with tab_ai:
         st.rerun()
 
 with tab_portfolio:
-    pf = data.portfolio_returns()
-    if pf.empty:
+    # Phase D: pick the backtest window once, here, and thread it into every panel below — a single
+    # choke point so every chart/table is for exactly one window (no cross-window aggregation).
+    present_windows = data.portfolio_windows()
+    if not present_windows:
         st.info("No portfolio backtest yet. Run `mmi portfolio` to compute strategy returns.")
     else:
+        window_id = present_windows[0]
+        if len(present_windows) > 1:
+            window_id = st.radio(
+                "Backtest window",
+                present_windows,
+                format_func=lambda w: _WINDOW_LABELS.get(w, w),
+                horizontal=True,
+                key="portfolio_window",
+            )
+        pf = data.portfolio_returns(window_id)
         st.caption(
             "Walk-forward backtest: three allocation strategies vs a 60/40 benchmark — same dates, "
             "monthly rebalancing and round-trip costs, so the comparison is like-for-like."
         )
         # Findings, promoted to the top: the honest bootstrap verdict before any chart.
-        pairs = data.portfolio_strategy_pairs()
+        pairs = data.portfolio_strategy_pairs(window_id)
         if not pairs.empty:
             st.info("📊 " + charts.distinguishability_verdict(pairs))
         st.plotly_chart(charts.portfolio_cumulative_chart(pf), use_container_width=True)
@@ -186,7 +205,7 @@ with tab_portfolio:
         )
 
         # Risk-adjusted scorecard: full-sample Sharpe + bootstrap CIs + pairwise distinguishability.
-        stats = data.portfolio_strategy_stats()
+        stats = data.portfolio_strategy_stats(window_id)
         if not stats.empty:
             ci = int(round(stats["ci_pct"].iloc[0] * 100))
             st.subheader(f"Risk-adjusted scorecard — Sharpe with {ci}% bootstrap CI")
@@ -210,7 +229,7 @@ with tab_portfolio:
             )
 
         # Return attribution — what drove each strategy's return.
-        attr = data.portfolio_attribution()
+        attr = data.portfolio_attribution(window_id)
         if not attr.empty:
             st.subheader("Return attribution")
             astrat = st.selectbox(
@@ -219,7 +238,7 @@ with tab_portfolio:
             st.plotly_chart(charts.attribution_chart(attr, astrat), use_container_width=True)
 
         # Regime-conditional performance — behaviour across market volatility regimes.
-        regime = data.portfolio_regime_performance()
+        regime = data.portfolio_regime_performance(window_id)
         if not regime.empty:
             st.subheader("Performance by market volatility regime")
             st.plotly_chart(charts.regime_sharpe_chart(regime), use_container_width=True)
@@ -228,7 +247,7 @@ with tab_portfolio:
             )
 
         # ML experiment: did the forecast add value? (the gate makes mvo_ml ≈ mvo_histmean legible)
-        gate = data.portfolio_ml_gate()
+        gate = data.portfolio_ml_gate(window_id)
         if not gate.empty:
             st.subheader("ML experiment — does the forecast add value?")
             st.info("🔬 " + charts.ml_verdict(gate, pairs))
