@@ -22,12 +22,9 @@ jobs:
     env:
       MMI_MOTHERDUCK_DATABASE: mmi
       MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
-      # lowercase: dbt-duckdb / the MotherDuck extension reads this to authenticate
-      # (so the token stays out of the dbt DSN).
-      motherduck_token: ${{ secrets.MOTHERDUCK_TOKEN }}
       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
       COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
-      LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
+      LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'gemini' }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
     steps:
@@ -51,6 +48,10 @@ jobs:
       - name: Refresh MotherDuck
         run: |
           set -euo pipefail
+          # duckdb's MotherDuck extension reads the lowercase name; supply it only here
+          # (job-level env can't hold both cases — they collide). The mmi commands also
+          # self-export it from settings; this covers the standalone `dbt build`.
+          export motherduck_token="$MOTHERDUCK_TOKEN"
           mmi ingest
           dbt build --project-dir transform --profiles-dir transform --target prod
           mmi ml
