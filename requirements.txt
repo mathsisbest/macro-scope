@@ -1,0 +1,6 @@
+# Streamlit Community Cloud reads this and installs with pip (not Poetry, which can't
+# resolve our self-referential `all` extra). Installs the mmi package — pulling its core
+# deps (incl. duckdb<1.5.4, required for MotherDuck) — plus the `dashboard` extra
+# (streamlit, plotly). The dashboard needs only core + dashboard at runtime;
+# ml / transform(dbt) / portfolio / dev are intentionally excluded.
+.[dashboard]
