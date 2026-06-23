@@ -88,9 +88,10 @@ def _assets() -> pd.DataFrame:
                 )
     # Daily crypto (BTC) for the portfolio backtest. Deliberately starts LATER than the other
     # assets (trailing window) to mimic BTC's later inception, so the multi-window backtest's
-    # staggered-start handling is genuinely exercised by `make ci`. Higher vol than the others but
-    # held under the +/-50% daily-return bound (assert_returns_within_bounds).
-    btc_dates = dates[-250:]
+    # staggered-start handling is genuinely exercised by `make ci`. The span (330 of 400 days)
+    # stays comfortably above the 252-day lookback so the inc/ex 2015 windows are backtestable in
+    # CI. Higher vol than the others but held under the +/-50% bound (assert_returns_within_bounds).
+    btc_dates = dates[-330:]
     for sym in assets.get("crypto_daily", []):
         stored = sym.split("-")[0]
         close = _walk(60000, len(btc_dates), 0.035)
