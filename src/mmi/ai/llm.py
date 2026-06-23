@@ -8,7 +8,7 @@ If no key is configured, callers fall back to a deterministic template (see narr
 from __future__ import annotations
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from mmi.settings import settings
 from mmi.utils.logging import get_logger
@@ -40,7 +40,15 @@ def provider_model() -> str:
     return f"{settings.llm_provider}:{MODELS[settings.llm_provider]}"
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10), reraise=True)
+@retry(
+    # Only retry transient HTTP failures (rate limits, 5xx, network). A deterministic
+    # RuntimeError (e.g. Gemini returned no text) is NOT retried — it would just burn ~11s of
+    # backoff + free quota before failing the same way, so we fail fast to the template.
+    retry=retry_if_exception_type(httpx.HTTPError),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(min=1, max=10),
+    reraise=True,
+)
 def complete(prompt: str, *, system: str | None = None, max_tokens: int = 800) -> str:
     """Return a completion from the configured provider."""
     provider = settings.llm_provider
