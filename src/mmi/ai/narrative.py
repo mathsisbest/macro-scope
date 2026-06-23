@@ -12,10 +12,16 @@ from pathlib import Path
 import pandas as pd
 
 from mmi.ai import llm
+from mmi.portfolio import windows
 from mmi.settings import settings
 from mmi.utils.logging import get_logger
 
 log = get_logger("ai.narrative")
+
+# The brief narrates the long-history baseline window (the dashboard default), so its portfolio
+# facts are coherent now that the marts carry three windows. The BTC-effect (a cross-window
+# comparison) is grounded separately.
+_BRIEF_WINDOW = windows.DEFAULT_WINDOW
 
 _SYSTEM = (
     "You are a concise markets analyst. Given structured facts (JSON-like), write a 4-6 sentence "
@@ -24,6 +30,9 @@ _SYSTEM = (
     "If portfolio strategy stats are present, compare the allocation strategies against the 60/40 "
     "benchmark in one sentence; when a Sharpe confidence interval is wide or a pair is not "
     "distinguishable (see portfolio_pairs), say so plainly rather than implying an edge. "
+    "If ml_gate is present, state in one sentence the mean weight the ML forecast earned in the "
+    "mvo_ml blend and, when that weight is near zero, that the forecast showed no out-of-sample "
+    "edge so mvo_ml tracked the historical-mean baseline. "
     "End with one sentence on what to watch."
 )
 
@@ -81,9 +90,10 @@ def gather_facts(con) -> dict:
 
     # Portfolio facts grounded in the real marts: returns-derived total return + worst drawdown,
     # joined to the bootstrap full-sample Sharpe + its confidence interval (one row per strategy).
+    # Scoped to ONE window (the marts now carry three) so the per-strategy aggregates are coherent.
     portfolio = _q(
         con,
-        """
+        f"""
         select s.strategy,
                agg.total_return,
                agg.max_drawdown,
@@ -96,8 +106,10 @@ def gather_facts(con) -> dict:
                    arg_max(cumulative_return, date) as total_return,
                    min(drawdown) as max_drawdown
             from marts.fct_portfolio_returns
+            where window_id = '{_BRIEF_WINDOW}'
             group by strategy
         ) agg on agg.strategy = s.strategy
+        where s.window_id = '{_BRIEF_WINDOW}'
         order by s.sharpe desc
         """,
     )
@@ -107,10 +119,21 @@ def gather_facts(con) -> dict:
     # Pairwise distinguishability so the brief can hedge when differences are within noise.
     pairs = _q(
         con,
-        "select strategy_a, strategy_b, distinguishable from marts.fct_portfolio_strategy_pairs",
+        "select strategy_a, strategy_b, distinguishable from marts.fct_portfolio_strategy_pairs "
+        f"where window_id = '{_BRIEF_WINDOW}'",
     )
     if not pairs.empty:
         facts["portfolio_pairs"] = pairs.to_dict("records")
+
+    # The ML gate: the mean weight the forecast earned in mvo_ml's blend. A near-zero weight is the
+    # honest signal that the ML showed no out-of-sample edge (so mvo_ml ≈ mvo_histmean).
+    gate = _q(
+        con,
+        "select avg(forecast_weight) as mean_weight, max(forecast_weight) as max_weight "
+        f"from marts.fct_portfolio_ml_gate where window_id = '{_BRIEF_WINDOW}'",
+    )
+    if not gate.empty and not pd.isna(gate.iloc[0]["mean_weight"]):
+        facts["ml_gate"] = gate.iloc[0].to_dict()
 
     return facts
 
@@ -179,6 +202,20 @@ def _offline_brief(facts: dict) -> str:
         note = _distinguishability_note(facts.get("portfolio_pairs", []))
         if note:
             lines.append(note)
+        gate = facts.get("ml_gate")
+        if gate and gate.get("mean_weight") is not None:
+            weight = gate["mean_weight"]
+            if weight < 0.05:
+                lines.append(
+                    f"- ML gate: the forecast earned a mean weight of {weight:.0%} in mvo_ml's "
+                    "blend — no reliable out-of-sample edge, so mvo_ml tracked the historical-mean "
+                    "baseline."
+                )
+            else:
+                lines.append(
+                    f"- ML gate: the forecast earned a mean weight of {weight:.0%} in mvo_ml's "
+                    "blend over the historical-mean prior."
+                )
     lines += ["", "_Watch: macro releases and any shift in the yield-curve spread._"]
     return "\n".join(lines)
 
