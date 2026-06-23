@@ -30,7 +30,8 @@ def test_build_returns_panel_pivots_to_wide():
 
 
 def test_compute_portfolio_returns_covers_all_strategies_and_benchmark():
-    out = compute_portfolio_returns(_long(150), lookback=30, freq="M", cost=0.001)
+    # include_ml=False keeps this fast (no RF forecast); mvo_ml has its own dedicated test.
+    out = compute_portfolio_returns(_long(150), lookback=30, freq="M", cost=0.001, include_ml=False)
     assert set(out["strategy"].unique()) == {
         "equal_weight",
         "inverse_vol",
@@ -42,7 +43,9 @@ def test_compute_portfolio_returns_covers_all_strategies_and_benchmark():
 
 
 def test_benchmark_skipped_when_its_tickers_absent():
-    out = compute_portfolio_returns(_long(150, ("A", "B", "C")), lookback=30, freq="M")
+    out = compute_portfolio_returns(
+        _long(150, ("A", "B", "C")), lookback=30, freq="M", include_ml=False
+    )
     assert "sixty_forty" not in set(out["strategy"].unique())
     assert {"equal_weight", "inverse_vol", "risk_parity", "mvo_histmean"} == set(
         out["strategy"].unique()
@@ -71,4 +74,5 @@ def test_cmd_portfolio_lands_raw_portfolio_returns(monkeypatch, tmp_path):
         "risk_parity",
         "mvo_histmean",
         "sixty_forty",
+        "mvo_ml",
     }
