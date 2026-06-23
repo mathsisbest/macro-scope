@@ -224,8 +224,14 @@ def generate_brief(con) -> str:
     """Produce the brief, persist it to data/briefs/ and marts.market_brief."""
     facts = gather_facts(con)
     if llm.available():
-        text = llm.complete(_build_prompt(facts), system=_SYSTEM)
-        engine = llm.provider_model()
+        try:
+            # 2048 (not the 800 default) so medium thinking has room before the answer.
+            text = llm.complete(_build_prompt(facts), system=_SYSTEM, max_tokens=2048)
+            engine = llm.provider_model()
+        except Exception as exc:  # noqa: BLE001 - GenAI is best-effort; template is the floor
+            log.warning("LLM brief failed (%s); falling back to offline template", exc)
+            text = _offline_brief(facts)
+            engine = "offline-template (llm-failed)"
     else:
         text = _offline_brief(facts)
         engine = "offline-template"
