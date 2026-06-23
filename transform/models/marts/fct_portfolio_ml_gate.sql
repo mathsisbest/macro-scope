@@ -3,6 +3,7 @@
 -- lambda). A persistently low forecast_weight is the evidence that mvo_ml ≈ mvo_histmean *because*
 -- the forecast has no edge — not a bug. Computed by `mmi portfolio`, landed in raw.
 select
+    window_id,
     date,
     forecast_skill,
     forecast_weight
