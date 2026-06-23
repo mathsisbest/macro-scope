@@ -117,7 +117,7 @@ def build_ml_mu_panel(
                 skills.append(max(0.0, 1.0 - float(np.mean(err_fc)) / float(np.mean(err_prior))))
         skill = float(np.mean(skills)) if skills else 0.0
         lam = lambda_max * skill
-        gate_rows.append({"date": t, "skill": skill, "lambda": lam})
+        gate_rows.append({"date": t, "forecast_skill": skill, "forecast_weight": lam})
         for sym in symbols:
             hist = float(mu_hist[t][sym])
             fc = _forecast(t, sym)
@@ -128,12 +128,35 @@ def build_ml_mu_panel(
         # Surface the gate so a "mvo_ml ≈ mvo_histmean" result is visibly because lambda≈0 (no
         # forecast edge), not a silent bug. (C4 lands it as a mart for the dashboard/brief.)
         log.info(
-            "ml gate: mean lambda=%.4f (max %.4f) over %d rebalances",
-            float(gate["lambda"].mean()),
-            float(gate["lambda"].max()),
+            "ml gate: mean forecast_weight=%.4f (max %.4f) over %d rebalances",
+            float(gate["forecast_weight"].mean()),
+            float(gate["forecast_weight"].max()),
             len(gate),
         )
     return pd.DataFrame(mu_rows), gate
+
+
+def compute_ml_mu_panel(
+    asset_daily: pd.DataFrame,
+    *,
+    lookback: int = 252,
+    freq: str = "M",
+    horizon: int = 21,
+    lambda_max: float = 0.5,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build the mvo_ml blended-mu panel + gate ONCE, so callers reuse it (and can land the gate).
+
+    Returns ``(mu_panel [date, symbol, mu], gate [date, forecast_skill, forecast_weight])``.
+    """
+    panel = build_returns_panel(asset_daily).dropna(how="any")
+    rebals = rebalance_dates(panel.index, freq, lookback)
+    if not rebals:
+        empty_mu = pd.DataFrame(columns=["date", "symbol", "mu"])
+        empty_gate = pd.DataFrame(columns=["date", "forecast_skill", "forecast_weight"])
+        return empty_mu, empty_gate
+    return build_ml_mu_panel(
+        panel, rebals, lookback=lookback, horizon=horizon, lambda_max=lambda_max
+    )
 
 
 def _strategy_runs(
@@ -146,9 +169,11 @@ def _strategy_runs(
     horizon: int,
     lambda_max: float,
     include_ml: bool,
+    ml_mu_panel: pd.DataFrame | None = None,
 ):
     """Yield ``(label, returns, contributions)`` for each strategy, the 60/40 benchmark, and (when
-    ``include_ml``) the gated ``mvo_ml``.
+    ``include_ml``) the gated ``mvo_ml``. A precomputed ``ml_mu_panel`` is reused if given (so the
+    forecast runs once across returns + attribution).
 
     Both ``compute_portfolio_returns`` and ``compute_attribution`` iterate this, so the returns and
     their attribution always come from the SAME backtest runs (same panel, dates, costs).
@@ -175,9 +200,11 @@ def _strategy_runs(
         clean = panel.dropna(how="any")  # the forecast + gate need a complete (no-NaN) panel
         rebals = rebalance_dates(clean.index, freq, lookback)
         if rebals:
-            mu_panel, _gate = build_ml_mu_panel(
-                clean, rebals, lookback=lookback, horizon=horizon, lambda_max=lambda_max
-            )
+            mu_panel = ml_mu_panel
+            if mu_panel is None:  # build it here unless a precomputed panel was supplied
+                mu_panel, _gate = build_ml_mu_panel(
+                    clean, rebals, lookback=lookback, horizon=horizon, lambda_max=lambda_max
+                )
             out, contrib = run_backtest_full(
                 clean, strategy=MVO_ML, lookback=lookback, freq=freq, cost=cost, mu_panel=mu_panel
             )
@@ -194,6 +221,7 @@ def compute_portfolio_returns(
     horizon: int = 21,
     lambda_max: float = 0.5,
     include_ml: bool = True,
+    ml_mu_panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Backtest each strategy, the 60/40 benchmark, and (when ``include_ml``) the gated mvo_ml.
 
@@ -211,6 +239,7 @@ def compute_portfolio_returns(
         horizon=horizon,
         lambda_max=lambda_max,
         include_ml=include_ml,
+        ml_mu_panel=ml_mu_panel,
     ):
         result = out.reset_index()
         result.insert(0, "strategy", label)
@@ -228,6 +257,7 @@ def compute_attribution(
     horizon: int = 21,
     lambda_max: float = 0.5,
     include_ml: bool = True,
+    ml_mu_panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Per-(strategy, symbol) return + risk attribution, from the same backtest runs.
 
@@ -251,6 +281,7 @@ def compute_attribution(
         horizon=horizon,
         lambda_max=lambda_max,
         include_ml=include_ml,
+        ml_mu_panel=ml_mu_panel,
     ):
         if contrib.empty:
             continue
