@@ -5,6 +5,10 @@ from __future__ import annotations
 import argparse
 import sys
 import traceback
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 from mmi.utils.db import connect
 from mmi.utils.logging import get_logger
@@ -103,10 +107,10 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
     from mmi.ingestion import DuckDBLoader
     from mmi.ingestion.loader import reset_portfolio_raw_tables
     from mmi.portfolio import compute, windows
-    from mmi.portfolio.stats import bootstrap_strategy_stats
+    from mmi.portfolio.stats import bootstrap_strategy_stats, paired_btc_effect
     from mmi.settings import load_assets
 
-    def run_window(loader: DuckDBLoader, window_id: str, wad) -> tuple[int, int]:
+    def run_window(loader: DuckDBLoader, window_id: str, wad) -> tuple[int, int, pd.DataFrame]:
         # Build the ML forecast + gate ONCE per window, then reuse for returns + attribution.
         ml_mu_panel, ml_gate = compute.compute_ml_mu_panel(wad, window=window_id)
         results = compute.compute_portfolio_returns(wad, ml_mu_panel=ml_mu_panel, window=window_id)
@@ -123,7 +127,7 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         # The ML gate (forecast skill + the weight it earns) makes "mvo_ml ≈ mvo_histmean" legible.
         if not ml_gate.empty:
             loader.upsert("raw.portfolio_ml_gate", ml_gate, ["window_id", "date"])
-        return n, results["strategy"].nunique()
+        return n, results["strategy"].nunique(), results
 
     with connect() as con:
         loader = DuckDBLoader(con)
@@ -146,15 +150,32 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
             )
 
         ran: list[str] = []
+        results_by_window: dict[str, pd.DataFrame] = {}
         for window_id in windows.WINDOWS:
             if window_id != windows.EX_BTC_2002 and btc_floor is None:
                 continue  # 2015 windows need the BTC floor (warned above)
             wad = compute.window_asset_daily(
                 asset_daily, window_id, btc_floor=btc_floor, btc_aligned=btc_aligned
             )
-            n, n_strategies = run_window(loader, window_id, wad)
+            n, n_strategies, results = run_window(loader, window_id, wad)
+            results_by_window[window_id] = results
             log.info("portfolio[%s]: %s rows / %s strategies", window_id, n, n_strategies)
             ran.append(window_id)
+
+        # The BTC effect: Sharpe(inc_btc_2015) − Sharpe(ex_btc_2015) with a PAIRED cross-window
+        # bootstrap CI. Valid only because the two 2015 windows are period-identical (same dates) —
+        # the per-window bootstraps cannot give this CI without overstating the variance.
+        if {windows.EX_BTC_2015, windows.INC_BTC_2015} <= results_by_window.keys():
+            effect = paired_btc_effect(
+                results_by_window[windows.EX_BTC_2015], results_by_window[windows.INC_BTC_2015]
+            )
+            if not effect.empty:
+                loader.upsert("raw.portfolio_btc_effect", effect, ["strategy"])
+                log.info(
+                    "btc effect: %d strategies, %d distinguishable",
+                    len(effect),
+                    int(effect["distinguishable"].sum()),
+                )
     log.info("portfolio: ran %d window(s): %s", len(ran), ", ".join(ran))
     return 0
 
