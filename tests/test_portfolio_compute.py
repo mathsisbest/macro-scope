@@ -7,7 +7,12 @@ import numpy as np
 import pandas as pd
 
 import mmi.cli as cli
-from mmi.portfolio.compute import build_returns_panel, compute_portfolio_returns
+from mmi.portfolio import windows
+from mmi.portfolio.compute import (
+    build_returns_panel,
+    compute_attribution,
+    compute_portfolio_returns,
+)
 
 
 # Use real benchmark tickers (SPY + a bond) so the 60/40 benchmark is produced too.
@@ -43,7 +48,13 @@ def test_compute_portfolio_returns_covers_all_strategies_and_benchmark():
         "mvo_histmean",
         "sixty_forty",
     }
-    assert list(out.columns) == ["strategy", "date", "daily_return", "cumulative_return"]
+    assert list(out.columns) == [
+        "window_id",
+        "strategy",
+        "date",
+        "daily_return",
+        "cumulative_return",
+    ]
 
 
 def test_benchmark_skipped_when_its_tickers_absent():
@@ -54,6 +65,20 @@ def test_benchmark_skipped_when_its_tickers_absent():
     assert {"equal_weight", "inverse_vol", "risk_parity", "mvo_histmean"} == set(
         out["strategy"].unique()
     )
+
+
+def test_compute_stamps_the_window_dimension():
+    # Phase D: every landed frame carries a `window` column; it defaults to the single window D3
+    # ships, and an explicit window is honoured (so D6 can run several).
+    returns = compute_portfolio_returns(_long(150), lookback=30, freq="M", include_ml=False)
+    assert (returns["window_id"] == windows.DEFAULT_WINDOW).all()
+    attribution = compute_attribution(_long(150), lookback=30, freq="M", include_ml=False)
+    assert "window_id" in attribution.columns
+    assert (attribution["window_id"] == windows.DEFAULT_WINDOW).all()
+    tagged = compute_portfolio_returns(
+        _long(150), lookback=30, freq="M", include_ml=False, window=windows.INC_BTC_2015
+    )
+    assert (tagged["window_id"] == windows.INC_BTC_2015).all()
 
 
 def test_cmd_portfolio_lands_raw_portfolio_returns(monkeypatch, tmp_path):

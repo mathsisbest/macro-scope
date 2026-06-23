@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from mmi.ml.forecast_panel import walk_forward_mu
+from mmi.portfolio import windows
 from mmi.portfolio.backtest import (
     FIXED_WEIGHT,
     MVO_ML,
@@ -143,20 +144,28 @@ def compute_ml_mu_panel(
     freq: str = "M",
     horizon: int = 21,
     lambda_max: float = 0.5,
+    window: str = windows.DEFAULT_WINDOW,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Build the mvo_ml blended-mu panel + gate ONCE, so callers reuse it (and can land the gate).
 
-    Returns ``(mu_panel [date, symbol, mu], gate [date, forecast_skill, forecast_weight])``.
+    Returns ``(mu_panel [date, symbol, mu], gate)`` where gate is
+    ``[window_id, date, forecast_skill, forecast_weight]``. The ``window`` is stamped on the landed
+    gate frame (the mu_panel is internal and is not landed).
     """
     panel = build_returns_panel(asset_daily).dropna(how="any")
     rebals = rebalance_dates(panel.index, freq, lookback)
     if not rebals:
         empty_mu = pd.DataFrame(columns=["date", "symbol", "mu"])
-        empty_gate = pd.DataFrame(columns=["date", "forecast_skill", "forecast_weight"])
+        empty_gate = pd.DataFrame(
+            columns=["window_id", "date", "forecast_skill", "forecast_weight"]
+        )
         return empty_mu, empty_gate
-    return build_ml_mu_panel(
+    mu_panel, gate = build_ml_mu_panel(
         panel, rebals, lookback=lookback, horizon=horizon, lambda_max=lambda_max
     )
+    if not gate.empty:
+        gate.insert(0, "window_id", window)
+    return mu_panel, gate
 
 
 def _strategy_runs(
@@ -222,11 +231,12 @@ def compute_portfolio_returns(
     lambda_max: float = 0.5,
     include_ml: bool = True,
     ml_mu_panel: pd.DataFrame | None = None,
+    window: str = windows.DEFAULT_WINDOW,
 ) -> pd.DataFrame:
     """Backtest each strategy, the 60/40 benchmark, and (when ``include_ml``) the gated mvo_ml.
 
-    Columns: ``[strategy, date, daily_return, cumulative_return]``. ``sixty_forty`` is appended when
-    its legs are in the universe; ``mvo_ml`` when ``include_ml`` (it runs the heavier ML forecast).
+    Columns: ``[window_id, strategy, date, daily_return, cumulative_return]``. ``sixty_forty`` is
+    appended when its legs are in the universe; ``mvo_ml`` when ``include_ml`` (the ML forecast).
     """
     panel = build_returns_panel(asset_daily)
     frames = []
@@ -243,6 +253,7 @@ def compute_portfolio_returns(
     ):
         result = out.reset_index()
         result.insert(0, "strategy", label)
+        result.insert(0, "window_id", window)
         frames.append(result)
     return pd.concat(frames, ignore_index=True)
 
@@ -258,10 +269,11 @@ def compute_attribution(
     lambda_max: float = 0.5,
     include_ml: bool = True,
     ml_mu_panel: pd.DataFrame | None = None,
+    window: str = windows.DEFAULT_WINDOW,
 ) -> pd.DataFrame:
     """Per-(strategy, symbol) return + risk attribution, from the same backtest runs.
 
-    Columns: ``[strategy, symbol, contribution_to_return, contribution_to_risk,
+    Columns: ``[window_id, strategy, symbol, contribution_to_return, contribution_to_risk,
     strategy_gross_return]``.
     - ``contribution_to_return`` = ``sum_t w_{t-1}*r_t`` for the asset; across assets it sums to the
       strategy's gross period return (``strategy_gross_return``). A ``(costs)`` row carries the
@@ -315,4 +327,7 @@ def compute_attribution(
                 "strategy_gross_return": gross_return,
             }
         )
-    return pd.DataFrame(rows)
+    attribution = pd.DataFrame(rows)
+    if not attribution.empty:
+        attribution.insert(0, "window_id", window)
+    return attribution

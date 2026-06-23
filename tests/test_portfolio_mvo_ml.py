@@ -96,8 +96,8 @@ def test_mu_panel_has_complete_coverage_and_no_nan():
 
 def test_compute_ml_mu_panel_returns_mu_and_gate():
     mu, gate = compute_ml_mu_panel(_long(200), lookback=30, horizon=5)
-    assert set(mu.columns) == {"date", "symbol", "mu"}
-    assert set(gate.columns) == {"date", "forecast_skill", "forecast_weight"}
+    assert set(mu.columns) == {"date", "symbol", "mu"}  # mu_panel is internal; no window stamp
+    assert set(gate.columns) == {"window_id", "date", "forecast_skill", "forecast_weight"}
 
 
 def test_precomputed_ml_mu_panel_matches_building_internally():
