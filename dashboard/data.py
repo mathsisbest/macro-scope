@@ -8,6 +8,7 @@ import duckdb
 import pandas as pd
 import streamlit as st
 
+from mmi.portfolio import windows
 from mmi.settings import settings
 from mmi.utils.db import connect
 
@@ -48,45 +49,64 @@ def asset_daily(symbol: str) -> pd.DataFrame:
     )
 
 
-def portfolio_returns() -> pd.DataFrame:
+def portfolio_windows() -> list[str]:
+    """The backtest windows actually present in the marts, in canonical enum order.
+
+    Drives the dashboard's window selector — only windows that have been computed are offered, so
+    the picker shows one option until D6 lands the full three.
+    """
+    df = query("select distinct window_id from marts.fct_portfolio_returns")
+    present = set(df["window_id"]) if not df.empty else set()
+    return [w for w in windows.WINDOWS if w in present]
+
+
+def portfolio_returns(window_id: str = windows.DEFAULT_WINDOW) -> pd.DataFrame:
     return query(
         "select strategy, date, daily_return, cumulative_return, drawdown, rolling_sharpe_252 "
-        "from marts.fct_portfolio_returns order by strategy, date"
+        "from marts.fct_portfolio_returns where window_id = ? order by strategy, date",
+        (window_id,),
     )
 
 
-def portfolio_strategy_stats() -> pd.DataFrame:
+def portfolio_strategy_stats(window_id: str = windows.DEFAULT_WINDOW) -> pd.DataFrame:
     return query(
         "select strategy, sharpe, sharpe_lo, sharpe_hi, n_obs, n_boot, ci_pct "
-        "from marts.fct_portfolio_strategy_stats order by sharpe desc"
+        "from marts.fct_portfolio_strategy_stats where window_id = ? order by sharpe desc",
+        (window_id,),
     )
 
 
-def portfolio_strategy_pairs() -> pd.DataFrame:
+def portfolio_strategy_pairs(window_id: str = windows.DEFAULT_WINDOW) -> pd.DataFrame:
     return query(
         "select strategy_a, strategy_b, sharpe_diff, diff_lo, diff_hi, distinguishable "
-        "from marts.fct_portfolio_strategy_pairs order by strategy_a, strategy_b"
+        "from marts.fct_portfolio_strategy_pairs where window_id = ? "
+        "order by strategy_a, strategy_b",
+        (window_id,),
     )
 
 
-def portfolio_attribution() -> pd.DataFrame:
+def portfolio_attribution(window_id: str = windows.DEFAULT_WINDOW) -> pd.DataFrame:
     return query(
         "select strategy, symbol, contribution_to_return, contribution_to_risk "
-        "from marts.fct_performance_attribution order by strategy, contribution_to_return"
+        "from marts.fct_performance_attribution where window_id = ? "
+        "order by strategy, contribution_to_return",
+        (window_id,),
     )
 
 
-def portfolio_regime_performance() -> pd.DataFrame:
+def portfolio_regime_performance(window_id: str = windows.DEFAULT_WINDOW) -> pd.DataFrame:
     return query(
         "select strategy, regime, n_days, day_share, ann_return, ann_vol, ann_sharpe "
-        "from marts.fct_portfolio_regime_performance"
+        "from marts.fct_portfolio_regime_performance where window_id = ?",
+        (window_id,),
     )
 
 
-def portfolio_ml_gate() -> pd.DataFrame:
+def portfolio_ml_gate(window_id: str = windows.DEFAULT_WINDOW) -> pd.DataFrame:
     return query(
         "select date, forecast_skill, forecast_weight "
-        "from marts.fct_portfolio_ml_gate order by date"
+        "from marts.fct_portfolio_ml_gate where window_id = ? order by date",
+        (window_id,),
     )
 
 
