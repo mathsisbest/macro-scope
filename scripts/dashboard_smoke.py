@@ -25,8 +25,12 @@ for sym in data.crypto_symbols():
     data.crypto_intraday(sym)
 
 # Portfolio read-path + chart/summary builders (the backtest mart may be absent on a partial run).
-pf = data.portfolio_returns()
+# Phase D: drive every portfolio accessor through one selected window (the dashboard's choke point).
+windows_present = data.portfolio_windows()
+window_id = windows_present[0] if windows_present else "ex_btc_2002"
+pf = data.portfolio_returns(window_id)
 if not pf.empty:
+    assert windows_present, "fct_portfolio_returns has rows but portfolio_windows() is empty"
     expected = {
         "strategy",
         "date",
@@ -43,13 +47,13 @@ if not pf.empty:
     print(f"portfolio read-path OK ({pf['strategy'].nunique()} strategies)")
 
 # Bootstrap scorecard read-path + builders (the uncertainty-quantification marts).
-stats = data.portfolio_strategy_stats()
+stats = data.portfolio_strategy_stats(window_id)
 if not stats.empty:
     assert {"strategy", "sharpe", "sharpe_lo", "sharpe_hi", "n_obs", "n_boot", "ci_pct"} <= set(
         stats.columns
     ), f"fct_portfolio_strategy_stats columns drifted: {set(stats.columns)}"
     charts.portfolio_scorecard(stats)
-pairs = data.portfolio_strategy_pairs()
+pairs = data.portfolio_strategy_pairs(window_id)
 if not pairs.empty:
     assert {
         "strategy_a",
@@ -64,14 +68,14 @@ if not pairs.empty:
     print(f"bootstrap scorecard read-path OK ({len(pairs)} pairs)")
 
 # Attribution + regime-conditional read-path + chart builders.
-attr = data.portfolio_attribution()
+attr = data.portfolio_attribution(window_id)
 if not attr.empty:
     assert {"strategy", "symbol", "contribution_to_return", "contribution_to_risk"} <= set(
         attr.columns
     ), f"fct_performance_attribution columns drifted: {set(attr.columns)}"
     for strat in attr["strategy"].unique():
         charts.attribution_chart(attr, strat)
-regime = data.portfolio_regime_performance()
+regime = data.portfolio_regime_performance(window_id)
 if not regime.empty:
     assert {"strategy", "regime", "ann_return", "ann_vol", "ann_sharpe"} <= set(regime.columns), (
         f"fct_portfolio_regime_performance columns drifted: {set(regime.columns)}"
@@ -80,7 +84,7 @@ if not regime.empty:
     print(f"attribution + regime read-path OK ({len(attr)} attr rows, {len(regime)} regime rows)")
 
 # ML gate read-path + chart/verdict builders (the "did the forecast add value?" surface).
-gate = data.portfolio_ml_gate()
+gate = data.portfolio_ml_gate(window_id)
 if not gate.empty:
     assert {"date", "forecast_skill", "forecast_weight"} <= set(gate.columns), (
         f"fct_portfolio_ml_gate columns drifted: {set(gate.columns)}"
