@@ -16,6 +16,11 @@ class CoinGeckoExtractor(Extractor):
     table = "raw.crypto_prices"
     keys = ["symbol", "ts"]
     required_columns = ["symbol", "ts", "price_usd"]
+    # The Demo API works WITHOUT a key (free tier, 100 calls/min), so we always attempt it and
+    # land crypto when we can — no skip_reason. But it's an unofficial, rate-limited free endpoint,
+    # so a failure (rate-limit / network) is non-fatal: the scheduled ingest still exits 0 on the
+    # macro/equity core. A key (COINGECKO_API_KEY) only raises the limits; it isn't required.
+    required = False
 
     def fetch(self) -> pd.DataFrame:
         ids = load_assets()["crypto"]
