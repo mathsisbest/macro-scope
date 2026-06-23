@@ -44,8 +44,13 @@ models:
         tests: [not_null, unique]
 
   - name: fct_portfolio_returns
-    description: "Per-strategy daily portfolio returns + drawdown + rolling 252d Sharpe (from raw.portfolio_returns; grain (strategy, date) asserted by a singular test)."
+    description: "Per-strategy daily portfolio returns + drawdown + rolling 252d Sharpe (from raw.portfolio_returns; grain (window_id, strategy, date) asserted by a singular test)."
     columns:
+      - name: window_id
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["ex_btc_2002", "ex_btc_2015", "inc_btc_2015"]
       - name: strategy
         tests:
           - not_null
@@ -56,19 +61,28 @@ models:
         tests: [not_null]
 
   - name: fct_portfolio_strategy_stats
-    description: "Per-strategy annualised Sharpe with stationary block-bootstrap confidence intervals (uncertainty quantification). Grain: one row per strategy."
+    description: "Per-strategy annualised Sharpe with stationary block-bootstrap confidence intervals (uncertainty quantification). Grain: (window_id, strategy), asserted by a singular test."
     columns:
+      - name: window_id
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["ex_btc_2002", "ex_btc_2015", "inc_btc_2015"]
       - name: strategy
         tests:
           - not_null
-          - unique
           - accepted_values:
               values:
                 ["equal_weight", "inverse_vol", "risk_parity", "sixty_forty", "mvo_histmean", "mvo_ml"]
 
   - name: fct_portfolio_strategy_pairs
-    description: "Pairwise bootstrap Sharpe-difference CIs; distinguishable = the difference CI excludes zero. Grain: one row per unordered strategy pair."
+    description: "Pairwise bootstrap Sharpe-difference CIs; distinguishable = the difference CI excludes zero. Grain: (window_id, strategy_a, strategy_b), asserted by a singular test."
     columns:
+      - name: window_id
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["ex_btc_2002", "ex_btc_2015", "inc_btc_2015"]
       - name: strategy_a
         tests: [not_null]
       - name: strategy_b
@@ -77,16 +91,26 @@ models:
         tests: [not_null]
 
   - name: fct_performance_attribution
-    description: "Per-(strategy, symbol) contribution to return + to realised variance; a '(costs)' row carries the cost drag. A singular test asserts the per-asset return contributions reconcile to the strategy's gross return."
+    description: "Per-(window_id, strategy, symbol) contribution to return + to realised variance; a '(costs)' row carries the cost drag. A singular test asserts the per-asset return contributions reconcile to the strategy's gross return (per window)."
     columns:
+      - name: window_id
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["ex_btc_2002", "ex_btc_2015", "inc_btc_2015"]
       - name: strategy
         tests: [not_null]
       - name: symbol
         tests: [not_null]
 
   - name: fct_portfolio_regime_performance
-    description: "Each strategy's annualised return / vol / Sharpe conditioned on the market volatility regime (SPY 20d-vol terciles, matching ml.regime). Grain: (strategy, regime)."
+    description: "Each strategy's annualised return / vol / Sharpe conditioned on the market volatility regime (SPY 20d-vol terciles, matching ml.regime). Grain: (window_id, strategy, regime)."
     columns:
+      - name: window_id
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["ex_btc_2002", "ex_btc_2015", "inc_btc_2015"]
       - name: strategy
         tests: [not_null]
       - name: regime
@@ -95,7 +119,12 @@ models:
           - accepted_values: { values: ["Low", "Medium", "High"] }
 
   - name: fct_portfolio_ml_gate
-    description: "Per-rebalance ML gate: forecast out-of-sample skill vs the prior + the weight (lambda) the forecast earns in mvo_ml's mu blend. A low forecast_weight is why mvo_ml ≈ mvo_histmean. Grain: one row per rebalance date."
+    description: "Per-rebalance ML gate: forecast out-of-sample skill vs the prior + the weight (lambda) the forecast earns in mvo_ml's mu blend. A low forecast_weight is why mvo_ml ≈ mvo_histmean. Grain: (window_id, date), asserted by a singular test."
     columns:
+      - name: window_id
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["ex_btc_2002", "ex_btc_2015", "inc_btc_2015"]
       - name: date
-        tests: [not_null, unique]
+        tests: [not_null]

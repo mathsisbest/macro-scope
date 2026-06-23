@@ -2,6 +2,7 @@
 -- `distinguishable` is true when the difference CI excludes zero; a singular test re-derives it
 -- from the CI bounds so the Python-landed flag can never silently disagree with the numbers.
 select
+    window_id,
     strategy_a,
     strategy_b,
     sharpe_a,
