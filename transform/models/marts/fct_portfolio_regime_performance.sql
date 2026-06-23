@@ -7,27 +7,42 @@
 -- days). Those warm-up zeros are trimmed here so the regime stats are computed over the INVESTED
 -- period only — matching the bootstrap (#19) and attribution (#22) marts. Including them would
 -- pull every return toward 0 and understate vol (zeros add no variance), distorting Sharpe.
--- first_invested + the joins are keyed on (window_id, strategy) so windows never cross-contaminate.
--- NOTE (Phase D): the SPY terciles are still cut over SPY's full history here — fine while a single
--- window ships (behaviour-preserving). D6 makes them window-local (cut within each window's date
--- span) once multiple windows exist, since regimes are then not comparable across windows.
-with first_invested as (
+--
+-- The SPY terciles are cut PER WINDOW, over each window's own invested span (NTILE partitioned by
+-- window_id). So "High vol" is relative to that window's era — regime labels are NOT comparable
+-- across windows (a 2015+ "High" is not a 2002+ "High"). This is the right call for a look-ahead-
+-- free, window-local regime view; the dashboard documents the non-comparability.
+with window_bounds as (
+    select window_id, min(date) as lo, max(date) as hi
+    from {{ ref('fct_portfolio_returns') }}
+    where daily_return <> 0
+    group by window_id
+),
+
+first_invested as (
     select window_id, strategy, min(date) as start_date
     from {{ ref('fct_portfolio_returns') }}
     where daily_return <> 0
     group by window_id, strategy
 ),
 
+spy as (
+    select date, vol_20d
+    from {{ ref('fct_asset_daily') }}
+    where symbol = 'SPY' and vol_20d is not null
+),
+
 spy_regime as (
     select
-        date,
-        case ntile(3) over (order by vol_20d)
+        b.window_id,
+        s.date,
+        case ntile(3) over (partition by b.window_id order by s.vol_20d)
             when 1 then 'Low'
             when 2 then 'Medium'
             else 'High'
         end as regime
-    from {{ ref('fct_asset_daily') }}
-    where symbol = 'SPY' and vol_20d is not null
+    from window_bounds as b
+    join spy as s on s.date between b.lo and b.hi
 ),
 
 joined as (
@@ -35,7 +50,7 @@ joined as (
     from {{ ref('fct_portfolio_returns') }} as p
     join first_invested as fi
         on fi.window_id = p.window_id and fi.strategy = p.strategy and p.date >= fi.start_date
-    join spy_regime as r on r.date = p.date
+    join spy_regime as r on r.window_id = p.window_id and r.date = p.date
 )
 
 select

@@ -36,6 +36,63 @@ def build_returns_panel(asset_daily: pd.DataFrame) -> pd.DataFrame:
     return panel.sort_index().dropna(how="all")
 
 
+def btc_aligned_returns(asset_daily: pd.DataFrame, *, btc_symbol: str = "BTC") -> pd.DataFrame:
+    """BTC daily returns recomputed on the equity (non-crypto) trading calendar.
+
+    BTC trades 7 days a week; equities don't. Pivoting raw BTC returns next to equities would
+    inject NaN equity rows on weekends. Instead we compound BTC close-to-close to the previous
+    equity trading day (Fri->Mon spans the weekend), so each 5-day-calendar bar carries the true
+    close-to-close move. This understates BTC's *standalone daily* vol (a multi-day move shows as
+    one bar) — documented, and it does not bias the close-to-close return level. Returns
+    ``[date, daily_return]`` on the equity calendar; empty if BTC is absent.
+    """
+    btc = asset_daily[asset_daily["symbol"] == btc_symbol]
+    if btc.empty:
+        return pd.DataFrame(columns=["date", "daily_return"])
+    equity_dates = pd.DatetimeIndex(
+        sorted(asset_daily.loc[asset_daily["asset_class"] != "crypto", "date"].unique())
+    )
+    # Wealth index over BTC's own (7-day) calendar, then sampled at equity dates: the ratio between
+    # consecutive equity dates is the compounded return over any intervening non-trading days.
+    wealth = (1.0 + btc.set_index("date")["daily_return"].sort_index().fillna(0.0)).cumprod()
+    on_equity = wealth.reindex(equity_dates).ffill()
+    aligned = on_equity.pct_change()
+    return pd.DataFrame({"date": equity_dates, "daily_return": aligned.to_numpy()})
+
+
+def window_asset_daily(
+    asset_daily: pd.DataFrame,
+    window_id: str,
+    *,
+    btc_floor: pd.Timestamp | None = None,
+    btc_aligned: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """The long ``[symbol, date, daily_return, asset_class]`` frame for one backtest window.
+
+    Built as a SEPARATE filtered frame per window — never one merged panel — because a merged
+    panel's ``dropna(how='any')`` (in the ML path) would collapse the ex-BTC 2002+ history to BTC's
+    ~2015 start. ``ex_btc_2002`` is the full non-crypto history; the 2015 windows start at
+    ``btc_floor``; ``inc_btc_2015`` adds BTC on the equity calendar (``btc_aligned``) so it shares
+    an identical date set with ``ex_btc_2015`` (the same-period control).
+    """
+    non_crypto = asset_daily[asset_daily["asset_class"] != "crypto"]
+    if window_id == windows.EX_BTC_2002:
+        return non_crypto.copy()
+    if btc_floor is None:
+        raise ValueError(f"{window_id} requires a BTC inception floor (BTC absent from the data)")
+    non_crypto = non_crypto[non_crypto["date"] >= btc_floor]
+    if window_id == windows.EX_BTC_2015:
+        return non_crypto.copy()
+    if window_id == windows.INC_BTC_2015:
+        if btc_aligned is None:
+            raise ValueError("inc_btc_2015 requires the equity-calendar BTC series")
+        btc = btc_aligned[btc_aligned["date"] >= btc_floor].dropna(subset=["daily_return"]).copy()
+        btc["symbol"] = "BTC"
+        btc["asset_class"] = "crypto"
+        return pd.concat([non_crypto, btc], ignore_index=True)
+    raise ValueError(f"unknown window {window_id}")
+
+
 def _sixty_forty_weights(symbols: list) -> np.ndarray | None:
     """0.6 on the equity anchor, 0.4 on the first available bond, 0 elsewhere (None if absent)."""
     bond = next((b for b in _BENCHMARK_BONDS if b in symbols), None)
