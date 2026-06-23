@@ -3,6 +3,7 @@
 import numpy as np
 import pandas as pd
 
+from mmi.portfolio import windows
 from mmi.portfolio.stats import (
     bootstrap_strategy_stats,
     sharpe,
@@ -47,6 +48,8 @@ def test_stats_structure_ci_ordering_and_reproducible():
     per2, pairs2 = bootstrap_strategy_stats(df, n_boot=1000, seed=1)
 
     assert list(per1["strategy"]) == ["a", "b", "c"]
+    assert (per1["window_id"] == windows.DEFAULT_WINDOW).all()  # Phase D window dimension stamped
+    assert (pairs1["window_id"] == windows.DEFAULT_WINDOW).all()
     assert (per1["sharpe_lo"] <= per1["sharpe_hi"]).all()
     assert len(pairs1) == 3  # C(3, 2)
     assert (pairs1["diff_lo"] <= pairs1["diff_hi"]).all()
