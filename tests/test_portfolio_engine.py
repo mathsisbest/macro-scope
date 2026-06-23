@@ -5,6 +5,7 @@ import numpy as np
 from mmi.portfolio.engine import (
     equal_weight,
     inverse_volatility,
+    ledoit_wolf_cov,
     max_sharpe,
     risk_contributions,
     risk_parity,
@@ -65,3 +66,23 @@ def test_max_sharpe_respects_the_weight_cap():
     w = max_sharpe(cov, mu, max_weight=0.40)
     assert w[0] <= 0.40 + 1e-6  # capped — not all-in on asset 0
     assert np.isclose(w.sum(), 1.0)
+
+
+def test_ledoit_wolf_cov_is_psd_symmetric_and_shrinks_off_diagonals():
+    rng = np.random.default_rng(0)
+    x = rng.normal(0, 0.01, (200, 5))
+    cov = ledoit_wolf_cov(x)
+    assert cov.shape == (5, 5)
+    assert np.allclose(cov, cov.T)  # symmetric
+    assert (np.linalg.eigvalsh(cov) > 0).all()  # positive-definite
+    sample = np.cov(x, rowvar=False)
+    off = ~np.eye(5, dtype=bool)
+    assert np.abs(cov[off]).sum() < np.abs(sample[off]).sum()  # off-diagonals shrunk toward 0
+
+
+def test_ledoit_wolf_conditions_a_near_singular_covariance():
+    # two near-collinear assets -> near-singular sample cov; shrinkage improves the conditioning
+    rng = np.random.default_rng(1)
+    base = rng.normal(0, 0.01, 200)
+    x = np.column_stack([base, base + rng.normal(0, 1e-5, 200), rng.normal(0, 0.01, 200)])
+    assert np.linalg.cond(ledoit_wolf_cov(x)) < np.linalg.cond(np.cov(x, rowvar=False))
