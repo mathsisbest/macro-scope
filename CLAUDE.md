@@ -32,7 +32,9 @@ and serves it through a Streamlit dashboard. It's an end-to-end data platform
 ## Key decisions (and why)
 1. **Domain = Markets & Macro** (chosen on free-data availability):
    - Crypto via **CoinGecko** (free, 100 calls/min) → the genuine high-frequency "streaming" story.
-   - Equities/ETFs/FX via **Stooq** (no key); yfinance fallback is roadmap → deep history for ML.
+   - Equities/ETFs/FX + daily BTC via **Yahoo** v8 chart (adjusted close = total return, no
+     key) → deep history for ML. Stooq is a dormant fallback (its free CSV now returns a JS
+     challenge); it is out of `EXTRACTORS` and untested.
    - Macro via **FRED** (free key) + **World Bank** (no key) → analytical backbone.
    - **Sports betting is an OPTIONAL Phase-2 module** (PLAN §13), not core: The Odds API free
      tier (~500 credits/mo) is too thin to anchor streaming.
@@ -90,9 +92,11 @@ make ingest && make dbt-build && make ml && make ai && make dashboard
    (incl. dbt), MotherDuck storage plumbing, precise cron failure semantics, doc alignment.
 2. Wire `MOTHERDUCK_TOKEN` (see deploy-note.md) + run the scheduled refresh; then P1: reconcile any
    dbt-vs-fallback drift, source-specific watermarks, macro ML features, dashboard polish.
-3. **Capstone = issue #7** (portfolio backtesting / analytics / AI), sequenced **after** P1–P3 and
-   built in slices 0–D (see PLAN §11). Phase 0 — Yahoo *adjusted-close* ingestion replacing the broken
-   Stooq path — is the prerequisite and is in progress. The phased plan + critical review live on issue #7.
+3. **Capstone = issue #7** (portfolio backtesting / analytics / AI), built in slices 0–D
+   (see PLAN §11). Phase 0 (Yahoo adjusted-close ingestion, which replaced the broken Stooq
+   path) and the full capstone (A–D: honest backtest → bootstrap stats → gated ML experiment →
+   BTC window + grounded brief) are **complete and merged to main**. Focus now = go-live
+   (public hosting, live keyless feed). The phased plan + critical review live on issue #7.
 4. Get free keys (FRED, CoinGecko, Gemini); run live `make ingest`; deploy to **Streamlit
    Community Cloud** (deploys from private repos; auto-redeploys on push). See
    `.github/workflows/deploy-note.md`.
@@ -105,4 +109,5 @@ make ingest && make dbt-build && make ml && make ai && make dashboard
 - **Data-in-git:** RESOLVED in P0 — the cron writes to **MotherDuck** instead of committing the
   `.duckdb` binary; nothing data-related is pushed back to the repo.
 - **Secrets & freshness:** ensure no keys leak; surface dbt source-freshness in the UI.
-- **yfinance/Stooq** are unofficial — treat as best-effort; FRED/World Bank are the reliable core.
+- **Yahoo** (v8 chart) is an unofficial endpoint — treat as best-effort; FRED/World Bank are the
+  reliable core. (Stooq is dormant.)
