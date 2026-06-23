@@ -2,6 +2,7 @@
 -- and landed in raw. dbt declares the source and enforces the contracts via tests (grain,
 -- accepted strategies, CI ordering) — the Python↔SQL boundary done right.
 select
+    window_id,
     strategy,
     sharpe,
     sharpe_lo,
