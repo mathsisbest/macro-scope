@@ -1,6 +1,8 @@
 """The market brief is numerically grounded: portfolio stats + CIs come from the marts, and the
 brief hedges (says "not distinguishable") when the bootstrap says so — never invented."""
 
+import logging
+
 import duckdb
 import pandas as pd
 
@@ -171,3 +173,41 @@ def test_offline_brief_omits_ml_gate_when_absent():
         ],
     }
     assert "ML gate" not in narrative._offline_brief(facts)
+
+
+def test_generate_brief_falls_back_to_offline_template_on_api_error(monkeypatch, tmp_path, caplog):
+    """A live LLM failure must not crash the brief: it falls back to the deterministic offline
+    template, persists the fallback engine tag, and the provider key (which rides in the httpx
+    error URL) is redacted from the warning — never leaked to logs/CI."""
+    con = _con_with_portfolio()
+    # Keep the brief file write hermetic (generate_brief writes to <duckdb parent>/briefs/).
+    monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
+    # Force the live path; the provider call then raises with a key-bearing URL in its message.
+    leaked = (
+        "503 Server Error for url "
+        "https://generativelanguage.googleapis.com/v1beta/models/x:generateContent?key=AIzaSECRET123"
+    )
+    monkeypatch.setattr(narrative.llm, "available", lambda: True)
+
+    def _boom(*_a, **_k):
+        raise RuntimeError(leaked)
+
+    monkeypatch.setattr(narrative.llm, "complete", _boom)
+
+    with caplog.at_level(logging.WARNING):
+        text = narrative.generate_brief(con)
+
+    try:
+        # Fell back to the deterministic template instead of raising.
+        assert "_(template; set an LLM key for AI narrative)_" in text
+        # Persisted, tagged distinctly from the no-key path so a failed live call is legible.
+        engine = con.execute(
+            "select engine from marts.market_brief order by created_at desc limit 1"
+        ).fetchone()[0]
+        assert engine == "offline-template (llm-failed)"
+        # The fallback was logged, but the API key was scrubbed before it reached the log.
+        assert "falling back to offline template" in caplog.text
+        assert "AIzaSECRET123" not in caplog.text
+        assert "key=***" in caplog.text
+    finally:
+        con.close()
