@@ -92,59 +92,70 @@ def cmd_ai(_: argparse.Namespace) -> int:
 
 
 def cmd_portfolio(_: argparse.Namespace) -> int:
-    """Backtest the strategies, land returns + bootstrap-CI stats in raw.portfolio_*."""
+    """Backtest the strategies per window, landing returns + bootstrap-CI stats in raw.portfolio_*.
+
+    Phase D runs THREE windows (issue #7): ex_btc_2002 (the long non-crypto baseline), ex_btc_2015
+    (same assets, BTC's era — the same-period control), and inc_btc_2015 (adds BTC, same period).
+    Each runs as a SEPARATELY filtered panel — never one merged panel, whose dropna would collapse
+    the 2002+ history to BTC's ~2015 start. The two 2015 windows share one derived BTC-inception
+    floor so they are byte-identical in period; inc_btc aligns BTC to the equity calendar.
+    """
     from mmi.ingestion import DuckDBLoader
     from mmi.ingestion.loader import reset_portfolio_raw_tables
-    from mmi.portfolio import windows
-    from mmi.portfolio.compute import (
-        compute_attribution,
-        compute_ml_mu_panel,
-        compute_portfolio_returns,
-    )
+    from mmi.portfolio import compute, windows
     from mmi.portfolio.stats import bootstrap_strategy_stats
+    from mmi.settings import load_assets
 
-    with connect() as con:
-        loader = DuckDBLoader(con)
-        # Phase D widened the portfolio raw schema (added window_id); recreate these wholesale-
-        # landed tables so the backtest self-heals on a stale DB instead of failing on a column.
-        reset_portfolio_raw_tables(con)
-        # Exclude crypto for now: BTC is ingested into fct_asset_daily (data path) but its later
-        # inception would inject staggered NaNs into this single-window panel. BTC enters the
-        # backtest only once the multi-window machinery lands (Phase D5/D6), keeping this slice's
-        # backtest output byte-identical to before.
-        asset_daily = con.execute(
-            "select symbol, date, daily_return from marts.fct_asset_daily "
-            "where asset_class <> 'crypto'"
-        ).df()
-        # Phase D runs the backtest per window; D3 ships the single default window (behaviour-
-        # preserving), with window-led upsert keys so D6 can land multiple windows idempotently.
-        window = windows.DEFAULT_WINDOW
-        # Build the ML forecast + gate ONCE, then reuse for returns + attribution (it is heavy).
-        ml_mu_panel, ml_gate = compute_ml_mu_panel(asset_daily, window=window)
-        results = compute_portfolio_returns(asset_daily, ml_mu_panel=ml_mu_panel, window=window)
-        rows = loader.upsert("raw.portfolio_returns", results, ["window_id", "strategy", "date"])
-        # Honest uncertainty: stationary block-bootstrap Sharpe CIs + pairwise distinguishability.
-        # One window at a time — the bootstrap pivots by date x strategy and would collide windows.
-        per_strategy, pairs = bootstrap_strategy_stats(results, window=window)
+    def run_window(loader: DuckDBLoader, window_id: str, wad) -> tuple[int, int]:
+        # Build the ML forecast + gate ONCE per window, then reuse for returns + attribution.
+        ml_mu_panel, ml_gate = compute.compute_ml_mu_panel(wad, window=window_id)
+        results = compute.compute_portfolio_returns(wad, ml_mu_panel=ml_mu_panel, window=window_id)
+        n = loader.upsert("raw.portfolio_returns", results, ["window_id", "strategy", "date"])
+        # Honest uncertainty: block-bootstrap Sharpe CIs. One window at a time — the bootstrap
+        # pivots by date x strategy and would collide windows if handed more than one.
+        per_strategy, pairs = bootstrap_strategy_stats(results, window=window_id)
         loader.upsert("raw.portfolio_strategy_stats", per_strategy, ["window_id", "strategy"])
         loader.upsert(
             "raw.portfolio_strategy_pairs", pairs, ["window_id", "strategy_a", "strategy_b"]
         )
-        # Per-asset return + risk attribution (reconciles to each strategy's gross return).
-        attribution = compute_attribution(asset_daily, ml_mu_panel=ml_mu_panel, window=window)
+        attribution = compute.compute_attribution(wad, ml_mu_panel=ml_mu_panel, window=window_id)
         loader.upsert("raw.portfolio_attribution", attribution, ["window_id", "strategy", "symbol"])
-        # The ML gate (forecast skill + the weight it earns) makes "mvo_ml ≈ mvo_histmean" legible:
-        # a low forecast_weight means the forecast showed no out-of-sample edge over the prior.
+        # The ML gate (forecast skill + the weight it earns) makes "mvo_ml ≈ mvo_histmean" legible.
         if not ml_gate.empty:
             loader.upsert("raw.portfolio_ml_gate", ml_gate, ["window_id", "date"])
-    log.info(
-        "portfolio: %s rows / %s strategies; %s bootstrap rows, %s pairs, %s attribution rows",
-        rows,
-        results["strategy"].nunique(),
-        len(per_strategy),
-        len(pairs),
-        len(attribution),
-    )
+        return n, results["strategy"].nunique()
+
+    with connect() as con:
+        loader = DuckDBLoader(con)
+        # Recreate the wholesale-landed portfolio tables so the backtest self-heals on a stale DB
+        # (schema/window changes); also clears prior windows before this full re-run.
+        reset_portfolio_raw_tables(con)
+        # Pull the WHOLE daily panel incl. BTC; each window filters its own universe in Python.
+        asset_daily = con.execute(
+            "select symbol, date, daily_return, asset_class from marts.fct_asset_daily"
+        ).df()
+
+        # BTC on the equity trading calendar defines the shared 2015 floor (its first valid return).
+        btc_aligned = compute.btc_aligned_returns(asset_daily)
+        valid = btc_aligned.dropna(subset=["daily_return"])
+        btc_floor = valid["date"].min() if not valid.empty else None
+        if btc_floor is None and load_assets().get("crypto_daily"):
+            # Loud, not silent: BTC is configured but missing, so the BTC-era windows can't build.
+            log.warning(
+                "BTC declared in config but absent from fct_asset_daily; skipping 2015 windows"
+            )
+
+        ran: list[str] = []
+        for window_id in windows.WINDOWS:
+            if window_id != windows.EX_BTC_2002 and btc_floor is None:
+                continue  # 2015 windows need the BTC floor (warned above)
+            wad = compute.window_asset_daily(
+                asset_daily, window_id, btc_floor=btc_floor, btc_aligned=btc_aligned
+            )
+            n, n_strategies = run_window(loader, window_id, wad)
+            log.info("portfolio[%s]: %s rows / %s strategies", window_id, n, n_strategies)
+            ran.append(window_id)
+    log.info("portfolio: ran %d window(s): %s", len(ran), ", ".join(ran))
     return 0
 
 
