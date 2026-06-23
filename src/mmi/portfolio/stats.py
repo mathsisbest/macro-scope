@@ -13,6 +13,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from mmi.portfolio import windows
+
 TRADING_DAYS = 252
 
 
@@ -68,13 +70,18 @@ def bootstrap_strategy_stats(
     ci: float = 0.90,
     avg_block: int = 21,
     seed: int = 12345,
+    window: str = windows.DEFAULT_WINDOW,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Bootstrap Sharpe CIs per strategy + pairwise Sharpe-difference CIs.
 
     ``returns_long``: ``[strategy, date, daily_return, ...]``. Returns ``(per_strategy, pairs)``:
-    - per_strategy: ``strategy, sharpe, sharpe_lo, sharpe_hi, n_obs, n_boot, ci_pct, block_days``
-    - pairs: ``strategy_a, strategy_b, sharpe_a, sharpe_b, sharpe_diff, diff_lo, diff_hi,
+    - per_strategy: ``window_id, strategy, sharpe, sharpe_lo, sharpe_hi, n_obs, n_boot, ci_pct,
+      block_days``
+    - pairs: ``window_id, strategy_a, strategy_b, sharpe_a, sharpe_b, sharpe_diff, diff_lo, diff_hi,
       distinguishable`` (``distinguishable`` = the difference CI excludes zero).
+
+    ``window`` is stamped on both frames. Callers must pass one window's returns at a time (the
+    pivot is by date x strategy and would otherwise collide windows) — see ``cmd_portfolio``.
     """
     wide = returns_long.pivot_table(
         index="date", columns="strategy", values="daily_return"
@@ -96,6 +103,7 @@ def bootstrap_strategy_stats(
     per_strategy = pd.DataFrame(
         [
             {
+                "window_id": window,
                 "strategy": s,
                 "sharpe": point[s],
                 "sharpe_lo": float(np.percentile(boot[s], lo_q)),
@@ -117,6 +125,7 @@ def bootstrap_strategy_stats(
             lo, hi = float(np.percentile(diff, lo_q)), float(np.percentile(diff, hi_q))
             pairs.append(
                 {
+                    "window_id": window,
                     "strategy_a": a,
                     "strategy_b": b,
                     "sharpe_a": point[a],

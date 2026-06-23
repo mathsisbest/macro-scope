@@ -45,25 +45,29 @@ _RAW_TABLES = {
     # portfolio marts always have their sources even on a fresh DB / before a backtest has run, and
     # so a degenerate single-strategy run (which yields no strategy pairs) still leaves an empty
     # table for dbt rather than a missing source.
+    # `window` (Phase D) leads each portfolio table so re-running one window's backtest deletes and
+    # re-inserts only that window's rows (the upsert keys are window-led in cmd_portfolio).
     "raw.portfolio_returns": (
-        "strategy VARCHAR, date TIMESTAMP, daily_return DOUBLE, cumulative_return DOUBLE, "
-        "loaded_at TIMESTAMPTZ"
+        "window_id VARCHAR, strategy VARCHAR, date TIMESTAMP, daily_return DOUBLE, "
+        "cumulative_return DOUBLE, loaded_at TIMESTAMPTZ"
     ),
     "raw.portfolio_strategy_stats": (
-        "strategy VARCHAR, sharpe DOUBLE, sharpe_lo DOUBLE, sharpe_hi DOUBLE, "
+        "window_id VARCHAR, strategy VARCHAR, sharpe DOUBLE, sharpe_lo DOUBLE, sharpe_hi DOUBLE, "
         "n_obs BIGINT, n_boot BIGINT, ci_pct DOUBLE, block_days BIGINT, loaded_at TIMESTAMPTZ"
     ),
     "raw.portfolio_strategy_pairs": (
-        "strategy_a VARCHAR, strategy_b VARCHAR, sharpe_a DOUBLE, sharpe_b DOUBLE, "
+        "window_id VARCHAR, strategy_a VARCHAR, strategy_b VARCHAR, "
+        "sharpe_a DOUBLE, sharpe_b DOUBLE, "
         "sharpe_diff DOUBLE, diff_lo DOUBLE, diff_hi DOUBLE, distinguishable BOOLEAN, "
         "loaded_at TIMESTAMPTZ"
     ),
     "raw.portfolio_attribution": (
-        "strategy VARCHAR, symbol VARCHAR, contribution_to_return DOUBLE, "
+        "window_id VARCHAR, strategy VARCHAR, symbol VARCHAR, contribution_to_return DOUBLE, "
         "contribution_to_risk DOUBLE, strategy_gross_return DOUBLE, loaded_at TIMESTAMPTZ"
     ),
     "raw.portfolio_ml_gate": (
-        "date TIMESTAMP, forecast_skill DOUBLE, forecast_weight DOUBLE, loaded_at TIMESTAMPTZ"
+        "window_id VARCHAR, date TIMESTAMP, forecast_skill DOUBLE, forecast_weight DOUBLE, "
+        "loaded_at TIMESTAMPTZ"
     ),
 }
 
@@ -72,6 +76,21 @@ def ensure_raw_tables(con) -> None:
     """Create the raw source tables (empty) if absent, so dbt always has its sources."""
     for table, schema in _RAW_TABLES.items():
         con.execute(f"CREATE TABLE IF NOT EXISTS {table} ({schema})")
+
+
+def reset_portfolio_raw_tables(con) -> None:
+    """Drop + recreate the portfolio landing tables with the current canonical schema.
+
+    ``mmi portfolio`` re-lands these wholesale every run, so they carry no cross-run state — but a
+    schema change (e.g. Phase D's new ``window_id`` column) cannot take effect on an *existing* DB
+    via ``CREATE TABLE IF NOT EXISTS`` alone. Dropping and re-ensuring them makes the backtest
+    self-healing on a stale DB, while still restoring empty tables so dbt always has its sources
+    (including the degenerate no-strategy-pairs case). Only the wholesale-landed portfolio tables
+    are touched; the incrementally-loaded data tables (asset_prices, etc.) are left intact.
+    """
+    for table in (t for t in _RAW_TABLES if t.startswith("raw.portfolio_")):
+        con.execute(f"DROP TABLE IF EXISTS {table}")
+    ensure_raw_tables(con)
 
 
 class DuckDBLoader:
