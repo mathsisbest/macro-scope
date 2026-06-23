@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # type stays a clean local Path.
     duckdb_path: Path = Field(default=REPO_ROOT / "data" / "mmi.duckdb", alias="MMI_DUCKDB_PATH")
     assets_path: Path = Field(default=REPO_ROOT / "config" / "assets.yml", alias="MMI_ASSETS_PATH")
+    # The static Parquet snapshot of the marts schema: `mmi snapshot` writes it, and the public
+    # demo dashboard reads from it (no DB, no secrets) when MMI_SNAPSHOT_DIR is set.
+    snapshot_dir: Path = Field(default=REPO_ROOT / "data" / "public", alias="MMI_SNAPSHOT_DIR")
     motherduck_database: str = Field(default="", alias="MMI_MOTHERDUCK_DATABASE")
     # secret — never log or display
     motherduck_token: str = Field(default="", alias="MOTHERDUCK_TOKEN")
