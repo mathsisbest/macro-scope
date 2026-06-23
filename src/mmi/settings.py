@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
     groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
+    # GenAI behaviour — Gemini 3.x "thinking" effort. medium is Google's default and best
+    # quality/cost trade-off; low is faster/cheaper, high for hard reasoning. gemini-only.
+    gemini_thinking_level: Literal["low", "medium", "high"] = Field(
+        default="medium", alias="GEMINI_THINKING_LEVEL"
+    )
 
     # Behaviour
     log_level: str = Field(default="INFO", alias="MMI_LOG_LEVEL")

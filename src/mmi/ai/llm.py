@@ -8,7 +8,7 @@ If no key is configured, callers fall back to a deterministic template (see narr
 from __future__ import annotations
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from mmi.settings import settings
 from mmi.utils.logging import get_logger
@@ -17,7 +17,7 @@ log = get_logger("ai.llm")
 
 # Default models per provider (override here as model names evolve).
 MODELS = {
-    "gemini": "gemini-2.5-flash",
+    "gemini": "gemini-3.5-flash",  # was gemini-2.5-flash; both free-tier
     "groq": "llama-3.3-70b-versatile",
     "claude": "claude-sonnet-4-6",
 }
@@ -40,7 +40,15 @@ def provider_model() -> str:
     return f"{settings.llm_provider}:{MODELS[settings.llm_provider]}"
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10), reraise=True)
+@retry(
+    # Only retry transient HTTP failures (rate limits, 5xx, network). A deterministic
+    # RuntimeError (e.g. Gemini returned no text) is NOT retried — it would just burn ~11s of
+    # backoff + free quota before failing the same way, so we fail fast to the template.
+    retry=retry_if_exception_type(httpx.HTTPError),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(min=1, max=10),
+    reraise=True,
+)
 def complete(prompt: str, *, system: str | None = None, max_tokens: int = 800) -> str:
     """Return a completion from the configured provider."""
     provider = settings.llm_provider
@@ -58,14 +66,28 @@ def _gemini(prompt: str, system: str | None, max_tokens: int) -> str:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     body: dict = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": max_tokens},
+        "generationConfig": {
+            "maxOutputTokens": max_tokens,
+            # Gemini 3.x thinking effort (low|medium|high). NOTE: 2.5-era models use
+            # thinkingBudget (int) instead — adjust if MODELS["gemini"] is pinned back to 2.5.
+            "thinkingConfig": {"thinkingLevel": settings.gemini_thinking_level},
+        },
     }
     if system:
         body["systemInstruction"] = {"parts": [{"text": system}]}
     with httpx.Client(timeout=60) as client:
         r = client.post(url, params={"key": _key()}, json=body)
         r.raise_for_status()
-        return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        candidate = r.json()["candidates"][0]
+        parts = candidate.get("content", {}).get("parts", [])
+        if not parts:
+            # Thinking can exhaust maxOutputTokens before any answer text is emitted
+            # (finishReason=MAX_TOKENS). Fail loudly so the caller falls back to the template.
+            raise RuntimeError(
+                f"Gemini returned no text (finishReason={candidate.get('finishReason')}); "
+                "raise max_tokens or lower GEMINI_THINKING_LEVEL"
+            )
+        return parts[0]["text"].strip()
 
 
 def _groq(prompt: str, system: str | None, max_tokens: int) -> str:
