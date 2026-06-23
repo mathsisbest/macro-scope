@@ -12,6 +12,10 @@ endif
 # developer's .env enables MotherDuck. Empty MotherDuck vars force use_motherduck = False.
 CI_DB := $(CURDIR)/data/ci.duckdb
 CI_ENV := MMI_MOTHERDUCK_DATABASE= MOTHERDUCK_TOKEN= MMI_DUCKDB_PATH=$(CI_DB)
+# The dev DuckDB (matches settings.duckdb_path = REPO_ROOT/data/mmi.duckdb). Absolute, so dbt
+# resolves it correctly when run with --project-dir from the repo root (the profile default
+# `../data/mmi.duckdb` is relative to transform/ and otherwise resolves one dir too high).
+DEV_DB := $(CURDIR)/data/mmi.duckdb
 
 .PHONY: help setup install install-dev seed ingest dbt-build ml ai dashboard demo test lint format typecheck ci all clean
 
@@ -32,7 +36,7 @@ ingest: ## Pull live data from free APIs into DuckDB raw schema
 	$(PY) -m mmi.cli ingest
 
 dbt-build: ## Run dbt build (staging -> marts) against the local DuckDB file
-	$(BIN)dbt build --project-dir transform --profiles-dir transform --target dev
+	MMI_DUCKDB_PATH=$(DEV_DB) $(BIN)dbt build --project-dir transform --profiles-dir transform --target dev
 
 ml: ## Train + score forecast and regime models
 	$(PY) -m mmi.cli ml
