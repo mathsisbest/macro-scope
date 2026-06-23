@@ -69,6 +69,12 @@ _RAW_TABLES = {
         "window_id VARCHAR, date TIMESTAMP, forecast_skill DOUBLE, forecast_weight DOUBLE, "
         "loaded_at TIMESTAMPTZ"
     ),
+    # Cross-window comparison (not per-window): the paired BTC effect, one row per strategy.
+    "raw.portfolio_btc_effect": (
+        "strategy VARCHAR, sharpe_ex DOUBLE, sharpe_inc DOUBLE, sharpe_diff DOUBLE, "
+        "diff_lo DOUBLE, diff_hi DOUBLE, distinguishable BOOLEAN, "
+        "n_obs BIGINT, n_boot BIGINT, ci_pct DOUBLE, loaded_at TIMESTAMPTZ"
+    ),
 }
 
 

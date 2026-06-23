@@ -63,6 +63,74 @@ def _invested(wide: pd.DataFrame) -> pd.DataFrame:
     return wide.loc[invested]
 
 
+def paired_btc_effect(
+    returns_ex: pd.DataFrame,
+    returns_inc: pd.DataFrame,
+    *,
+    n_boot: int = 2000,
+    ci: float = 0.90,
+    avg_block: int = 21,
+    seed: int = 12345,
+) -> pd.DataFrame:
+    """Per-strategy BTC effect with a PAIRED cross-window bootstrap CI.
+
+    The BTC effect for a strategy is ``Sharpe(inc_btc_2015) − Sharpe(ex_btc_2015)``. Because the
+    two windows are period-identical (same dates, same non-crypto returns, the only difference is
+    the BTC column — asserted by a singular test), the difference is a genuinely PAIRED comparison:
+    we draw ONE set of block-bootstrap date indices and apply it to BOTH windows, so the resampled
+    difference accounts for their shared dates (positive correlation). Combining two *independent*
+    per-window CIs would overstate the variance and understate significance.
+
+    ``returns_ex`` / ``returns_inc``: ``[strategy, date, daily_return]`` for the two 2015 windows.
+    Returns ``[strategy, sharpe_ex, sharpe_inc, sharpe_diff, diff_lo, diff_hi, distinguishable,
+    n_obs, n_boot, ci_pct]`` (``distinguishable`` = the difference CI excludes zero); empty if the
+    windows do not overlap on >= 2 invested dates.
+    """
+    wide_ex = _invested(
+        returns_ex.pivot_table(index="date", columns="strategy", values="daily_return")
+        .sort_index()
+        .dropna(how="any")
+    )
+    wide_inc = _invested(
+        returns_inc.pivot_table(index="date", columns="strategy", values="daily_return")
+        .sort_index()
+        .dropna(how="any")
+    )
+    # Pair strictly on the dates AND strategies present in both windows.
+    dates = wide_ex.index.intersection(wide_inc.index)
+    strategies = [s for s in wide_ex.columns if s in wide_inc.columns]
+    n = len(dates)
+    if n < 2 or not strategies:
+        return pd.DataFrame()
+
+    rng = np.random.default_rng(seed)
+    idx = stationary_bootstrap_indices(n, n_boot, avg_block, rng)  # one draw, applied to both
+    lo_q, hi_q = (1 - ci) / 2 * 100, (1 + ci) / 2 * 100
+
+    rows = []
+    for s in strategies:
+        ex = wide_ex.loc[dates, s].to_numpy(dtype=float)
+        inc = wide_inc.loc[dates, s].to_numpy(dtype=float)
+        boot_diff = _bootstrap_sharpe(inc, idx) - _bootstrap_sharpe(ex, idx)  # paired: same idx
+        lo, hi = float(np.percentile(boot_diff, lo_q)), float(np.percentile(boot_diff, hi_q))
+        s_ex, s_inc = sharpe(ex), sharpe(inc)
+        rows.append(
+            {
+                "strategy": s,
+                "sharpe_ex": s_ex,
+                "sharpe_inc": s_inc,
+                "sharpe_diff": s_inc - s_ex,
+                "diff_lo": lo,
+                "diff_hi": hi,
+                "distinguishable": bool(lo > 0.0 or hi < 0.0),
+                "n_obs": n,
+                "n_boot": n_boot,
+                "ci_pct": ci,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def bootstrap_strategy_stats(
     returns_long: pd.DataFrame,
     *,
