@@ -3,6 +3,7 @@
 -- the cost drag. contribution_to_risk is the asset's share of realised variance (sums to 1 over
 -- assets). A singular test asserts the return reconciliation.
 select
+    window_id,
     strategy,
     symbol,
     contribution_to_return,
