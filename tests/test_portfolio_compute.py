@@ -18,7 +18,11 @@ def _long(n_days: int = 120, assets: tuple = ("SPY", "TLT", "QQQ"), seed: int = 
     for asset in assets:
         rets = rng.normal(0.0004, 0.01, n_days)
         for day, ret in zip(idx, rets, strict=True):
-            rows.append({"symbol": asset, "date": day, "daily_return": ret})
+            # asset_class mirrors the real fct_asset_daily schema (cmd_portfolio filters on it);
+            # all fixture assets are non-crypto so the backtest universe is unchanged.
+            rows.append(
+                {"symbol": asset, "date": day, "daily_return": ret, "asset_class": "equities"}
+            )
     return pd.DataFrame(rows)
 
 

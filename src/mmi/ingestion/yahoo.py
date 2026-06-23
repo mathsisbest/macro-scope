@@ -17,8 +17,9 @@ from mmi.utils.http import get_json
 _URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 # Yahoo rejects the default httpx user-agent; a browser UA returns JSON.
 _HEADERS = {"User-Agent": "Mozilla/5.0"}
-# config/assets.yml keys this extractor pulls into raw.asset_prices (asset_class = the key).
-_KINDS = ("equities", "bonds", "commodities", "fx")
+# config/assets.yml keys this extractor pulls into raw.asset_prices (asset_class = the key,
+# except crypto_daily which folds into asset_class 'crypto' — see _fetch_one).
+_KINDS = ("equities", "bonds", "commodities", "fx", "crypto_daily")
 
 
 class YahooChartExtractor(Extractor):
@@ -49,6 +50,11 @@ class YahooChartExtractor(Extractor):
 
     def _fetch_one(self, symbol: str, kind: str) -> pd.DataFrame:
         yahoo_symbol = f"{symbol}=X" if kind == "fx" else symbol
+        # crypto_daily holds Yahoo crypto tickers (e.g. BTC-USD); store them as a clean symbol
+        # ('BTC') under asset_class 'crypto' so they join the daily price path, kept distinct from
+        # the CoinGecko intraday rows ('bitcoin') that stg_crypto_prices stamps as 'crypto' too.
+        stored_symbol = symbol.split("-")[0] if kind == "crypto_daily" else symbol
+        asset_class = "crypto" if kind == "crypto_daily" else kind
         # Use explicit period1/period2 (not range=max, which silently coarsens to monthly bars)
         # to get the full *daily* history. period2 far in the future -> Yahoo clamps to today.
         payload = get_json(
@@ -69,8 +75,8 @@ class YahooChartExtractor(Extractor):
             raise ValueError(f"no price series for {yahoo_symbol}")
         df = pd.DataFrame(
             {
-                "symbol": symbol,
-                "asset_class": kind,
+                "symbol": stored_symbol,
+                "asset_class": asset_class,
                 "date": pd.to_datetime(timestamps, unit="s", utc=True),
                 "open": quote.get("open"),
                 "high": quote.get("high"),

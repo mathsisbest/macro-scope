@@ -47,6 +47,42 @@ def test_yahoo_uses_adjusted_close(con, monkeypatch):
 
 
 @respx.mock
+def test_yahoo_crypto_daily_maps_to_btc_under_crypto_class(con, monkeypatch):
+    monkeypatch.setattr("mmi.ingestion.yahoo.load_assets", lambda: {"crypto_daily": ["BTC-USD"]})
+    respx.get("https://query1.finance.yahoo.com/v8/finance/chart/BTC-USD").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "chart": {
+                    "result": [
+                        {
+                            "meta": {},
+                            "timestamp": [1700000000, 1700086400],
+                            "indicators": {
+                                "quote": [
+                                    {
+                                        "open": [60000, 61000],
+                                        "high": [60000, 61000],
+                                        "low": [60000, 61000],
+                                        "close": [60000.0, 61000.0],
+                                        "volume": [1, 2],
+                                    }
+                                ],
+                                "adjclose": [{"adjclose": [60000.0, 61000.0]}],
+                            },
+                        }
+                    ]
+                }
+            },
+        )
+    )
+    df = YahooChartExtractor(DuckDBLoader(con)).fetch()
+    assert (df["symbol"] == "BTC").all()  # BTC-USD -> clean symbol BTC
+    assert (df["asset_class"] == "crypto").all()  # folds into the existing crypto class
+    assert df["close"].tolist() == [60000.0, 61000.0]
+
+
+@respx.mock
 def test_yahoo_fails_loud_when_no_usable_data(con, monkeypatch):
     monkeypatch.setattr("mmi.ingestion.yahoo.load_assets", lambda: {"equities": ["SPY"]})
     respx.get(_CHART).mock(return_value=httpx.Response(200, json={"chart": {"result": None}}))
