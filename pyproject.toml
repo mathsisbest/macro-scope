@@ -14,7 +14,7 @@ keywords = ["data-engineering", "analytics-engineering", "dbt", "duckdb", "strea
 
 # Core deps — kept lean; heavier concerns live in optional groups below.
 dependencies = [
-    "duckdb>=1.0",
+    "duckdb>=1.0,<1.5.4",    # MotherDuck supports only duckdb <=1.5.3; newer breaks the md: extension (caught on first live ingest)
     "pandas>=2.0",
     "httpx>=0.27",
     "pydantic>=2.6",
