@@ -62,6 +62,9 @@ _RAW_TABLES = {
         "strategy VARCHAR, symbol VARCHAR, contribution_to_return DOUBLE, "
         "contribution_to_risk DOUBLE, strategy_gross_return DOUBLE, loaded_at TIMESTAMPTZ"
     ),
+    "raw.portfolio_ml_gate": (
+        "date TIMESTAMP, forecast_skill DOUBLE, forecast_weight DOUBLE, loaded_at TIMESTAMPTZ"
+    ),
 }
 
 

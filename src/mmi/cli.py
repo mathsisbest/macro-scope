@@ -94,7 +94,11 @@ def cmd_ai(_: argparse.Namespace) -> int:
 def cmd_portfolio(_: argparse.Namespace) -> int:
     """Backtest the strategies, land returns + bootstrap-CI stats in raw.portfolio_*."""
     from mmi.ingestion import DuckDBLoader
-    from mmi.portfolio.compute import compute_attribution, compute_portfolio_returns
+    from mmi.portfolio.compute import (
+        compute_attribution,
+        compute_ml_mu_panel,
+        compute_portfolio_returns,
+    )
     from mmi.portfolio.stats import bootstrap_strategy_stats
 
     with connect() as con:
@@ -102,15 +106,21 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         asset_daily = con.execute(
             "select symbol, date, daily_return from marts.fct_asset_daily"
         ).df()
-        results = compute_portfolio_returns(asset_daily)
+        # Build the ML forecast + gate ONCE, then reuse for returns + attribution (it is heavy).
+        ml_mu_panel, ml_gate = compute_ml_mu_panel(asset_daily)
+        results = compute_portfolio_returns(asset_daily, ml_mu_panel=ml_mu_panel)
         rows = loader.upsert("raw.portfolio_returns", results, ["strategy", "date"])
         # Honest uncertainty: stationary block-bootstrap Sharpe CIs + pairwise distinguishability.
         per_strategy, pairs = bootstrap_strategy_stats(results)
         loader.upsert("raw.portfolio_strategy_stats", per_strategy, ["strategy"])
         loader.upsert("raw.portfolio_strategy_pairs", pairs, ["strategy_a", "strategy_b"])
         # Per-asset return + risk attribution (reconciles to each strategy's gross return).
-        attribution = compute_attribution(asset_daily)
+        attribution = compute_attribution(asset_daily, ml_mu_panel=ml_mu_panel)
         loader.upsert("raw.portfolio_attribution", attribution, ["strategy", "symbol"])
+        # The ML gate (forecast skill + the weight it earns) makes "mvo_ml ≈ mvo_histmean" legible:
+        # a low forecast_weight means the forecast showed no out-of-sample edge over the prior.
+        if not ml_gate.empty:
+            loader.upsert("raw.portfolio_ml_gate", ml_gate, ["date"])
     log.info(
         "portfolio: %s rows / %s strategies; %s bootstrap rows, %s pairs, %s attribution rows",
         rows,
