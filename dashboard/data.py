@@ -14,13 +14,42 @@ from mmi.utils.db import connect
 
 
 def db_exists() -> bool:
+    # Snapshot mode reads committed Parquet (no DB): "present" iff the snapshot dir holds a mart.
     # On MotherDuck the store is remote; locally we check the file exists.
+    if settings.snapshot_mode:
+        return settings.snapshot_dir.is_dir() and any(settings.snapshot_dir.glob("*.parquet"))
     return True if settings.use_motherduck else Path(settings.duckdb_path).exists()
+
+
+def _snapshot_connection() -> duckdb.DuckDBPyConnection:
+    """An in-memory DuckDB whose schemas are the committed Parquet snapshot.
+
+    Each ``<table>.parquet`` in ``snapshot_dir`` is registered as a view ``marts.<table>``, so the
+    accessors' existing ``select ... from marts.<table>`` queries run unchanged — no live DB, no
+    secrets. ``raw``/``marts`` are pre-created so a query for a mart with no Parquet file (e.g.
+    ``raw.pipeline_runs``, never snapshotted) raises a clean missing-table CatalogException that
+    ``query()`` swallows to an empty frame — exactly as a missing table does on a live DB.
+    """
+    con = duckdb.connect(":memory:")
+    # Disable Python replacement scans: a missing table must raise a clean CatalogException (which
+    # query() swallows to empty), NOT get silently "replaced" by a same-named Python object in the
+    # call stack — e.g. data.ml_forecast (the accessor function) before that mart is snapshotted.
+    con.execute("set python_enable_replacements=false")
+    con.execute("create schema if not exists raw")
+    con.execute("create schema if not exists marts")
+    for path in sorted(settings.snapshot_dir.glob("*.parquet")):
+        # The dir is ours, but escape defensively: '' for the path literal, "" for the identifier.
+        safe_path = str(path).replace("'", "''")
+        safe_name = path.stem.replace('"', '""')
+        con.execute(
+            f"create view marts.\"{safe_name}\" as select * from read_parquet('{safe_path}')"
+        )
+    return con
 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def query(sql: str, params: tuple | None = None) -> pd.DataFrame:
-    """Run a read-only query.
+    """Run a read-only query against the live DB, or the Parquet snapshot in snapshot mode.
 
     A *missing table* (e.g. ML/AI marts before those steps run) returns an empty frame.
     Connection/auth errors and schema drift (a missing column) are NOT swallowed — they must
@@ -28,7 +57,7 @@ def query(sql: str, params: tuple | None = None) -> pd.DataFrame:
     """
     if not db_exists():
         return pd.DataFrame()
-    con = connect(read_only=True)
+    con = _snapshot_connection() if settings.snapshot_mode else connect(read_only=True)
     try:
         return con.execute(sql, list(params) if params else []).df()
     except duckdb.CatalogException:
