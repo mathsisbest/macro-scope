@@ -42,11 +42,21 @@ def risk_parity(cov: np.ndarray) -> np.ndarray:
 
     Minimises the dispersion of per-asset risk contributions; at the optimum every asset
     contributes an equal share of total portfolio variance.
+
+    The covariance is scale-normalised (divided by its mean variance) before solving. ERC weights
+    are invariant to multiplying the covariance by a positive scalar, but the objective's magnitude
+    is not: on *daily* covariances (diagonal ~1e-4) the raw objective is ~1e-9, so SLSQP's absolute
+    ``ftol=1e-12`` is met — and its finite-difference gradients vanish into numerical noise — at the
+    1/N start, returning 1/N regardless of the true risk structure (silently collapsing risk_parity
+    to equal_weight). Normalising makes the contributions O(1) so convergence and gradients are
+    meaningful; the optimum is mathematically unchanged.
     """
     n = cov.shape[0]
+    mean_var = float(np.mean(np.diag(cov)))
+    cov_n = cov / mean_var if mean_var > 0 else cov
 
     def objective(w: np.ndarray) -> float:
-        rc = risk_contributions(w, cov)
+        rc = risk_contributions(w, cov_n)
         return float(np.sum((rc - rc.mean()) ** 2))
 
     result = minimize(
