@@ -233,3 +233,44 @@ def regime_sharpe_chart(regime: pd.DataFrame) -> go.Figure:
         )
     fig.update_layout(title="Annualised Sharpe by market volatility regime", barmode="group")
     return style_fig(fig, height=340)
+
+
+def ml_gate_chart(gate: pd.DataFrame) -> go.Figure:
+    """The ML gate over time: weight the forecast earns in mvo_ml (0 = no out-of-sample edge)."""
+    fig = go.Figure()
+    fig.add_scatter(
+        x=gate["date"],
+        y=gate["forecast_weight"],
+        name="forecast weight (λ)",
+        line=dict(color=PALETTE["series"][3]),
+    )
+    fig.add_scatter(
+        x=gate["date"],
+        y=gate["forecast_skill"],
+        name="forecast skill",
+        line=dict(color=PALETTE["muted"], dash="dash"),
+    )
+    fig.update_layout(title="ML gate — forecast weight & skill over time")
+    fig.update_yaxes(rangemode="tozero")
+    return style_fig(fig, height=300)
+
+
+def ml_verdict(gate: pd.DataFrame, pairs: pd.DataFrame) -> str:
+    """One honest line: did the ML tilt (mvo_ml) beat the historical-mean baseline?"""
+    mean_w = float(gate["forecast_weight"].mean()) if not gate.empty else 0.0
+    distinguishable = False
+    if not pairs.empty:
+        pair = {"mvo_histmean", "mvo_ml"}
+        match = pairs[pairs.apply(lambda r: {r["strategy_a"], r["strategy_b"]} == pair, axis=1)]
+        if not match.empty:
+            distinguishable = bool(match["distinguishable"].iloc[0])
+    if distinguishable:
+        return (
+            f"The forecast earned a mean weight of {mean_w:.0%} in the blend, and mvo_ml's Sharpe "
+            "is statistically distinguishable from the historical-mean baseline."
+        )
+    return (
+        f"The forecast earned a mean weight of {mean_w:.0%} over the prior — no reliable "
+        "out-of-sample edge — so mvo_ml is not statistically distinguishable from the "
+        "historical-mean baseline. The ML did not beat the simpler approach."
+    )
