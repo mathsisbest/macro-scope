@@ -41,11 +41,11 @@ ai: ## Generate the GenAI market brief (uses LLM_PROVIDER)
 	$(PY) -m mmi.cli ai
 
 dashboard: ## Launch the Streamlit dashboard
-	streamlit run dashboard/app.py
+	PYTHONPATH=$(CURDIR) $(BIN)streamlit run dashboard/app.py
 
 demo: seed ## Seed sample data, build marts (if dbt installed), launch dashboard
 	-cd transform && dbt build --profiles-dir . 2>/dev/null || echo "dbt not installed; dashboard will read sample marts"
-	streamlit run dashboard/app.py
+	PYTHONPATH=$(CURDIR) $(BIN)streamlit run dashboard/app.py
 
 test: ## Run the test suite
 	$(BIN)pytest
