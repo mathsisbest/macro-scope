@@ -35,9 +35,10 @@ def _solve(
     if strategy == "risk_parity":
         return engine.risk_parity(cov)
     if strategy == "mvo_histmean":
-        # Max-Sharpe with the trailing-window mean as expected returns (the honest MVO baseline;
-        # the ML-forecast mu + covariance shrinkage land in a later slice).
-        return engine.max_sharpe(cov, window.to_numpy().mean(axis=0))
+        # Max-Sharpe with the trailing-window mean as expected returns + Ledoit-Wolf shrunk cov.
+        # The upcoming mvo_ml uses the SAME shrunk cov, so its comparison isolates the ML mu.
+        arr = window.to_numpy()
+        return engine.max_sharpe(engine.ledoit_wolf_cov(arr), arr.mean(axis=0))
     raise ValueError(f"unknown strategy: {strategy} (expected one of {STRATEGIES})")
 
 
