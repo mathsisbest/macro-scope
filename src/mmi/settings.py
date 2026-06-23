@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     # The static Parquet snapshot of the marts schema: `mmi snapshot` writes it, and the public
     # demo dashboard reads from it (no DB, no secrets) when MMI_SNAPSHOT_DIR is set.
     snapshot_dir: Path = Field(default=REPO_ROOT / "data" / "public", alias="MMI_SNAPSHOT_DIR")
+    # When true, the dashboard reads the Parquet snapshot in ``snapshot_dir`` IN-PROCESS instead of
+    # opening DuckDB/MotherDuck — the public, secret-free deploy path (Streamlit Community Cloud
+    # sets it). `mmi snapshot` writes the files; the accessors and their SQL are unchanged.
+    snapshot_mode: bool = Field(default=False, alias="MMI_SNAPSHOT_MODE")
     motherduck_database: str = Field(default="", alias="MMI_MOTHERDUCK_DATABASE")
     # secret — never log or display
     motherduck_token: str = Field(default="", alias="MOTHERDUCK_TOKEN")
@@ -65,6 +69,8 @@ class Settings(BaseSettings):
 
     def storage_label(self) -> str:
         """Human-safe storage description for logs/UI — never includes the token."""
+        if self.snapshot_mode:
+            return f"Parquet snapshot · {self.snapshot_dir.name}/"
         if self.use_motherduck:
             return f"MotherDuck · {self.motherduck_database}"
         return f"DuckDB · {self.duckdb_path.name}"
