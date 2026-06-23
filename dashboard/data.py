@@ -83,6 +83,13 @@ def portfolio_regime_performance() -> pd.DataFrame:
     )
 
 
+def portfolio_ml_gate() -> pd.DataFrame:
+    return query(
+        "select date, forecast_skill, forecast_weight "
+        "from marts.fct_portfolio_ml_gate order by date"
+    )
+
+
 def crypto_intraday(symbol: str) -> pd.DataFrame:
     return query(
         "select ts, price_usd, pct_change from marts.fct_crypto_intraday "

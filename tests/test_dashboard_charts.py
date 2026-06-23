@@ -83,3 +83,37 @@ def test_regime_sharpe_chart_one_trace_per_strategy_in_low_med_high_order():
     fig = charts.regime_sharpe_chart(regime)
     assert len(fig.data) == 2  # one grouped trace per strategy
     assert list(fig.data[0].x) == ["Low", "Medium", "High"]  # reindexed to a sensible order
+
+
+def _gate(weight: float) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2020-01-31", "2020-02-28"]),
+            "forecast_skill": [0.0, weight],
+            "forecast_weight": [0.0, weight],
+        }
+    )
+
+
+def _ml_pair(distinguishable: bool) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "strategy_a": ["mvo_histmean"],
+            "strategy_b": ["mvo_ml"],
+            "sharpe_diff": [0.5 if distinguishable else 0.0],
+            "diff_lo": [0.1 if distinguishable else -0.2],
+            "diff_hi": [0.9 if distinguishable else 0.2],
+            "distinguishable": [distinguishable],
+        }
+    )
+
+
+def test_ml_verdict_reports_no_edge_when_not_distinguishable():
+    verdict = charts.ml_verdict(_gate(0.0), _ml_pair(distinguishable=False))
+    assert "0%" in verdict and "did not beat" in verdict
+
+
+def test_ml_verdict_reports_edge_when_distinguishable():
+    verdict = charts.ml_verdict(_gate(0.20), _ml_pair(distinguishable=True))
+    assert "distinguishable" in verdict
+    assert "did not beat" not in verdict

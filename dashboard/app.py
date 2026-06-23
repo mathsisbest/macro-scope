@@ -226,3 +226,15 @@ with tab_portfolio:
             st.caption(
                 "Market regime = SPY 20-day-vol terciles; stats over each strategy's invested days."
             )
+
+        # ML experiment: did the forecast add value? (the gate makes mvo_ml ≈ mvo_histmean legible)
+        gate = data.portfolio_ml_gate()
+        if not gate.empty:
+            st.subheader("ML experiment — does the forecast add value?")
+            st.info("🔬 " + charts.ml_verdict(gate, pairs))
+            st.plotly_chart(charts.ml_gate_chart(gate), use_container_width=True)
+            st.caption(
+                "forecast_weight is the share mvo_ml puts on the ML forecast over the "
+                "historical-mean prior, gated point-in-time by the forecast's realised skill. "
+                "Pre-registered: expected to stay low."
+            )
