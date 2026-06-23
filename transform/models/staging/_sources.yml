@@ -33,3 +33,5 @@ sources:
         description: "Per-(strategy, symbol) return + risk contribution, computed by `mmi portfolio`."
       - name: portfolio_ml_gate
         description: "Per-rebalance ML forecast skill + the weight it earns in mvo_ml, by `mmi portfolio`."
+      - name: portfolio_btc_effect
+        description: "Paired cross-window BTC effect (Sharpe inc_btc_2015 - ex_btc_2015) per strategy, by `mmi portfolio`."
