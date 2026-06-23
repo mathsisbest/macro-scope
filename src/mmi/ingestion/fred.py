@@ -17,11 +17,15 @@ class FredExtractor(Extractor):
     keys = ["series_id", "date"]
     required_columns = ["series_id", "date", "value"]
 
-    def fetch(self) -> pd.DataFrame:
+    def skip_reason(self) -> str | None:
+        # FRED needs a (free) key. Unkeyed, skip gracefully so the keyless core still lands and
+        # the scheduled ingest exits 0 — rather than failing the run. A *keyed* FRED failure
+        # still fails the run (FRED is the reliable macro core), since ``required`` stays True.
         if not settings.fred_api_key:
-            raise RuntimeError(
-                "FRED_API_KEY is not set (get a free key at fredaccount.stlouisfed.org)"
-            )
+            return "FRED_API_KEY not set (get a free key at fredaccount.stlouisfed.org)"
+        return None
+
+    def fetch(self) -> pd.DataFrame:
         frames = [self._fetch_series(s["id"]) for s in load_assets()["macro"]]
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 

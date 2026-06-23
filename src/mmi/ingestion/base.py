@@ -46,9 +46,24 @@ class Extractor(ABC):
         df = df.dropna(subset=self.keys)
         return df
 
+    def skip_reason(self) -> str | None:
+        """Return a human reason to SKIP this run (e.g. a missing API key), or None to run.
+
+        A skipped run is audited as ``"skipped"`` — deliberately distinct from ``"success"``
+        (it never ran) and ``"failed"`` (nothing is broken). This lets a key-gated source (e.g.
+        FRED) sit out a *keyless* run so the no-key core (Yahoo, World Bank) still lands and
+        ``mmi ingest`` exits 0; adding the key later folds the source back in with no code change.
+        """
+        return None
+
     def run(self) -> int:
         """Execute the full pipeline step with audit logging. Returns rows loaded."""
         run_id = self.loader.start_run(self.source)
+        reason = self.skip_reason()
+        if reason:
+            self.log.warning("%s: skipping — %s", self.source, reason)
+            self.loader.finish_run(run_id, 0, "skipped", reason)
+            return 0
         try:
             df = self.validate(self.fetch())
             rows = self.loader.upsert(self.table, df, self.keys)
