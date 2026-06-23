@@ -128,3 +128,16 @@ models:
               values: ["ex_btc_2002", "ex_btc_2015", "inc_btc_2015"]
       - name: date
         tests: [not_null]
+
+  - name: fct_portfolio_btc_effect
+    description: "Paired cross-window BTC effect: Sharpe(inc_btc_2015) − Sharpe(ex_btc_2015) per strategy, with a paired block-bootstrap CI. Grain: one row per strategy. A singular test re-derives diff + distinguishable."
+    columns:
+      - name: strategy
+        tests:
+          - not_null
+          - unique
+          - accepted_values:
+              values:
+                ["equal_weight", "inverse_vol", "risk_parity", "sixty_forty", "mvo_histmean", "mvo_ml"]
+      - name: distinguishable
+        tests: [not_null]
