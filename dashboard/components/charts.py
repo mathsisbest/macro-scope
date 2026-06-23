@@ -274,3 +274,59 @@ def ml_verdict(gate: pd.DataFrame, pairs: pd.DataFrame) -> str:
         "out-of-sample edge — so mvo_ml is not statistically distinguishable from the "
         "historical-mean baseline. The ML did not beat the simpler approach."
     )
+
+
+def btc_effect_chart(effect: pd.DataFrame) -> go.Figure:
+    """Per-strategy BTC effect: Sharpe(inc) − Sharpe(ex), 2015 window, with its paired CI."""
+    df = effect.sort_values("sharpe_diff")
+    colors = [PALETTE["up"] if v >= 0 else PALETTE["down"] for v in df["sharpe_diff"]]
+    fig = go.Figure()
+    fig.add_bar(
+        x=df["sharpe_diff"],
+        y=[_STRATEGY_LABELS.get(s, s) for s in df["strategy"]],
+        orientation="h",
+        marker_color=colors,
+        error_x=dict(
+            type="data",
+            symmetric=False,
+            array=(df["diff_hi"] - df["sharpe_diff"]).to_numpy(),
+            arrayminus=(df["sharpe_diff"] - df["diff_lo"]).to_numpy(),
+        ),
+    )
+    fig.add_vline(x=0, line_color=PALETTE["muted"], line_dash="dot")
+    fig.update_layout(title="BTC effect on Sharpe (inc − ex, 2015 window) — 90% paired CI")
+    return style_fig(fig, height=320)
+
+
+def btc_effect_verdict(effect: pd.DataFrame) -> str:
+    """One honest line: for how many strategies did adding BTC make a distinguishable difference?"""
+    if effect.empty:
+        return "BTC effect not computed yet (it needs the 2015 windows)."
+
+    def lab(strategy: str) -> str:
+        return _STRATEGY_LABELS.get(strategy, strategy)
+
+    distinct = effect[effect["distinguishable"]]
+    n = len(effect)
+    if distinct.empty:
+        return (
+            f"Adding BTC made no statistically distinguishable difference to any of the {n} "
+            "strategies' Sharpe over the 2015 window — every paired-difference CI includes zero."
+        )
+    hurt = distinct[distinct["sharpe_diff"] < 0]
+    helped = distinct[distinct["sharpe_diff"] > 0]
+    parts = []
+    if not hurt.empty:
+        parts.append(
+            "hurt "
+            + ", ".join(f"{lab(r.strategy)} (Δ{r.sharpe_diff:+.2f})" for r in hurt.itertuples())
+        )
+    if not helped.empty:
+        parts.append(
+            "helped "
+            + ", ".join(f"{lab(r.strategy)} (Δ{r.sharpe_diff:+.2f})" for r in helped.itertuples())
+        )
+    return (
+        f"Adding BTC made a statistically distinguishable difference for {len(distinct)} of {n} "
+        f"strategies (same-period paired comparison): it {'; '.join(parts)}."
+    )

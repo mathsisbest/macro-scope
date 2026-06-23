@@ -93,4 +93,14 @@ if not gate.empty:
     assert isinstance(charts.ml_verdict(gate, pairs), str)
     print(f"ml gate read-path OK ({len(gate)} rebalances)")
 
+# BTC-effect read-path + chart/verdict builders (the cross-window paired comparison).
+btc_effect = data.portfolio_btc_effect()
+if not btc_effect.empty:
+    assert {"strategy", "sharpe_diff", "diff_lo", "diff_hi", "distinguishable"} <= set(
+        btc_effect.columns
+    ), f"fct_portfolio_btc_effect columns drifted: {set(btc_effect.columns)}"
+    charts.btc_effect_chart(btc_effect)
+    assert isinstance(charts.btc_effect_verdict(btc_effect), str)
+    print(f"btc effect read-path OK ({len(btc_effect)} strategies)")
+
 print(f"dashboard read-path OK ({len(assets)} assets, core marts accessors exercised)")
