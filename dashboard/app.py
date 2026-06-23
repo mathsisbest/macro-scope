@@ -177,6 +177,12 @@ with tab_portfolio:
                 horizontal=True,
                 key="portfolio_window",
             )
+            st.caption(
+                "⚠️ inc-BTC vs ex-BTC@2002 differs in BOTH universe AND period — use the BTC-impact "
+                "section below (the ex/inc 2015 pair) for the clean, same-period BTC comparison. "
+                "Volatility regimes are cut within each window, so regime labels aren't comparable "
+                "across windows."
+            )
         pf = data.portfolio_returns(window_id)
         st.caption(
             "Walk-forward backtest: three allocation strategies vs a 60/40 benchmark — same dates, "
@@ -256,4 +262,17 @@ with tab_portfolio:
                 "forecast_weight is the share mvo_ml puts on the ML forecast over the "
                 "historical-mean prior, gated point-in-time by the forecast's realised skill. "
                 "Pre-registered: expected to stay low."
+            )
+
+        # BTC impact: the same-period (2015) paired comparison — independent of the window picker.
+        btc_effect = data.portfolio_btc_effect()
+        if not btc_effect.empty:
+            st.subheader("BTC impact — does adding BTC change risk-adjusted return?")
+            st.info("🪙 " + charts.btc_effect_verdict(btc_effect))
+            st.plotly_chart(charts.btc_effect_chart(btc_effect), use_container_width=True)
+            st.caption(
+                "Sharpe(inc-BTC@2015) − Sharpe(ex-BTC@2015): same dates ± BTC, with a paired "
+                "block-bootstrap 90% CI. The 60/40 benchmark (never holds BTC) is exactly zero — a "
+                "check that the comparison is genuinely paired. BTC's weekend moves fold into the "
+                "next trading day, so its standalone daily vol is understated here."
             )

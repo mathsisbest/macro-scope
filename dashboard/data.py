@@ -110,6 +110,15 @@ def portfolio_ml_gate(window_id: str = windows.DEFAULT_WINDOW) -> pd.DataFrame:
     )
 
 
+def portfolio_btc_effect() -> pd.DataFrame:
+    """The paired BTC effect per strategy (cross-window; no window filter). Empty until the two
+    2015 windows have been computed."""
+    return query(
+        "select strategy, sharpe_ex, sharpe_inc, sharpe_diff, diff_lo, diff_hi, distinguishable "
+        "from marts.fct_portfolio_btc_effect order by sharpe_diff"
+    )
+
+
 def crypto_intraday(symbol: str) -> pd.DataFrame:
     return query(
         "select ts, price_usd, pct_change from marts.fct_crypto_intraday "
