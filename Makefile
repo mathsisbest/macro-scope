@@ -17,7 +17,7 @@ CI_ENV := MMI_MOTHERDUCK_DATABASE= MOTHERDUCK_TOKEN= MMI_DUCKDB_PATH=$(CI_DB)
 # `../data/mmi.duckdb` is relative to transform/ and otherwise resolves one dir too high).
 DEV_DB := $(CURDIR)/data/mmi.duckdb
 
-.PHONY: help setup install install-dev seed ingest dbt-build ml ai dashboard demo test lint format typecheck ci all clean
+.PHONY: help setup install install-dev seed ingest dbt-build ml ai snapshot dashboard demo test lint format typecheck ci all clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -43,6 +43,9 @@ ml: ## Train + score forecast and regime models
 
 ai: ## Generate the GenAI market brief (uses LLM_PROVIDER)
 	$(PY) -m mmi.cli ai
+
+snapshot: ## Export marts.* to data/public/*.parquet (the public demo's data source)
+	$(PY) -m mmi.cli snapshot
 
 dashboard: ## Launch the Streamlit dashboard
 	PYTHONPATH=$(CURDIR) $(BIN)streamlit run dashboard/app.py
