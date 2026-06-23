@@ -45,7 +45,8 @@ def test_contributions_reconcile_to_net_daily_return():
 
 
 def test_attribution_return_reconciles_and_risk_sums_to_one():
-    attr = compute_attribution(_long(300), lookback=60, freq="M", cost=0.001)
+    # include_ml=False keeps this fast; mvo_ml reconciliation has its own test below.
+    attr = compute_attribution(_long(300), lookback=60, freq="M", cost=0.001, include_ml=False)
     assert not attr.empty
     for _, grp in attr.groupby("strategy"):
         assets = grp[grp["symbol"] != "(costs)"]
@@ -57,7 +58,19 @@ def test_attribution_return_reconciles_and_risk_sums_to_one():
 
 def test_attribution_omits_never_held_assets_for_the_benchmark():
     # 60/40 holds only SPY + a bond; QQQ is never held -> no attribution row for sixty_forty.
-    attr = compute_attribution(_long(300, ("SPY", "TLT", "QQQ")), lookback=60, freq="M")
+    attr = compute_attribution(
+        _long(300, ("SPY", "TLT", "QQQ")), lookback=60, freq="M", include_ml=False
+    )
     held = set(attr[attr["strategy"] == "sixty_forty"]["symbol"])
     assert {"SPY", "TLT", "(costs)"} <= held
     assert "QQQ" not in held
+
+
+def test_mvo_ml_attribution_reconciles():
+    attr = compute_attribution(_long(320), lookback=60, freq="M", horizon=5, include_ml=True)
+    ml = attr[attr["strategy"] == "mvo_ml"]
+    assert not ml.empty
+    assets = ml[ml["symbol"] != "(costs)"]
+    gross = ml["strategy_gross_return"].iloc[0]
+    assert np.isclose(assets["contribution_to_return"].sum(), gross, atol=1e-9)
+    assert np.isclose(assets["contribution_to_risk"].sum(), 1.0, atol=1e-9)

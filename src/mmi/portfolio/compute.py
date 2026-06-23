@@ -9,7 +9,17 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from mmi.portfolio.backtest import FIXED_WEIGHT, STRATEGIES, run_backtest_full
+from mmi.ml.forecast_panel import walk_forward_mu
+from mmi.portfolio.backtest import (
+    FIXED_WEIGHT,
+    MVO_ML,
+    STRATEGIES,
+    rebalance_dates,
+    run_backtest_full,
+)
+from mmi.utils.logging import get_logger
+
+log = get_logger("portfolio.compute")
 
 # A classic 60/40 benchmark: 60% broad equities, 40% bonds. Run through the SAME backtest engine
 # as the solver strategies (same panel, dates, rebalance cadence and costs) so the comparison is
@@ -36,10 +46,109 @@ def _sixty_forty_weights(symbols: list) -> np.ndarray | None:
     return weights.to_numpy()
 
 
+_GATE_MIN_OBS = 6  # min scored rebalances before an asset's forecast skill is trusted
+
+
+def build_ml_mu_panel(
+    panel: pd.DataFrame,
+    rebals: list,
+    *,
+    lookback: int,
+    horizon: int = 21,
+    lambda_max: float = 0.5,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Blend the point-in-time ML forecast toward the historical-mean prior, gated by skill.
+
+    For each rebalance ``t`` and asset, the expected-return input to mvo_ml is
+    ``mu = lambda(t)*mu_forecast + (1-lambda(t))*mu_hist`` where ``mu_forecast`` is the C2
+    point-in-time forecast (daily-equivalent), ``mu_hist`` the trailing-window daily mean (the
+    prior), and ``lambda(t) = lambda_max * s(t)``. ``s(t)`` in [0, 1] is the mean per-asset
+    fractional improvement of the forecast over the prior at predicting realised forward returns,
+    measured ONLY over rebalances whose outcome was realised strictly before ``t`` (point-in-time —
+    no leak). No out-of-sample edge over the prior -> ``s≈0`` -> ``mu≈mu_hist`` ->
+    ``mvo_ml≈mvo_histmean``. Missing forecasts fall back to the prior.
+
+    Returns ``(mu_panel [date, symbol, mu], gate [date, skill, lambda])``.
+    """
+    symbols = list(panel.columns)
+    long = (
+        panel.rename_axis("date")
+        .reset_index()
+        .melt(id_vars=["date"], var_name="symbol", value_name="daily_return")
+    )
+    mu_fc_df, _skill = walk_forward_mu(long, rebals, horizon=horizon)
+    mu_fc = (
+        mu_fc_df.pivot_table(index="date", columns="symbol", values="mu")
+        if not mu_fc_df.empty
+        else pd.DataFrame()
+    )
+
+    pos = {d: i for i, d in enumerate(panel.index)}
+    mu_hist: dict = {}
+    realised: dict = {}
+    for t in rebals:
+        mu_hist[t] = panel.loc[:t].iloc[:-1].tail(lookback).mean()
+        i = pos[t]
+        fwd = panel.iloc[i + 1 : i + 1 + horizon]  # the horizon days AFTER t
+        realised[t] = fwd.mean() if len(fwd) == horizon else pd.Series(np.nan, index=symbols)
+
+    def _forecast(t, sym: str) -> float:
+        if not mu_fc.empty and t in mu_fc.index and sym in mu_fc.columns:
+            value = mu_fc.loc[t, sym]
+            return float(value) if np.isfinite(value) else float("nan")
+        return float("nan")
+
+    mu_rows: list[dict] = []
+    gate_rows: list[dict] = []
+    for t in rebals:
+        # only rebalances whose forward window has fully realised before t (point-in-time gate)
+        scored = [r for r in rebals if r < t and pos[r] + 1 + horizon <= pos[t]]
+        skills: list[float] = []
+        for sym in symbols:
+            err_fc, err_prior = [], []
+            for r in scored:
+                actual = realised[r][sym]
+                fc = _forecast(r, sym)
+                if not (np.isfinite(actual) and np.isfinite(fc)):
+                    continue
+                err_fc.append(abs(fc - actual))
+                err_prior.append(abs(float(mu_hist[r][sym]) - actual))
+            if len(err_fc) >= _GATE_MIN_OBS and np.mean(err_prior) > 0:
+                skills.append(max(0.0, 1.0 - float(np.mean(err_fc)) / float(np.mean(err_prior))))
+        skill = float(np.mean(skills)) if skills else 0.0
+        lam = lambda_max * skill
+        gate_rows.append({"date": t, "skill": skill, "lambda": lam})
+        for sym in symbols:
+            hist = float(mu_hist[t][sym])
+            fc = _forecast(t, sym)
+            mu = lam * fc + (1.0 - lam) * hist if np.isfinite(fc) else hist
+            mu_rows.append({"date": t, "symbol": sym, "mu": mu})
+    gate = pd.DataFrame(gate_rows)
+    if not gate.empty:
+        # Surface the gate so a "mvo_ml ≈ mvo_histmean" result is visibly because lambda≈0 (no
+        # forecast edge), not a silent bug. (C4 lands it as a mart for the dashboard/brief.)
+        log.info(
+            "ml gate: mean lambda=%.4f (max %.4f) over %d rebalances",
+            float(gate["lambda"].mean()),
+            float(gate["lambda"].max()),
+            len(gate),
+        )
+    return pd.DataFrame(mu_rows), gate
+
+
 def _strategy_runs(
-    panel: pd.DataFrame, *, strategies: tuple, lookback: int, freq: str, cost: float
+    panel: pd.DataFrame,
+    *,
+    strategies: tuple,
+    lookback: int,
+    freq: str,
+    cost: float,
+    horizon: int,
+    lambda_max: float,
+    include_ml: bool,
 ):
-    """Yield ``(label, returns, contributions)`` for each strategy plus the 60/40 benchmark.
+    """Yield ``(label, returns, contributions)`` for each strategy, the 60/40 benchmark, and (when
+    ``include_ml``) the gated ``mvo_ml``.
 
     Both ``compute_portfolio_returns`` and ``compute_attribution`` iterate this, so the returns and
     their attribution always come from the SAME backtest runs (same panel, dates, costs).
@@ -62,6 +171,18 @@ def _strategy_runs(
         )
         yield BENCHMARK, out, contrib
 
+    if include_ml:
+        clean = panel.dropna(how="any")  # the forecast + gate need a complete (no-NaN) panel
+        rebals = rebalance_dates(clean.index, freq, lookback)
+        if rebals:
+            mu_panel, _gate = build_ml_mu_panel(
+                clean, rebals, lookback=lookback, horizon=horizon, lambda_max=lambda_max
+            )
+            out, contrib = run_backtest_full(
+                clean, strategy=MVO_ML, lookback=lookback, freq=freq, cost=cost, mu_panel=mu_panel
+            )
+            yield MVO_ML, out, contrib
+
 
 def compute_portfolio_returns(
     asset_daily: pd.DataFrame,
@@ -70,16 +191,26 @@ def compute_portfolio_returns(
     lookback: int = 252,
     freq: str = "M",
     cost: float = 0.001,
+    horizon: int = 21,
+    lambda_max: float = 0.5,
+    include_ml: bool = True,
 ) -> pd.DataFrame:
-    """Backtest each strategy plus the 60/40 benchmark; return a long frame.
+    """Backtest each strategy, the 60/40 benchmark, and (when ``include_ml``) the gated mvo_ml.
 
-    Columns: ``[strategy, date, daily_return, cumulative_return]``. The ``sixty_forty`` benchmark is
-    appended whenever the equity + a bond leg are present in the universe (same engine, same panel).
+    Columns: ``[strategy, date, daily_return, cumulative_return]``. ``sixty_forty`` is appended when
+    its legs are in the universe; ``mvo_ml`` when ``include_ml`` (it runs the heavier ML forecast).
     """
     panel = build_returns_panel(asset_daily)
     frames = []
     for label, out, _ in _strategy_runs(
-        panel, strategies=strategies, lookback=lookback, freq=freq, cost=cost
+        panel,
+        strategies=strategies,
+        lookback=lookback,
+        freq=freq,
+        cost=cost,
+        horizon=horizon,
+        lambda_max=lambda_max,
+        include_ml=include_ml,
     ):
         result = out.reset_index()
         result.insert(0, "strategy", label)
@@ -94,6 +225,9 @@ def compute_attribution(
     lookback: int = 252,
     freq: str = "M",
     cost: float = 0.001,
+    horizon: int = 21,
+    lambda_max: float = 0.5,
+    include_ml: bool = True,
 ) -> pd.DataFrame:
     """Per-(strategy, symbol) return + risk attribution, from the same backtest runs.
 
@@ -109,7 +243,14 @@ def compute_attribution(
     panel = build_returns_panel(asset_daily)
     rows: list[dict] = []
     for label, _, contrib in _strategy_runs(
-        panel, strategies=strategies, lookback=lookback, freq=freq, cost=cost
+        panel,
+        strategies=strategies,
+        lookback=lookback,
+        freq=freq,
+        cost=cost,
+        horizon=horizon,
+        lambda_max=lambda_max,
+        include_ml=include_ml,
     ):
         if contrib.empty:
             continue
