@@ -79,4 +79,14 @@ if not regime.empty:
     charts.regime_sharpe_chart(regime)
     print(f"attribution + regime read-path OK ({len(attr)} attr rows, {len(regime)} regime rows)")
 
+# ML gate read-path + chart/verdict builders (the "did the forecast add value?" surface).
+gate = data.portfolio_ml_gate()
+if not gate.empty:
+    assert {"date", "forecast_skill", "forecast_weight"} <= set(gate.columns), (
+        f"fct_portfolio_ml_gate columns drifted: {set(gate.columns)}"
+    )
+    charts.ml_gate_chart(gate)
+    assert isinstance(charts.ml_verdict(gate, pairs), str)
+    print(f"ml gate read-path OK ({len(gate)} rebalances)")
+
 print(f"dashboard read-path OK ({len(assets)} assets, core marts accessors exercised)")
