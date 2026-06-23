@@ -12,7 +12,7 @@ sources:
           warn_after: { count: 6, period: hour }
           error_after: { count: 24, period: hour }
       - name: asset_prices
-        description: "Daily OHLCV for equities/ETFs/FX from Stooq."
+        description: "Daily OHLCV for equities/ETFs/FX + daily BTC, from Yahoo (adjusted close = total return)."
         loaded_at_field: loaded_at
         freshness:
           warn_after: { count: 2, period: day }

@@ -24,6 +24,9 @@ fx:                # Yahoo FX pairs (fetched as e.g. EURUSD=X)
   - EURUSD
   - GBPUSD
 
+crypto_daily:      # Yahoo daily crypto — long history for the portfolio backtest (distinct from
+  - BTC-USD        # the CoinGecko intraday path). BTC-USD lands as symbol 'BTC', asset_class 'crypto'.
+
 macro:             # FRED series ids
   - { id: CPIAUCSL, label: "US CPI (all items)" }
   - { id: UNRATE,   label: "US Unemployment Rate" }

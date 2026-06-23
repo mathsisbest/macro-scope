@@ -103,8 +103,13 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
 
     with connect() as con:
         loader = DuckDBLoader(con)
+        # Exclude crypto for now: BTC is ingested into fct_asset_daily (data path) but its later
+        # inception would inject staggered NaNs into this single-window panel. BTC enters the
+        # backtest only once the multi-window machinery lands (Phase D5/D6), keeping this slice's
+        # backtest output byte-identical to before.
         asset_daily = con.execute(
-            "select symbol, date, daily_return from marts.fct_asset_daily"
+            "select symbol, date, daily_return from marts.fct_asset_daily "
+            "where asset_class <> 'crypto'"
         ).df()
         # Build the ML forecast + gate ONCE, then reuse for returns + attribution (it is heavy).
         ml_mu_panel, ml_gate = compute_ml_mu_panel(asset_daily)
