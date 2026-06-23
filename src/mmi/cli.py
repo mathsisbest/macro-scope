@@ -95,6 +95,35 @@ def cmd_ai(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_snapshot(_: argparse.Namespace) -> int:
+    """Export every table in the marts schema to Parquet for the public demo.
+
+    The public dashboard reads this static, secret-free snapshot (no hosted DB, no MotherDuck
+    token). Exporting the WHOLE marts schema means any new mart is included automatically — no
+    hand-maintained table list to drift.
+    """
+    from mmi.settings import settings
+
+    out_dir = settings.snapshot_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with connect(read_only=True) as con:
+        tables = [
+            row[0]
+            for row in con.execute(
+                "select table_name from information_schema.tables "
+                "where table_schema = 'marts' order by table_name"
+            ).fetchall()
+        ]
+        if not tables:
+            log.warning("snapshot: no marts tables to export — run the pipeline first")
+            return 0
+        for table in tables:
+            path = out_dir / f"{table}.parquet"
+            con.execute(f"copy marts.\"{table}\" to '{path}' (format parquet)")
+    log.info("snapshot: exported %d marts tables to %s", len(tables), out_dir)
+    return 0
+
+
 def cmd_portfolio(_: argparse.Namespace) -> int:
     """Backtest the strategies per window, landing returns + bootstrap-CI stats in raw.portfolio_*.
 
@@ -190,6 +219,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("ml", cmd_ml, "Train/score ML models"),
         ("ai", cmd_ai, "Generate GenAI market brief"),
         ("portfolio", cmd_portfolio, "Backtest portfolio strategies -> raw.portfolio_returns"),
+        ("snapshot", cmd_snapshot, "Export marts.* to Parquet for the public demo"),
     ]:
         p = sub.add_parser(name, help=help_)
         p.set_defaults(func=fn)
