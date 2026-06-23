@@ -94,6 +94,8 @@ def cmd_ai(_: argparse.Namespace) -> int:
 def cmd_portfolio(_: argparse.Namespace) -> int:
     """Backtest the strategies, land returns + bootstrap-CI stats in raw.portfolio_*."""
     from mmi.ingestion import DuckDBLoader
+    from mmi.ingestion.loader import reset_portfolio_raw_tables
+    from mmi.portfolio import windows
     from mmi.portfolio.compute import (
         compute_attribution,
         compute_ml_mu_panel,
@@ -103,6 +105,9 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
 
     with connect() as con:
         loader = DuckDBLoader(con)
+        # Phase D widened the portfolio raw schema (added window_id); recreate these wholesale-
+        # landed tables so the backtest self-heals on a stale DB instead of failing on a column.
+        reset_portfolio_raw_tables(con)
         # Exclude crypto for now: BTC is ingested into fct_asset_daily (data path) but its later
         # inception would inject staggered NaNs into this single-window panel. BTC enters the
         # backtest only once the multi-window machinery lands (Phase D5/D6), keeping this slice's
@@ -111,21 +116,27 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
             "select symbol, date, daily_return from marts.fct_asset_daily "
             "where asset_class <> 'crypto'"
         ).df()
+        # Phase D runs the backtest per window; D3 ships the single default window (behaviour-
+        # preserving), with window-led upsert keys so D6 can land multiple windows idempotently.
+        window = windows.DEFAULT_WINDOW
         # Build the ML forecast + gate ONCE, then reuse for returns + attribution (it is heavy).
-        ml_mu_panel, ml_gate = compute_ml_mu_panel(asset_daily)
-        results = compute_portfolio_returns(asset_daily, ml_mu_panel=ml_mu_panel)
-        rows = loader.upsert("raw.portfolio_returns", results, ["strategy", "date"])
+        ml_mu_panel, ml_gate = compute_ml_mu_panel(asset_daily, window=window)
+        results = compute_portfolio_returns(asset_daily, ml_mu_panel=ml_mu_panel, window=window)
+        rows = loader.upsert("raw.portfolio_returns", results, ["window_id", "strategy", "date"])
         # Honest uncertainty: stationary block-bootstrap Sharpe CIs + pairwise distinguishability.
-        per_strategy, pairs = bootstrap_strategy_stats(results)
-        loader.upsert("raw.portfolio_strategy_stats", per_strategy, ["strategy"])
-        loader.upsert("raw.portfolio_strategy_pairs", pairs, ["strategy_a", "strategy_b"])
+        # One window at a time — the bootstrap pivots by date x strategy and would collide windows.
+        per_strategy, pairs = bootstrap_strategy_stats(results, window=window)
+        loader.upsert("raw.portfolio_strategy_stats", per_strategy, ["window_id", "strategy"])
+        loader.upsert(
+            "raw.portfolio_strategy_pairs", pairs, ["window_id", "strategy_a", "strategy_b"]
+        )
         # Per-asset return + risk attribution (reconciles to each strategy's gross return).
-        attribution = compute_attribution(asset_daily, ml_mu_panel=ml_mu_panel)
-        loader.upsert("raw.portfolio_attribution", attribution, ["strategy", "symbol"])
+        attribution = compute_attribution(asset_daily, ml_mu_panel=ml_mu_panel, window=window)
+        loader.upsert("raw.portfolio_attribution", attribution, ["window_id", "strategy", "symbol"])
         # The ML gate (forecast skill + the weight it earns) makes "mvo_ml ≈ mvo_histmean" legible:
         # a low forecast_weight means the forecast showed no out-of-sample edge over the prior.
         if not ml_gate.empty:
-            loader.upsert("raw.portfolio_ml_gate", ml_gate, ["date"])
+            loader.upsert("raw.portfolio_ml_gate", ml_gate, ["window_id", "date"])
     log.info(
         "portfolio: %s rows / %s strategies; %s bootstrap rows, %s pairs, %s attribution rows",
         rows,
