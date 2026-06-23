@@ -8,9 +8,9 @@
 **Author:** mathsisbest · **Status:** Plan + working scaffold · **Cost target:** £0 / $0 forever
 
 > **Implementation status (P0 hygiene pass).** The scaffold is real and CI-gated: ingestion
-> (CoinGecko/Stooq/FRED/World Bank), a complete dbt project (staging→intermediate→marts + tests),
+> (CoinGecko/Yahoo/FRED/World Bank), a complete dbt project (staging→intermediate→marts + tests),
 > an ML forecast + regime layer, a provider-agnostic GenAI brief, and the Streamlit dashboard all
-> run on seeded data in CI. **Roadmap (described below but not yet built):** yfinance & DBnomics
+> run on seeded data in CI. **Roadmap (described below but not yet built):** the DBnomics
 > sources, per-source incremental watermarks + `make backfill`, full Pydantic payload models, dbt
 > source-freshness surfaced in the UI, and macro ML features. **Storage:** local DuckDB for dev/CI;
 > **MotherDuck** free tier for the deployed/scheduled path (the `.duckdb` binary is not committed).
@@ -47,7 +47,7 @@ comparison that drove the decision:
 | Domain | Best free source(s) | Free limit | History | "Streaming" fit | Verdict |
 |---|---|---|---|---|---|
 | **Macro** | FRED, World Bank, DBnomics | Effectively unlimited, stable | Decades | Low (monthly/quarterly data) | ✅ Core — rock-solid free backbone |
-| **Investing / markets** | Stooq (no key), yfinance, CoinGecko | CoinGecko 100 calls/min, 10k/mo | Years–decades | **High** (crypto updates per-minute) | ✅ Core — best streaming + ML data |
+| **Investing / markets** | Yahoo (no key), CoinGecko | CoinGecko 100 calls/min, 10k/mo | Years–decades | **High** (crypto updates per-minute) | ✅ Core — best streaming + ML data |
 | **Sports betting / odds** | The Odds API | ~500 credits/month (~16/day) | Scarce when free | Medium but quota-limited | ⚠️ Optional Phase-2 module |
 
 **Decision: anchor on "Markets & Macro."** Crypto gives a *real* high-frequency streaming
@@ -68,15 +68,16 @@ narrative: **treating markets and the economy as a single system you can measure
 | Source | Data | Auth | Cadence we pull | Free limits (verified Jun 2026) |
 |---|---|---|---|---|
 | **CoinGecko** (Demo API) | Crypto prices, market caps, volume | Free demo key | Every 15–30 min | 100 calls/min, 10k calls/month |
-| **Stooq** | Daily OHLC for equities, ETFs, FX, indices | None | Daily | None (CSV endpoints) |
-| **yfinance** | Equity/ETF/index history + intraday | None | Daily (intraday optional) | Unofficial; used as fallback |
+| **Yahoo** (v8 chart) | Daily *adjusted* close for equities/ETFs/bonds/commodities/FX + daily BTC | None | Daily | Unofficial endpoint (browser UA); the working price source |
+| **Stooq** *(dormant)* | Daily OHLC — replaced by Yahoo; free CSV now returns a JS challenge | None | — | Out of `EXTRACTORS`, untested |
 | **FRED** (St. Louis Fed) | US macro: CPI, rates, unemployment, yield curve, M2 | Free API key | Daily check (data is monthly) | Generous; no hard public cap |
 | **World Bank** | Cross-country GDP, inflation, indicators | None | Weekly | None |
 | **DBnomics** | Aggregator over ECB/Eurostat/IMF/OECD | None | Weekly | None |
 | *(optional)* **The Odds API** | Sports odds & line movement | Free key | 2–3×/day | 500 credits/month |
 
-> **Implemented today:** CoinGecko, Stooq, FRED, World Bank. **Roadmap:** yfinance (fallback)
-> and DBnomics are part of the design but not yet implemented.
+> **Implemented today:** CoinGecko, **Yahoo** (price history incl. daily BTC), FRED, World Bank.
+> **Dormant:** Stooq (free CSV endpoint now returns a JS challenge — out of `EXTRACTORS`).
+> **Roadmap:** DBnomics is part of the design but not yet implemented.
 
 ### 3.2 The "streaming" strategy on £0
 
@@ -108,7 +109,7 @@ incremental, idempotent loads — which is how most real analytics platforms act
 flowchart LR
     subgraph Sources["External free APIs"]
         A1[CoinGecko]:::src
-        A2[Stooq / yfinance]:::src
+        A2[Yahoo]:::src
         A3[FRED]:::src
         A4[World Bank / DBnomics]:::src
     end
@@ -248,7 +249,7 @@ markets-macro-intelligence/
   writes a row to `raw.pipeline_runs` (source, rows, duration, status) for observability.
   *(Implemented.)*
 - A **watermark** helper exists, but **per-source incremental pulls are roadmap.** Planned policy:
-  CoinGecko snapshot upsert (symbol + provider timestamp); Stooq/FRED use last-loaded-date bounds;
+  CoinGecko snapshot upsert (symbol + provider timestamp); Yahoo/FRED use last-loaded-date bounds;
   World Bank stays a full refresh (slow-changing reference data). Today: full scheduled refresh.
 
 ### 7.2 Analytics Engineering (`transform/` — dbt)
@@ -320,7 +321,7 @@ markets-macro-intelligence/
 
 | Item | Service | Cost |
 |---|---|---|
-| Source data | CoinGecko / Stooq / FRED / World Bank / DBnomics | £0 |
+| Source data | CoinGecko / Yahoo / FRED / World Bank | £0 |
 | Compute / scheduling | GitHub Actions (2,000 min/mo private) | £0 |
 | Storage | DuckDB (local) + MotherDuck free tier (deployed) | £0 |
 | Transform | dbt-core (OSS) | £0 |
@@ -351,7 +352,7 @@ markets-macro-intelligence/
 
 > **Capstone (issue #7) — phased + dependency-noted.** The portfolio layer is the skills-showcase
 > capstone but sits on top of P1–P3, so it's sequenced after them and built in slices: **0** data
-> foundation (Yahoo *adjusted-close* ingestion — in progress), **A** honest core backtest, **B**
+> foundation (Yahoo *adjusted-close* ingestion — done), **A** honest core backtest, **B**
 > statistical rigor + attribution, **C** ML frontier as a pre-registered experiment, **D** BTC window
 > + GenAI numeric-grounding. The full critical review (incl. verified free-tier data limits) is on issue #7.
 
@@ -362,7 +363,7 @@ markets-macro-intelligence/
 | Risk | Mitigation |
 |---|---|
 | Free API changes limits / breaks | Provider abstraction + sample data fallback + freshness alerts |
-| yfinance/Stooq unofficial endpoints flake | Treat as best-effort; FRED/World Bank are the reliable core |
+| Yahoo's unofficial endpoint flakes | Treat as best-effort; FRED/World Bank are the reliable core |
 | GitHub Actions quota creep | Keep jobs <60s, sensible cron frequency, monitor minutes |
 | Committing data bloats repo | Keep only Parquet + DuckDB of tracked assets; gitignore scratch; MotherDuck option |
 | LLM free-tier rate limits | Cache narratives, run once/day, exponential backoff |
