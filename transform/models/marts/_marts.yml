@@ -93,3 +93,9 @@ models:
         tests:
           - not_null
           - accepted_values: { values: ["Low", "Medium", "High"] }
+
+  - name: fct_portfolio_ml_gate
+    description: "Per-rebalance ML gate: forecast out-of-sample skill vs the prior + the weight (lambda) the forecast earns in mvo_ml's mu blend. A low forecast_weight is why mvo_ml ≈ mvo_histmean. Grain: one row per rebalance date."
+    columns:
+      - name: date
+        tests: [not_null, unique]

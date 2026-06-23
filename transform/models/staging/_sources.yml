@@ -31,3 +31,5 @@ sources:
         description: "Pairwise Sharpe-difference bootstrap CIs, computed by `mmi portfolio`."
       - name: portfolio_attribution
         description: "Per-(strategy, symbol) return + risk contribution, computed by `mmi portfolio`."
+      - name: portfolio_ml_gate
+        description: "Per-rebalance ML forecast skill + the weight it earns in mvo_ml, by `mmi portfolio`."

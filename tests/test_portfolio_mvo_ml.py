@@ -5,7 +5,11 @@ import pandas as pd
 import pytest
 
 from mmi.portfolio.backtest import MVO_ML, rebalance_dates, run_backtest
-from mmi.portfolio.compute import build_ml_mu_panel, compute_portfolio_returns
+from mmi.portfolio.compute import (
+    build_ml_mu_panel,
+    compute_ml_mu_panel,
+    compute_portfolio_returns,
+)
 
 
 def _panel(n: int = 320, n_assets: int = 3, seed: int = 0) -> pd.DataFrame:
@@ -30,9 +34,10 @@ def test_gate_lambda_bounded_and_blend_is_prior_when_no_skill():
     panel = _panel(320)
     rebals = rebalance_dates(panel.index, "M", 60)
     mu, gate = build_ml_mu_panel(panel, rebals, lookback=60, horizon=5, lambda_max=0.5)
-    assert ((gate["lambda"] >= 0.0) & (gate["lambda"] <= 0.5 + 1e-12)).all()
+    assert set(gate.columns) == {"date", "forecast_skill", "forecast_weight"}
+    assert ((gate["forecast_weight"] >= 0.0) & (gate["forecast_weight"] <= 0.5 + 1e-12)).all()
     # noise returns: the forecast has no edge over the prior, so the first rebalance gates to 0
-    assert gate.sort_values("date")["lambda"].iloc[0] == 0.0
+    assert gate.sort_values("date")["forecast_weight"].iloc[0] == 0.0
 
 
 def test_build_ml_mu_panel_truncation_invariant():
@@ -87,3 +92,20 @@ def test_mu_panel_has_complete_coverage_and_no_nan():
     assert not mu["mu"].isna().any()  # every blend is finite (missing forecasts fall back to prior)
     pairs = set(map(tuple, mu[["date", "symbol"]].to_numpy()))
     assert pairs == {(d, s) for d in rebals for s in panel.columns}  # one row per (rebal, symbol)
+
+
+def test_compute_ml_mu_panel_returns_mu_and_gate():
+    mu, gate = compute_ml_mu_panel(_long(200), lookback=30, horizon=5)
+    assert set(mu.columns) == {"date", "symbol", "mu"}
+    assert set(gate.columns) == {"date", "forecast_skill", "forecast_weight"}
+
+
+def test_precomputed_ml_mu_panel_matches_building_internally():
+    # The cmd_portfolio dedup: passing a precomputed panel gives the SAME mvo_ml as building inline.
+    df = _long(200)
+    mu, _ = compute_ml_mu_panel(df, lookback=30, horizon=5)
+    passed = compute_portfolio_returns(df, lookback=30, freq="M", horizon=5, ml_mu_panel=mu)
+    internal = compute_portfolio_returns(df, lookback=30, freq="M", horizon=5, include_ml=True)
+    a = passed[passed["strategy"] == "mvo_ml"].reset_index(drop=True)
+    b = internal[internal["strategy"] == "mvo_ml"].reset_index(drop=True)
+    pd.testing.assert_frame_equal(a, b)
