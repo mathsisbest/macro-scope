@@ -51,6 +51,25 @@ def test_risk_parity_equalises_risk_contributions():
     assert (w >= -1e-9).all()  # long-only
 
 
+def test_risk_parity_solves_erc_at_daily_covariance_scale():
+    # Regression guard for the scale bug: at *daily* magnitudes (entries ~1e-4) with a high-vol
+    # (BTC-like) asset, the raw objective fell below SLSQP's ftol at the 1/N start, so risk_parity
+    # silently returned equal_weight. It must now solve true ERC (== inverse-vol when uncorrelated).
+    cov = np.diag([1.0, 1.0, 1.0, 36.0]) * 1e-4  # last asset ~6x the vol of the others
+    w = risk_parity(cov)
+    assert np.allclose(w, inverse_volatility(cov), atol=1e-3)  # true ERC, not 1/N
+    assert not np.allclose(w, equal_weight(4), atol=0.05)  # the buggy 1/N answer is rejected
+    rc = risk_contributions(w, cov)
+    assert np.allclose(rc, rc.mean(), rtol=1e-3)  # contributions genuinely equalised
+
+
+def test_risk_parity_is_scale_invariant():
+    # ERC weights are invariant to scaling the covariance by a positive scalar; the fix must hold
+    # this at daily magnitudes, where the unscaled solver previously diverged to 1/N.
+    cov = np.array([[0.04, 0.01, 0.0], [0.01, 0.09, 0.0], [0.0, 0.0, 0.25]])
+    assert np.allclose(risk_parity(cov), risk_parity(cov * 1e-4), atol=1e-4)
+
+
 def test_max_sharpe_favours_the_higher_reward_per_risk_asset():
     cov = np.diag([0.04, 0.01])  # A vol 0.20, B vol 0.10
     mu = np.array([0.10, 0.08])
