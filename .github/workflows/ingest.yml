@@ -1,29 +1,51 @@
-name: Ingest (scheduled refresh)
+name: Refresh public snapshot (scheduled)
 
-# Scheduled micro-batch refresh into MotherDuck (the deployed shared store).
-# DISABLED by default: uncomment the `schedule:` block once MOTHERDUCK_TOKEN is configured
-# (see .github/workflows/deploy-note.md). Until then, run on demand via "Run workflow".
+# Scope 4 of #51 — the MotherDuck-free public path. Runs the pipeline against an EPHEMERAL local
+# DuckDB, exports marts -> data/public/*.parquet, and commits the Parquet. Streamlit Community Cloud
+# (deployed with MMI_SNAPSHOT_MODE=1) auto-redeploys on the push. No MotherDuck; the .duckdb binary
+# is never committed — only the Parquet snapshot. See .github/workflows/deploy-note.md.
+#
+# TWO cadences (the portfolio backtest is a ~static, multi-decade computation that's too heavy to run
+# daily — it barely moves when one new day is appended):
+#   • DAILY  — cheap refresh of prices / macro / crypto / ML. Skips the portfolio backtest AND the
+#              brief; their committed Parquet from the last weekly run is preserved untouched.
+#   • WEEKLY — full refresh incl. the portfolio backtest + the (portfolio-grounded) brief.
 on:
   workflow_dispatch:
-  # schedule:
-  #   - cron: "0 */6 * * *"   # every 6h — well inside the 2,000 free private-repo minutes/mo
+    inputs:
+      full:
+        description: "Full refresh incl. the portfolio backtest (the weekly schedule does this automatically)"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "0 6 * * *" # DAILY 06:00 UTC — cheap refresh (prices/macro/crypto/ML); preserves portfolio + brief
+    - cron: "0 4 * * 1" # WEEKLY Mon 04:00 UTC — FULL refresh incl. the portfolio backtest + brief
 
-# Read-only: we no longer commit data back to the repo (state lives in MotherDuck).
+# The job commits the refreshed Parquet snapshot back to the repo.
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: ingest
-  cancel-in-progress: true
+  group: snapshot-refresh
+  cancel-in-progress: false # let an in-flight run (esp. the weekly backtest) finish; serialize pushes
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    timeout-minutes: 60 # generous ceiling for the weekly backtest on a 2-core runner; the daily run is ~3-5 min
     env:
-      MMI_MOTHERDUCK_DATABASE: mmi
-      MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+      # MotherDuck-free: an ephemeral local DuckDB file (gitignored). Force the MotherDuck vars
+      # empty so use_motherduck stays False even if repo-level config leaks them in.
+      MMI_DUCKDB_PATH: ${{ github.workspace }}/data/mmi.duckdb
+      MMI_MOTHERDUCK_DATABASE: ""
+      MOTHERDUCK_TOKEN: ""
+      # Data-source keys (optional). With these set, FRED + CoinGecko fold in; if a secret is
+      # absent the source skips/degrades gracefully and the keyless core (Yahoo + World Bank)
+      # still lands — `mmi ingest` exits 0 either way (#51 scope 1).
       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
       COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+      # The GenAI brief is offline-safe: with no LLM key it uses the deterministic template, and an
+      # LLM error also falls back offline — so a missing/invalid key never fails the refresh.
       LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'gemini' }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -33,26 +55,59 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install (ml + transform)
-        run: python -m pip install -e ".[ml,transform]"
-      - name: Require MotherDuck token
+      - name: Install (ml + portfolio + transform)
+        # portfolio extra: scipy solvers + Ledoit-Wolf shrinkage that `mmi portfolio` needs.
+        run: python -m pip install -e ".[ml,portfolio,transform]"
+      - name: Decide refresh mode
+        # FULL on the weekly (Monday) cron, or a manual dispatch with full=true; otherwise the cheap daily refresh.
         run: |
-          if [ -z "${MOTHERDUCK_TOKEN}" ]; then
-            echo "::error::MOTHERDUCK_TOKEN is not set — add it as a repo secret (see deploy-note.md)."
-            exit 1
+          if [ "${{ github.event.schedule }}" = "0 4 * * 1" ] || [ "${{ github.event.inputs.full }}" = "true" ]; then
+            echo "FULL=true" >> "$GITHUB_ENV"
+          else
+            echo "FULL=false" >> "$GITHUB_ENV"
           fi
-      # Required ingest -> dbt -> ML -> AI. `set -e` + no `|| echo`: any failure fails the job,
-      # so a broken pipeline can never go green, and ML/AI/dashboard state is only updated
-      # after required ingest + dbt build/tests pass. No partial/broken output is committed
-      # or deployed (state lives in MotherDuck; nothing is pushed back to the repo).
-      - name: Refresh MotherDuck
+      # Build the snapshot. `set -euo pipefail`: any required-source / dbt / ML failure fails the job,
+      # so a broken pipeline can NEVER commit a snapshot. Both dbt builds use --target dev (the local
+      # ephemeral DuckDB) — never prod/MotherDuck.
+      - name: Build the snapshot
         run: |
           set -euo pipefail
-          # duckdb's MotherDuck extension reads the lowercase name; supply it only here
-          # (job-level env can't hold both cases — they collide). The mmi commands also
-          # self-export it from settings; this covers the standalone `dbt build`.
-          export motherduck_token="$MOTHERDUCK_TOKEN"
           mmi ingest
-          dbt build --project-dir transform --profiles-dir transform --target prod
-          mmi ml
-          mmi ai
+          if [ "$FULL" = "true" ]; then
+            # Weekly. Two dbt builds on purpose: `mmi ingest` only lands raw.* (unlike `mmi seed` it
+            # does NOT build the demo fallback marts), so the 1st build creates marts.fct_asset_daily
+            # that `mmi portfolio` reads; portfolio writes raw.portfolio_*; the 2nd build populates the
+            # portfolio marts from it. Then `mmi ai` writes the portfolio-grounded brief.
+            dbt build --project-dir transform --profiles-dir transform --target dev
+            mmi portfolio
+            dbt build --project-dir transform --profiles-dir transform --target dev
+            mmi ml
+            mmi ai
+          else
+            # Daily. Skip the heavy backtest AND the brief (both refresh weekly). Excluding tag:portfolio
+            # leaves the portfolio marts absent (cautious indirect selection skips their tests too), and
+            # not running `mmi ai` leaves market_brief absent. Since `mmi snapshot` only exports marts
+            # present in the DB, the committed Parquet for those marts (from the last weekly run) is
+            # preserved untouched — the public snapshot stays complete while the daily run stays cheap.
+            dbt build --project-dir transform --profiles-dir transform --target dev --exclude tag:portfolio --indirect-selection cautious
+            mmi ml
+          fi
+          mmi snapshot
+      # Commit only the Parquet snapshot (never the .duckdb binary, which is gitignored). The push to
+      # the branch is what triggers Streamlit's redeploy. `[skip ci]` is belt-and-suspenders — neither
+      # ci.yml nor this workflow triggers on push, so there is no loop.
+      - name: Commit refreshed snapshot
+        run: |
+          set -euo pipefail
+          git config user.name "mathsisbest"
+          git config user.email "33107428+mathsisbest@users.noreply.github.com"
+          git add data/public
+          if git diff --staged --quiet; then
+            echo "No snapshot changes to commit."
+          else
+            git commit -m "chore(data): refresh public Parquet snapshot [skip ci]"
+            # Rebase onto anything that landed on the branch during the run so the push can't be
+            # rejected non-fast-forward (e.g. a human push racing the cron). No-op if already current.
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push
+          fi
