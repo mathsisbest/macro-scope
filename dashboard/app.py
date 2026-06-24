@@ -153,10 +153,12 @@ with tab_macro:
             st.plotly_chart(charts.macro_chart(md, mid), use_container_width=True)
     if not mm.empty:
         st.plotly_chart(charts.yield_curve_chart(mm), use_container_width=True)
-    # Every macro series here (CPIAUCSL, UNRATE, DGS10, DGS2, FEDFUNDS) and the 10Y−2Y yield curve
-    # come from FRED, whose terms require attribution for public display.
-    if ids or not mm.empty:
-        st.caption("Source: FRED, Federal Reserve Bank of St. Louis · https://fred.stlouisfed.org/")
+    # Source line for the macro charts. Live FRED data (every series here — CPIAUCSL, UNRATE, DGS10,
+    # DGS2, FEDFUNDS — and the 10Y−2Y curve are FRED) earns the FRED attribution; sample data must
+    # NOT be attributed to FRED (it's synthetic). Decision lives in a pure, tested helper.
+    macro_caption = data.macro_source_caption(is_sample)
+    if (ids or not mm.empty) and macro_caption:
+        st.caption(macro_caption)
 
 with tab_ml:
     metrics = data.model_metrics()
