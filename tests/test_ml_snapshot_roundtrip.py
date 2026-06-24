@@ -564,7 +564,19 @@ class TestVolModelRows:
             ), "qlike_skill_ratio != qlike/baseline_qlike after round-trip"
 
     def test_skill_verdict_runs_on_round_tripped_metrics(self, ml_snap_con, rv_har_present):
-        """skill_verdict() must not raise when called with the round-tripped model_metrics frame."""
+        """skill_verdict() returns a well-formed verdict on the round-tripped frame.
+
+        This guards the *contract* of skill_verdict(), not one seed's particular
+        numbers. The gate FAILS CLOSED (src/mmi/ml/skill_gate.py, PR #104): when a
+        required metric is absent, non-finite (NaN/±inf), or out-of-range it
+        deliberately returns ``None`` for that field with ``cleared=False`` — that is
+        correct, honest behaviour, not a malformed result. So we only require the
+        five metric fields to be non-None/finite when the gate actually CLEARED
+        (``cleared=True`` implies all metrics were present and finite). When it did
+        not clear we permit ``None`` fields and instead require an explanatory reason.
+        Asserting the fields are always populated would mask the gate's fail-closed
+        path if a future seed/model change yielded a degenerate (e.g. NaN) metric.
+        """
         from mmi.ml.skill_gate import skill_verdict
 
         if not rv_har_present:
@@ -573,21 +585,29 @@ class TestVolModelRows:
         df = _q(ml_snap_con, "select * from marts.model_metrics")
         assert not df.empty
 
+        # Must not raise — absent/degenerate metrics yield a verdict, never an exception.
         verdict = skill_verdict(df, symbol="SPY")
 
-        # Structural assertions: verdict must be a well-formed dict
+        # Structural assertions: verdict must be a well-formed dict (always true).
         assert isinstance(verdict["cleared"], bool)
         assert isinstance(verdict["reasons"], list)
-        # If not cleared, at least one reason must be given
-        if not verdict["cleared"]:
+        for key in ("oos_r2", "qlike_skill_ratio", "folds_passed", "n_folds", "n_obs"):
+            assert key in verdict, f"skill_verdict missing field '{key}'"
+
+        if verdict["cleared"]:
+            # A cleared verdict implies all five metrics were present and finite.
+            for key in ("oos_r2", "qlike_skill_ratio", "folds_passed", "n_folds", "n_obs"):
+                val = verdict[key]
+                assert val is not None, (
+                    f"skill_verdict cleared=True but ['{key}'] is None — "
+                    "a cleared gate must have complete metrics"
+                )
+                assert pd.notna(val), f"skill_verdict cleared=True but ['{key}'] is NaN/NaT"
+        else:
+            # Fail-closed path: metric fields MAY be None; the gate must explain why.
             assert len(verdict["reasons"]) > 0, (
                 "skill_verdict cleared=False but reasons list is empty"
             )
-        # Metrics extracted from the round-tripped frame must be numeric scalars
-        for key in ("oos_r2", "qlike_skill_ratio", "folds_passed", "n_folds", "n_obs"):
-            val = verdict[key]
-            assert val is not None, f"skill_verdict['{key}'] is None — metric was not found"
-            assert pd.notna(val), f"skill_verdict['{key}'] is NaN/NaT"
 
 
 # ---------------------------------------------------------------------------
