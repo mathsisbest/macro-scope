@@ -39,23 +39,15 @@ auto-load, so a kickoff only needs the role + the task.
 - **Claude 3 — Architect.** Read-only strategy / Q&A; **no commits**. Catches up via open issues +
   `gh pr list` + recent `git log` before answering, then hands specs to #1. Kickoff: `Architect: <question>.`
 
-## Key decisions (and why)
-1. **Domain = Markets & Macro** (chosen on free-data availability):
-   - Crypto via **CoinGecko** (free, 100 calls/min) → the genuine high-frequency "streaming" story.
-   - Equities/ETFs/bonds/commodities/FX/daily-crypto via the **Yahoo v8 chart** extractor (no key,
-     adjusted close = total return) → deep daily history for ML. (Stooq retired — its free endpoint
-     now returns a JS challenge, not CSV.)
-   - Macro via **FRED** (free key) + **World Bank** (no key) → analytical backbone.
-   - **Sports betting is an OPTIONAL Phase-2 module** (PLAN §13), not core: The Odds API free
-     tier (~500 credits/mo) is too thin to anchor streaming.
-2. **"Streaming" = scheduled micro-batch** via GitHub Actions cron (2,000 free private-repo
-   mins/mo). Incremental, idempotent loads. True Kafka is out of scope/cost (ADR-0003).
-3. **Stack:** Python 3.10+, **DuckDB** (local dev/CI) + **MotherDuck** free tier (deployed),
-   **dbt-duckdb** (medallion: staging→intermediate→marts), **scikit-learn**, **Streamlit + Plotly**.
-4. **GenAI is provider-agnostic** (`src/mmi/ai/llm.py`): `LLM_PROVIDER` = gemini|groq|claude.
-   Defaults to **free Gemini/Groq**; falls back to a deterministic template if no key.
-   ⚠️ **The Claude API is metered/not free** — the owner's Claude subscription does NOT cover it.
-   Keep the free default; Claude is an opt-in switch.
+## Key decisions (full rationale in PLAN.md + docs/adr/)
+- **Stack:** Python 3.10+, **DuckDB** (local dev/CI) + **MotherDuck** free tier (deployed),
+  **dbt-duckdb** (medallion staging→marts), **scikit-learn**, **Streamlit + Plotly**.
+- **GenAI is provider-agnostic** (`src/mmi/ai/llm.py`): `LLM_PROVIDER` = gemini|groq|claude,
+  default **free Gemini/Groq**, deterministic-template fallback if no key.
+  ⚠️ **The Claude API is metered/not free — the owner's subscription does NOT cover it.**
+  Keep the free default; Claude is opt-in.
+- Domain & data-source choices (CoinGecko / Yahoo v8 / FRED / World Bank), the micro-batch
+  "streaming" model (ADR-0003), and Sports-betting Phase-2 → **see PLAN.md + docs/adr/**.
 
 ## Current status — read the live sources, not this file
 Status drifts, so it's NOT hand-maintained here. For where things stand, read: **open issues**,
@@ -90,12 +82,5 @@ make ingest && make dbt-build && make ml && make ai && make dashboard
 `src/mmi/{ingestion,ml,ai,utils}` · `transform/` (dbt) · `dashboard/` (Streamlit) ·
 `config/` · `tests/` · `.github/workflows/` (ci.yml — runs the gate on PRs + manual; ingest.yml — scheduled refresh, disabled by default) · `docs/` (+ ADRs).
 
-## Likely review talking points (be ready to discuss/improve)
-- **ML baseline:** on synthetic sample data the model *trails* the naive baseline — expected
-  (no signal). On real data, re-evaluate; consider classification (direction) + proper CV,
-  and don't oversell predictive power.
-- **No data in git:** the scheduled cron writes to **MotherDuck**; the `.duckdb` binary and any
-  ingested data are never committed.
-- **Secrets & freshness:** ensure no keys leak; surface dbt source-freshness in the UI.
-- **Yahoo v8** is an unofficial endpoint — treat as best-effort; **FRED / World Bank** are the
-  reliable core.
+## Review focus
+Project-specific watch-items live in **docs/REVIEW_GUIDE.md** (§7), loaded by `/review-pr`.
