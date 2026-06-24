@@ -1,19 +1,31 @@
 name: CI
 
 on:
-  # Manual-only: local `make ci` is the gate (this preserves the free GitHub Actions tier).
-  # The job below mirrors `make ci`; re-add `pull_request:` / `push:` here to restore hosted CI.
+  # The job below mirrors `make ci`. Runs automatically on every PR to main; still
+  # manually triggerable. Stays within the free private-repo Actions tier (~few min/run).
+  # `make ci` remains the local pre-flight you run before opening the PR.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
+
+concurrency:
+  # Cancel superseded runs on the same branch to save Actions minutes.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   quality:
     runs-on: ubuntu-latest
     env:
       # CI is fully local + token-free: a local DuckDB file with deterministic seeded data.
-      # MotherDuck vars are forced empty so use_motherduck stays False even if they leak in.
+      # MotherDuck + LLM keys are forced empty so use_motherduck stays False and `mmi ai`
+      # uses its deterministic-template fallback (matches the Makefile CI_ENV).
       MMI_DUCKDB_PATH: ${{ github.workspace }}/data/ci.duckdb
       MMI_MOTHERDUCK_DATABASE: ""
       MOTHERDUCK_TOKEN: ""
+      GEMINI_API_KEY: ""
+      GROQ_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -36,6 +48,10 @@ jobs:
         run: python -c "import duckdb, os; c = duckdb.connect(os.environ['MMI_DUCKDB_PATH']); c.execute('drop schema if exists marts cascade'); c.execute('drop schema if exists staging cascade'); c.close()"
       - name: dbt build + test (canonical transform, local DuckDB)
         run: dbt build --project-dir transform --profiles-dir transform --target dev
+      - name: Train + score ML models (lands marts.model_metrics)
+        run: mmi ml
+      - name: Generate GenAI market brief (deterministic fallback, no keys)
+        run: mmi ai
       - name: Dashboard read-path smoke (core marts accessors)
         run: PYTHONPATH=. python scripts/dashboard_smoke.py
       - name: Tests

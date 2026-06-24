@@ -21,11 +21,12 @@ and serves it through a Streamlit dashboard. It's a **portfolio project** for th
 ## Dev workflow
 - **Small, single-concern PRs.** One concern per PR (~1–5 files), branch `pNN-slug`, with a
   structured body (concern / what changed / risk / `make ci` result / questions). Move fast.
-- **Local-first testing is the gate — NOT GitHub Actions.** Run `make ci` (ruff, ruff format,
-  mypy, seed, `dbt build`+tests, dashboard smoke, pytest) before every PR and paste the result in
-  the PR body. One-time setup: `make setup` (needs `brew install python@3.11`).
-- **GitHub Actions is disabled by default** (`ci.yml` is `workflow_dispatch`-only) to preserve the
-  free tier; enable a workflow only to run the scheduled MotherDuck ingest, with the owner's say-so.
+- **`make ci` is the gate — run it locally before every PR; CI re-runs it on the PR.** `make ci`
+  (ruff, ruff format, mypy, seed, `dbt build`+tests, dashboard smoke, pytest) is your local
+  pre-flight — paste the result in the PR body. One-time setup: `make setup` (needs `brew install python@3.11`).
+- **GitHub Actions runs the same gate on every PR** (`ci.yml` triggers on `pull_request` to main,
+  mirroring `make ci`; still `workflow_dispatch`-able). Stays within the free private-repo tier.
+  The scheduled MotherDuck **`ingest.yml` stays disabled** (cron commented) — enable only with the owner's say-so.
 
 ## Roles & session kickoff (three-Claude)
 Three separate Claude Code sessions, each a fresh `/clear`ed terminal. `CLAUDE.md` + `MEMORY.md`
@@ -87,7 +88,7 @@ make ingest && make dbt-build && make ml && make ai && make dashboard
 
 ## Repo map (see PLAN.md §6 for full tree)
 `src/mmi/{ingestion,ml,ai,utils}` · `transform/` (dbt) · `dashboard/` (Streamlit) ·
-`config/` · `tests/` · `.github/workflows/` (ci.yml — manual; ingest.yml — scheduled refresh, disabled by default) · `docs/` (+ ADRs).
+`config/` · `tests/` · `.github/workflows/` (ci.yml — runs the gate on PRs + manual; ingest.yml — scheduled refresh, disabled by default) · `docs/` (+ ADRs).
 
 ## Likely review talking points (be ready to discuss/improve)
 - **ML baseline:** on synthetic sample data the model *trails* the naive baseline — expected
