@@ -15,6 +15,7 @@ from mmi.portfolio.backtest import (
     FIXED_WEIGHT,
     MVO_ML,
     STRATEGIES,
+    TSMOM_OVERLAY,
     rebalance_dates,
     run_backtest_full,
 )
@@ -403,3 +404,238 @@ def compute_attribution(
     if not attribution.empty:
         attribution.insert(0, "window_id", window)
     return attribution
+
+
+# ---------------------------------------------------------------------------
+# EXPERIMENT: 12-month time-series momentum overlay
+# ---------------------------------------------------------------------------
+# LOW-CONFIDENCE per GO_LIVE_PLAN §8 (canonical source was inaccessible; the
+# evidence is directional only). Ships labelled "experiment"; must beat 1/N and
+# buy-and-hold on bootstrap CI before any non-experimental claim is made.
+# ---------------------------------------------------------------------------
+
+#: Approximate trading days in 12 months and 1 month.
+_TSMOM_LONG_DAYS: int = 252  # ~12 months
+_TSMOM_SHORT_DAYS: int = 21  # ~1 month (the skip period, excluded from signal)
+
+#: Tag written into the ``strategy_type`` column of the TSMOM result mart.
+TSMOM_STRATEGY_TYPE: str = "experiment"
+
+
+def tsmom_signal(
+    panel: pd.DataFrame,
+    date: pd.Timestamp,
+    *,
+    long_days: int = _TSMOM_LONG_DAYS,
+    short_days: int = _TSMOM_SHORT_DAYS,
+) -> np.ndarray:
+    """Compute the 12m-minus-1m TSMOM signal for each asset at a single rebalance date.
+
+    The canonical time-series momentum signal is the sign of the trailing 12-month return
+    *excluding* the most recent 1 month (the "skip" period), implemented here as:
+
+        signal_i = sign(cumulative_return over [t - long_days, t - short_days))
+
+    where ``t`` is ``date`` (the rebalance date). Using only data STRICTLY BEFORE ``date``
+    (``panel.loc[:date].iloc[:-1]``) ensures point-in-time leakage-free computation.
+
+    Returns a binary array aligned to ``panel.columns``: 1.0 if signal is positive, 0.0
+    otherwise. When fewer than ``long_days`` rows are available before the skip, the signal
+    for that asset is 0.0 (no position — conservative in warmup).
+
+    Truncation-invariance guarantee: the signal depends only on data in the closed window
+    [t - long_days, t - short_days); adding or removing observations after ``date`` does
+    not change it (the standard leakage-free property of point-in-time computations).
+    """
+    # All returns strictly before `date` (no look-ahead)
+    history = panel.loc[:date].iloc[:-1]
+    n_hist = len(history)
+
+    if n_hist < long_days:
+        # Not enough history to compute any signal: all flat
+        return np.zeros(panel.shape[1], dtype=float)
+
+    # The 12m-minus-1m window: rows from -(long_days) up to -(short_days) exclusive
+    # i.e. skip the most recent `short_days` rows, then take the next `long_days - short_days` rows
+    # We compute cumulative return over [−long_days : −short_days) relative to `date`
+    long_window = history.iloc[-long_days:-short_days]  # the momentum window excluding skip period
+
+    if long_window.empty:
+        return np.zeros(panel.shape[1], dtype=float)
+
+    # Cumulative return = product of (1+r) - 1 for each asset
+    cum_ret = (1.0 + long_window).prod() - 1.0
+    # Signal: 1 if cumulative return > 0 (positive momentum), else 0 (flat)
+    signal = (cum_ret > 0).to_numpy(dtype=float)
+    return signal
+
+
+def compute_tsmom_overlay(
+    asset_daily: pd.DataFrame,
+    *,
+    lookback: int = 252,
+    freq: str = "M",
+    cost: float = 0.001,
+    long_days: int = _TSMOM_LONG_DAYS,
+    short_days: int = _TSMOM_SHORT_DAYS,
+    n_boot: int = 2000,
+    ci: float = 0.90,
+    seed: int = 12345,
+    window: str = windows.DEFAULT_WINDOW,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Run the TSMOM overlay experiment and evaluate it against 1/N and buy-and-hold benchmarks.
+
+    This is an EXPERIMENT (LOW-CONFIDENCE per GO_LIVE_PLAN §8).  The strategy is:
+    - At each monthly rebalance date, compute the 12m-minus-1m own-asset signal (leakage-free).
+    - Go equal-weight across assets with a positive signal; fall back to 1/N when none qualify.
+    - Same rebalance cadence, drift, and cost as all other strategies.
+
+    The overlay is evaluated against two benchmarks via the existing block-bootstrap CI machinery:
+    - ``equal_weight`` (1/N) — the strongest honest alternative to beat.
+    - ``buy_and_hold`` — initial equal-weight allocation held to end of sample (no rebalancing).
+
+    Returns ``(returns_long, stats, signal_log)``:
+    - ``returns_long``: ``[window_id, strategy, strategy_type, date, daily_return,
+      cumulative_return]`` for ``tsmom_overlay``, ``equal_weight``, and ``buy_and_hold``.
+      ``strategy_type`` = ``'experiment'`` for ``tsmom_overlay``, ``'benchmark'`` otherwise.
+    - ``stats``: per-strategy + pairwise Sharpe CIs from ``bootstrap_strategy_stats`` stamped with
+      ``window_id`` and ``experiment='tsmom_overlay'``.
+    - ``signal_log``: ``[window_id, date, symbol, signal]`` — the per-rebalance signal used, for
+      audit / leakage verification.
+
+    If the panel is too short to run (fewer invested dates than the bootstrap minimum), all three
+    frames are returned empty.
+    """
+    from mmi.portfolio.stats import bootstrap_strategy_stats
+
+    panel = build_returns_panel(asset_daily)
+
+    # --- 1. build the point-in-time signal panel for every rebalance date --------------------
+    rebals = rebalance_dates(panel.index, freq, lookback)
+    if not rebals:
+        empty_ret = pd.DataFrame(
+            columns=[
+                "window_id",
+                "strategy",
+                "strategy_type",
+                "date",
+                "daily_return",
+                "cumulative_return",
+            ]
+        )
+        empty_stats = pd.DataFrame()
+        empty_sig = pd.DataFrame(columns=["window_id", "date", "symbol", "signal"])
+        return empty_ret, empty_stats, empty_sig
+
+    symbols = list(panel.columns)
+    sig_rows: list[dict] = []
+    tsmom_rows: list[dict] = []
+    for t in rebals:
+        sig = tsmom_signal(panel, t, long_days=long_days, short_days=short_days)
+        for s, v in zip(symbols, sig, strict=True):
+            sig_rows.append({"window_id": window, "date": t, "symbol": s, "signal": float(v)})
+        tsmom_rows.append(
+            {
+                "date": t,
+                **dict(zip(symbols, sig, strict=True)),
+            }
+        )
+
+    # Pivot into a [date, symbol, signal] frame for run_backtest_full
+    tsmom_signal_df = pd.DataFrame(tsmom_rows).set_index("date")
+    tsmom_long = tsmom_signal_df.reset_index().melt(
+        id_vars=["date"], var_name="symbol", value_name="signal"
+    )
+
+    # --- 2. run all three strategies through the same backtest engine -------------------------
+    frames = []
+
+    # TSMOM overlay (experiment)
+    out_tsmom, _ = run_backtest_full(
+        panel,
+        strategy=TSMOM_OVERLAY,
+        lookback=lookback,
+        freq=freq,
+        cost=cost,
+        tsmom_panel=tsmom_long,
+    )
+    r_tsmom = out_tsmom.reset_index()
+    r_tsmom.insert(0, "strategy", TSMOM_OVERLAY)
+    r_tsmom.insert(0, "strategy_type", TSMOM_STRATEGY_TYPE)
+    r_tsmom.insert(0, "window_id", window)
+    frames.append(r_tsmom)
+
+    # 1/N baseline
+    out_ew, _ = run_backtest_full(
+        panel, strategy="equal_weight", lookback=lookback, freq=freq, cost=cost
+    )
+    r_ew = out_ew.reset_index()
+    r_ew.insert(0, "strategy", "equal_weight")
+    r_ew.insert(0, "strategy_type", "benchmark")
+    r_ew.insert(0, "window_id", window)
+    frames.append(r_ew)
+
+    # Buy-and-hold: use the initial equal-weight allocation held without rebalancing.
+    # We implement this as a fixed_weight backtest with equal weights — the cost model makes it
+    # effectively zero-cost after the initial buy because the weights we pass equal the
+    # first-rebalance target, so later rebalances have zero turnover relative to the drifted
+    # weights... wait, fixed_weight REBALANCES every period.  Buy-and-hold must NOT rebalance.
+    # Implement by running equal_weight with freq="Q" at a 10yr lookback so the first rebalance
+    # fires once and subsequent ones are as rare as possible in a short test window — but that
+    # still rebalances.  Proper approach: compute wealth directly from compounding with the
+    # initial 1/N weight, no further rebalances.  We do this by building the buy-and-hold series
+    # manually from the panel (point-in-time: weights set at the first valid invested date).
+    n_assets = len(symbols)
+    panel_clean = panel.dropna(how="any").sort_index()
+    bnh_records: list[tuple] = []
+    bnh_weights: np.ndarray | None = None
+    for date, row in panel_clean.iterrows():
+        ret = row.clip(lower=-1.0).to_numpy()
+        if bnh_weights is None:
+            bnh_weights = np.full(n_assets, 1.0 / n_assets)
+        gross = float((bnh_weights * ret).sum())
+        bnh_records.append((date, gross))
+        # Drift only — never rebalance
+        drifted = bnh_weights * (1.0 + ret)
+        total = drifted.sum()
+        bnh_weights = drifted / total if total > 0 else np.full(n_assets, 1.0 / n_assets)
+    bnh_out = pd.DataFrame(bnh_records, columns=["date", "daily_return"]).set_index("date")
+    bnh_out["cumulative_return"] = (1.0 + bnh_out["daily_return"]).cumprod() - 1.0
+    r_bnh = bnh_out.reset_index()
+    r_bnh.insert(0, "strategy", "buy_and_hold")
+    r_bnh.insert(0, "strategy_type", "benchmark")
+    r_bnh.insert(0, "window_id", window)
+    frames.append(r_bnh)
+
+    returns_long = pd.concat(frames, ignore_index=True)
+
+    # --- 3. bootstrap CI — reuse the existing machinery ------------------------------------------
+    # bootstrap_strategy_stats expects [strategy, date, daily_return] and works on one window.
+    stats_input = returns_long[["strategy", "date", "daily_return"]].copy()
+    try:
+        per_strategy, pairs = bootstrap_strategy_stats(
+            stats_input, window=window, n_boot=n_boot, ci=ci, seed=seed
+        )
+        per_strategy["experiment"] = TSMOM_OVERLAY
+        pairs["experiment"] = TSMOM_OVERLAY
+        stats = pd.concat(
+            [
+                per_strategy,
+                pairs.rename(
+                    columns={
+                        "strategy_a": "strategy",
+                        "sharpe_a": "sharpe",
+                    }
+                ),
+            ],
+            ignore_index=True,
+            sort=False,
+        )
+        # Return the two frames separately for callers that want them distinct
+        stats = pd.concat([per_strategy, pairs], ignore_index=True, sort=False)
+    except ValueError:
+        log.warning("tsmom_overlay: too few invested dates for bootstrap CI; skipping stats")
+        stats = pd.DataFrame()
+
+    signal_log = pd.DataFrame(sig_rows)
+    return returns_long, stats, signal_log
