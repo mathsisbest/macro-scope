@@ -175,6 +175,122 @@ def yield_curve_chart(df: pd.DataFrame) -> go.Figure:
 
 
 # ---------------------------------------------------------------------------
+# Macro tab — recession-risk panel (E3)
+# ---------------------------------------------------------------------------
+
+#: Scope/caveat caption baked in per Contract E.
+#: The panel is macro CONTEXT only — it must NOT be read as a return or price forecast.
+_RECESSION_RISK_CAVEATS: str = (
+    "**Context only — not a forecast.**  "
+    "Yield-curve recession-risk models (Estrella & Mishkin 1998) show AUC ~0.85–0.89 at a "
+    "12-month horizon (San Francisco Fed 2018).  "
+    "**Caveat 1 — term-premium critique:** a theoretically-motivated term-premium adjustment "
+    "(Bauer & Mertens 2018) actually *lowers* predictive AUC; the unadjusted spread is used here.  "
+    "**Caveat 2 — 2022–23 false positive:** the 2022–23 yield-curve inversion produced a "
+    "sharply elevated recession probability, yet no NBER recession was declared through mid-2026. "
+    "This is a documented, live out-of-sample failure — the model was not re-tuned to pass. "
+    "Use this panel for macro regime awareness, not as a recession signal."
+)
+
+#: Model label for the chart title, keyed by the mart's 'model' column value.
+_RECESSION_MODEL_LABELS: dict[str, str] = {
+    "10y_3m": "10Y−3M spread (canonical Estrella-Mishkin)",
+    "10y_2y_proxy": "10Y−2Y spread (proxy — 3M series unavailable)",
+}
+
+
+def recession_risk_chart(df: pd.DataFrame) -> go.Figure:
+    """Recession probability over time from the Estrella-Mishkin probit.
+
+    Uses the ``model`` column from ``fct_recession_risk`` to label whether the chart
+    is using the canonical 10Y−3M spread or the 10Y−2Y proxy.  Colours come from
+    named PALETTE tokens only — no inline hex.  A reference line at 0.50 marks the
+    conventional "high-probability" threshold.
+    """
+    fig = go.Figure()
+
+    # Determine model label from the mart's model column (use the first non-null value).
+    model_key: str = "10y_3m"  # default
+    if not df.empty and "model" in df.columns:
+        first_model = df["model"].dropna().iloc[0] if not df["model"].dropna().empty else model_key
+        model_key = str(first_model)
+    model_label = _RECESSION_MODEL_LABELS.get(model_key, model_key)
+
+    # Recession probability filled area — amber (SERIES_VOL) signals caution without falsely
+    # implying "recession confirmed" (which would be PALETTE["down"]/red).
+    fig.add_scatter(
+        x=df["date"] if not df.empty else [],
+        y=df["recession_prob"] if not df.empty else [],
+        name="Recession probability",
+        fill="tozeroy",
+        line=dict(color=SERIES_VOL),
+        fillcolor="rgba(255,180,84,0.18)",  # SERIES_VOL (#ffb454) at ~18% opacity
+    )
+
+    # Overlay the underlying yield-curve spread on a second y-axis for context.
+    if not df.empty and "spread_10y_3m" in df.columns and df["spread_10y_3m"].notna().any():
+        fig.add_scatter(
+            x=df["date"],
+            y=df["spread_10y_3m"],
+            name="Yield-curve spread (pp)",
+            line=dict(color=SERIES_YIELD, dash="dot"),
+            yaxis="y2",
+        )
+
+    # 50% reference line — conventional "elevated risk" threshold.
+    fig.add_hline(
+        y=0.50,
+        line_color=PALETTE["down"],
+        line_dash="dot",
+        annotation_text="50% threshold",
+        annotation_font_color=PALETTE["down"],
+        annotation_position="top left",
+    )
+
+    fig.update_layout(
+        title=dict(
+            text=f"Recession-risk probability — {model_label}",
+            font=_TITLE_FONT,
+        ),
+        yaxis=dict(
+            title="Recession probability",
+            tickformat=".0%",
+            range=[0, 1.05],
+        ),
+        yaxis2=dict(
+            title="Spread (pp)",
+            overlaying="y",
+            side="right",
+            showgrid=False,
+        ),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+    )
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=HEIGHT_DEFAULT)
+
+
+def recession_risk_caption(is_sample: bool | None) -> str:
+    """Source caption for the recession-risk panel.
+
+    The recession probability is *derived* from FRED yield series when data is live,
+    and from synthetic seed yields when in sample mode.  Routes through ``is_sample``
+    tri-state exactly as ``macro_source_caption`` does — never hardcodes 'Source: FRED'.
+    """
+    if is_sample is False:
+        return (
+            "Recession probability derived from FRED DGS10 and DGS3MO (or DGS2) yield series · "
+            "Estrella & Mishkin (1998) probit model · "
+            "https://fred.stlouisfed.org/"
+        )
+    if is_sample is True:
+        return (
+            "⚠️ Recession probability derived from synthetic seed yields — "
+            "not from FRED (live data uses FRED DGS10 / DGS3MO)."
+        )
+    return ""  # mixed / unknown provenance → make no source claim
+
+
+# ---------------------------------------------------------------------------
 # ML tab
 # ---------------------------------------------------------------------------
 

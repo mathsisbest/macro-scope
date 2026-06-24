@@ -248,6 +248,26 @@ with tab_macro:
     if (ids or not mm.empty) and macro_caption:
         st.caption(macro_caption)
 
+    # ---- Recession-risk panel -----------------------------------------------
+    # Macro CONTEXT only — not a return/price forecast (Contract E, §8).
+    # The panel is always rendered (even when the main macro series are empty) because
+    # fct_recession_risk is an independent mart built from the yield-curve data.
+    rr = data.recession_risk()
+    with st.expander("📉 Recession-risk probability (yield-curve model)", expanded=not rr.empty):
+        if rr.empty:
+            st.info(
+                "Recession-risk data not available yet. "
+                "The `fct_recession_risk` mart is built during `mmi ingest` → `dbt build`. "
+                "Run `make demo` or `mmi ingest` to populate."
+            )
+        else:
+            st.plotly_chart(charts.recession_risk_chart(rr), use_container_width=True)
+        # Caveats are always shown so the panel reads as honest context even before data arrives.
+        st.caption(charts._RECESSION_RISK_CAVEATS)
+        rr_caption = charts.recession_risk_caption(is_sample)
+        if rr_caption:
+            st.caption(rr_caption)
+
 with tab_ml:
     metrics = data.model_metrics()
     fc = data.ml_forecast()
