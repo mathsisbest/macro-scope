@@ -19,7 +19,7 @@ CI_ENV := MMI_MOTHERDUCK_DATABASE= MOTHERDUCK_TOKEN= MMI_DUCKDB_PATH=$(CI_DB) GE
 # `../data/mmi.duckdb` is relative to transform/ and otherwise resolves one dir too high).
 DEV_DB := $(CURDIR)/data/mmi.duckdb
 
-.PHONY: help setup install install-dev seed ingest healthcheck dbt-build ml ai snapshot dashboard demo test lint format typecheck ci all clean
+.PHONY: help setup install install-dev seed ingest healthcheck dbt-build ml ai snapshot dashboard demo test lint format typecheck ci all clean app-smoke import-smoke
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -79,6 +79,12 @@ setup: ## One-time local setup: create .venv + install all extras (needs Homebre
 	$(VENV)/bin/pip install -e ".[all]"
 	@echo "Setup complete. Run: make ci"
 
+app-smoke: ## Render smoke: AppTest in populated-DB + empty-snapshot modes (run after `make ci` seed steps)
+	$(CI_ENV) PYTHONPATH=. $(PY) scripts/dashboard_app_smoke.py
+
+import-smoke: ## Import guard: fail if sklearn/scipy/dbt reachable at module-scope from dashboard imports
+	PYTHONPATH=. $(PY) scripts/public_import_smoke.py
+
 ci: ## Full local gate — run before every PR; the reviewer runs this too (no GitHub Actions)
 	$(BIN)ruff check .
 	$(BIN)ruff format --check .
@@ -90,6 +96,7 @@ ci: ## Full local gate — run before every PR; the reviewer runs this too (no G
 	$(CI_ENV) $(PY) -m mmi.cli ml
 	$(CI_ENV) $(PY) -m mmi.cli ai
 	$(CI_ENV) PYTHONPATH=. $(PY) scripts/dashboard_smoke.py
+	$(CI_ENV) PYTHONPATH=. $(PY) scripts/dashboard_app_smoke.py
 	$(BIN)pytest
 	@echo "make ci: PASS"
 
