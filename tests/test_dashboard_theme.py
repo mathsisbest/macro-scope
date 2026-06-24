@@ -159,3 +159,55 @@ def test_wcag_aa_normal_text_contrast(fg_key: str, bg_key: str) -> None:
         f"WCAG-AA fail: PALETTE[{fg_key!r}] ({fg}) vs PALETTE[{bg_key!r}] ({bg}) "
         f"= {ratio:.2f}:1 (need ≥ 4.5:1)"
     )
+
+
+@pytest.mark.parametrize("series_idx", [1, 2, 3, 4, 5])
+def test_wcag_aa_series_palette_contrast(series_idx: int) -> None:
+    """Every categorical series colour must achieve WCAG AA for normal text (≥ 4.5:1).
+
+    series[0] == accent and is already covered by test_wcag_aa_normal_text_contrast;
+    series[1..5] are rendered as lines/markers in crypto_chart, vol_chart,
+    yield_curve_chart, ml_gate_chart and regime_sharpe_chart. style_fig() gives every
+    figure a transparent plot/paper background, so the effective backdrop is the app
+    background (PALETTE['bg']), not the metric-card panel — hence we test against 'bg'.
+    Locking these keeps a future palette change from silently dropping a series below
+    the AA text threshold. (Current values: 6.33:1–10.72:1 vs bg.)
+    """
+    from dashboard.theme import PALETTE
+
+    fg = PALETTE["series"][series_idx]
+    bg = PALETTE["bg"]
+    ratio = _contrast(fg, bg)  # type: ignore[arg-type]
+    assert ratio >= 4.5, (
+        f"WCAG-AA fail: PALETTE['series'][{series_idx}] ({fg}) vs PALETTE['bg'] ({bg}) "
+        f"= {ratio:.2f}:1 (need ≥ 4.5:1)"
+    )
+
+
+def test_grid_colour_is_decorative_and_exempt_from_contrast_minimums() -> None:
+    """grid (#2a2f3a) is a *deliberate*, documented contrast exemption — not a silent gap.
+
+    It is used only for Plotly gridlines and the metric-panel border: purely decorative,
+    non-text elements. WCAG 2.1 SC 1.4.11 (Non-text Contrast) requires 3:1 for
+    *meaningful* graphical objects / UI components, but explicitly exempts elements that
+    are decorative or not needed to understand the content — gridlines are the canonical
+    example. grid is therefore held to neither the 4.5:1 (text) nor the 3:1 (meaningful
+    object) bar.
+
+    We assert it stays *below* 3:1 to encode that decision as a test: grid is meant to be
+    a faint, decorative-only token (currently ~1.41:1 vs bg, ~1.30:1 vs panel). If a
+    future change pushes it to ≥ 3:1 it has started to read as a meaningful boundary, and
+    this test fails to force a conscious re-evaluation of whether it must now meet WCAG
+    1.4.11. (The exact hex is separately locked by test_palette_existing_hex_values_unchanged.)
+    """
+    from dashboard.theme import PALETTE
+
+    non_text_object_min = 3.0  # WCAG 2.1 SC 1.4.11 threshold for meaningful graphics
+    for bg_key in ("bg", "panel"):
+        ratio = _contrast(PALETTE["grid"], PALETTE[bg_key])  # type: ignore[arg-type]
+        assert ratio < non_text_object_min, (
+            f"grid ({PALETTE['grid']}) vs PALETTE[{bg_key!r}] ({PALETTE[bg_key]}) "
+            f"= {ratio:.2f}:1, which now meets/exceeds the {non_text_object_min}:1 "
+            "non-text bar. grid is a decorative-only token — reconsider whether it must "
+            "now satisfy WCAG 1.4.11, or update this guard if the exemption still holds."
+        )
