@@ -3,8 +3,10 @@ DuckDB/MotherDuck, no secrets. Round-trips marts -> `mmi snapshot` -> Parquet ->
 asserts the live DB connector (`connect`) is never called."""
 
 import argparse
+from datetime import datetime
 
 import duckdb
+import pandas as pd
 from dashboard import data
 
 import mmi.cli as cli
@@ -83,3 +85,109 @@ def test_storage_label_reflects_snapshot_mode(monkeypatch):
     assert label.startswith("Parquet snapshot")
     # the snapshot label must never imply a live/MotherDuck backend
     assert "MotherDuck" not in label and "DuckDB" not in label
+
+
+# ---------------------------------------------------------------------------
+# H2 — brief snapshot round-trip
+# ---------------------------------------------------------------------------
+
+
+def _seed_and_snapshot(monkeypatch, tmp_path):
+    """Run ``mmi seed`` (writes an offline brief) then ``mmi snapshot`` into a temp dir.
+
+    Returns the snapshot dir Path.  Uses isolated DB path and snapshot dir so the test
+    never touches the real DB or data/public.
+    """
+    db_path = tmp_path / "seed.duckdb"
+    snap_dir = tmp_path / "public"
+
+    # Route the DB to our isolated temp file.
+    monkeypatch.setattr(settings_mod.settings, "duckdb_path", db_path)
+    # Route the snapshot export to our temp dir.
+    monkeypatch.setattr(settings_mod.settings, "snapshot_dir", snap_dir)
+    # Ensure snapshot reads hit our dir (set before cmd_snapshot patches cli.connect).
+    # Patch cli.connect so cmd_snapshot opens the same temp DB (read_only=True).
+    monkeypatch.setattr(
+        cli,
+        "connect",
+        lambda *a, **k: duckdb.connect(str(db_path), read_only=k.get("read_only", False)),
+    )
+
+    assert cli.cmd_seed(argparse.Namespace()) == 0, "cmd_seed must exit 0"
+    assert cli.cmd_snapshot(argparse.Namespace()) == 0, "cmd_snapshot must exit 0"
+
+    return snap_dir
+
+
+def test_brief_snapshot_roundtrip_returns_one_row(monkeypatch, tmp_path):
+    """After seed->snapshot, latest_brief() must return exactly one row in snapshot mode.
+
+    Checks:
+    - exactly one row (not zero, not two)
+    - engine column is present and non-empty (seed writes 'offline-template')
+    - brief column is present and non-empty
+    - created_at is parseable as a datetime (Contract G: wall-clock generation time)
+    """
+    snap_dir = _seed_and_snapshot(monkeypatch, tmp_path)
+
+    # Switch data.py into snapshot mode pointing at our temp dir.
+    monkeypatch.setattr(settings_mod.settings, "snapshot_mode", True)
+    monkeypatch.setattr(settings_mod.settings, "snapshot_dir", snap_dir)
+    # Invalidate any cached query results from prior tests.
+    data.query.clear()
+
+    result = data.latest_brief()
+
+    assert not result.empty, "latest_brief() must return a row after seed->snapshot"
+    assert len(result) == 1, f"Expected exactly 1 brief row, got {len(result)}"
+
+    row = result.iloc[0]
+
+    # engine must be present and non-empty — seed writes 'offline-template'
+    assert "engine" in result.columns, "market_brief must have an 'engine' column"
+    assert row["engine"], "engine must be non-empty"
+
+    # brief body must be present and non-empty
+    assert "brief" in result.columns, "market_brief must have a 'brief' column"
+    assert row["brief"], "brief body must be non-empty"
+
+    # created_at must be parseable as a datetime (Contract G: wall-clock stamp)
+    assert "created_at" in result.columns, "market_brief must have a 'created_at' column"
+    created_at = row["created_at"]
+    # DuckDB may return a Timestamp, datetime, or ISO string — all must be parseable.
+    if isinstance(created_at, str):
+        parsed = datetime.fromisoformat(created_at)
+    else:
+        # pandas Timestamp or datetime.datetime — both are datetime-like
+        parsed = pd.Timestamp(created_at).to_pydatetime()
+    assert isinstance(parsed, datetime), (
+        f"created_at must be a parseable datetime, got {created_at!r}"
+    )
+
+
+def test_brief_snapshot_missing_parquet_returns_empty_not_crash(monkeypatch, tmp_path):
+    """If market_brief.parquet is deleted from the snapshot dir, latest_brief() must return an
+    empty DataFrame — NOT raise an exception.
+
+    Regression guard for Contract B: query() swallows CatalogException (missing table/view)
+    and returns an empty frame; the caller checks for emptiness via 'No brief yet' messaging.
+    """
+    snap_dir = _seed_and_snapshot(monkeypatch, tmp_path)
+
+    # Delete the brief Parquet so the snapshot dir has no market_brief view.
+    brief_parquet = snap_dir / "market_brief.parquet"
+    assert brief_parquet.exists(), (
+        "market_brief.parquet must exist after seed->snapshot for this test to be meaningful"
+    )
+    brief_parquet.unlink()
+
+    monkeypatch.setattr(settings_mod.settings, "snapshot_mode", True)
+    monkeypatch.setattr(settings_mod.settings, "snapshot_dir", snap_dir)
+    data.query.clear()
+
+    # Must not raise — CatalogException is swallowed to an empty frame by query().
+    result = data.latest_brief()
+
+    assert result.empty, (
+        "latest_brief() must return an empty DataFrame when market_brief.parquet is absent"
+    )
