@@ -1,7 +1,8 @@
 # dbt connects to DuckDB. Two targets:
 #   dev  (default) — local DuckDB file; used by CI and the offline demo. No secrets.
 #   prod           — MotherDuck (the deployed shared store); token from MOTHERDUCK_TOKEN env.
-# CI/local use the default `dev`; the scheduled cron passes `--target prod`.
+# CI/local use the default `dev` (local DuckDB); the MotherDuck-free public-snapshot cron also uses
+# `dev` (an ephemeral local DuckDB). `prod` (MotherDuck) is private-dev only — no scheduled job uses it.
 # When run with --project-dir from the repo root, set an ABSOLUTE MMI_DUCKDB_PATH.
 mmi:
   target: dev

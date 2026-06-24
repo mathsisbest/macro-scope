@@ -21,3 +21,20 @@ models:
     marts:
       +materialized: table
       +schema: marts
+      # The portfolio marts derive from the heavy `mmi portfolio` backtest (raw.portfolio_*). They're
+      # tagged so the daily refresh cron can `--exclude tag:portfolio` (the backtest only re-runs
+      # weekly); everything else refreshes daily. Keep this list in sync with the backtest outputs.
+      fct_portfolio_returns:
+        +tags: ["portfolio"]
+      fct_portfolio_strategy_stats:
+        +tags: ["portfolio"]
+      fct_portfolio_strategy_pairs:
+        +tags: ["portfolio"]
+      fct_performance_attribution:
+        +tags: ["portfolio"]
+      fct_portfolio_regime_performance:
+        +tags: ["portfolio"]
+      fct_portfolio_ml_gate:
+        +tags: ["portfolio"]
+      fct_portfolio_btc_effect:
+        +tags: ["portfolio"]
