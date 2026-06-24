@@ -60,5 +60,7 @@ jobs:
         run: mmi ai
       - name: Dashboard read-path smoke (core marts accessors)
         run: PYTHONPATH=. python scripts/dashboard_smoke.py
+      - name: Dashboard app-render smoke
+        run: PYTHONPATH=. python scripts/dashboard_app_smoke.py
       - name: Tests
         run: pytest
