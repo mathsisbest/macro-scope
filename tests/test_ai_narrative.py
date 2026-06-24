@@ -1,5 +1,10 @@
 """The market brief is numerically grounded: portfolio stats + CIs come from the marts, and the
-brief hedges (says "not distinguishable") when the bootstrap says so — never invented."""
+brief hedges (says "not distinguishable") when the bootstrap says so — never invented.
+
+Also covers:
+- post-generation LLM output validation (empty / too-long / key-shaped → llm-rejected tag)
+- body redaction: redact() runs on EVERY persisted body before .md write + mart insert
+"""
 
 import logging
 
@@ -209,5 +214,167 @@ def test_generate_brief_falls_back_to_offline_template_on_api_error(monkeypatch,
         assert "falling back to offline template" in caplog.text
         assert "AIzaSECRET123" not in caplog.text
         assert "key=***" in caplog.text
+    finally:
+        con.close()
+
+
+# ---------------------------------------------------------------------------
+# GB: LLM output validation tests
+# ---------------------------------------------------------------------------
+
+
+def test_validate_llm_output_rejects_empty():
+    assert narrative._validate_llm_output("") is not None
+    assert narrative._validate_llm_output("   \n\t  ") is not None
+
+
+def test_validate_llm_output_rejects_too_long():
+    long_text = "a" * (narrative._MAX_BRIEF_CHARS + 1)
+    result = narrative._validate_llm_output(long_text)
+    assert result is not None
+    assert "too long" in result
+
+
+def test_validate_llm_output_rejects_api_key_token():
+    # api_key=... style
+    assert narrative._validate_llm_output("Here is your api_key=SECRETVALUE summary.") is not None
+
+
+def test_validate_llm_output_rejects_bearer_token():
+    assert narrative._validate_llm_output("Authorization: bearer MYTOKEN12345ABC") is not None
+
+
+def test_validate_llm_output_rejects_google_api_key():
+    google_key = "AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+    assert narrative._validate_llm_output(f"The key is {google_key}.") is not None
+
+
+def test_validate_llm_output_rejects_long_hex():
+    hex_secret = "a" * 32  # 32-char hex-alphabet string
+    assert narrative._validate_llm_output(f"secret: {hex_secret}") is not None
+
+
+def test_validate_llm_output_accepts_normal_brief():
+    normal = (
+        "SPY closed at $450.23 (+0.3%). The 10Y-2Y spread is -0.15pp. "
+        "Risk parity returned +12.5% with Sharpe 1.10 [0.50, 1.70]. "
+        "Watch: upcoming CPI release."
+    )
+    assert narrative._validate_llm_output(normal) is None
+
+
+# ---------------------------------------------------------------------------
+# GB: generate_brief → llm-rejected tag when LLM output fails validation
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_con() -> duckdb.DuckDBPyConnection:
+    """Minimal in-memory DB with just the marts schema (no portfolio tables)."""
+    con = duckdb.connect()
+    con.execute("create schema if not exists marts")
+    return con
+
+
+def test_generate_brief_rejects_empty_llm_output(monkeypatch, tmp_path, caplog):
+    """Empty LLM output → offline-template (llm-rejected) tag, not a crash."""
+    con = _make_minimal_con()
+    monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
+    monkeypatch.setattr(narrative.llm, "available", lambda: True)
+    monkeypatch.setattr(narrative.llm, "complete", lambda *_a, **_k: "")
+
+    with caplog.at_level(logging.WARNING):
+        text = narrative.generate_brief(con)
+
+    try:
+        assert "_(template; set an LLM key for AI narrative)_" in text
+        engine = con.execute(
+            "select engine from marts.market_brief order by created_at desc limit 1"
+        ).fetchone()[0]
+        assert engine == "offline-template (llm-rejected)"
+        assert "falling back to offline template" in caplog.text
+    finally:
+        con.close()
+
+
+def test_generate_brief_rejects_too_long_llm_output(monkeypatch, tmp_path, caplog):
+    """Over-length LLM output → offline-template (llm-rejected)."""
+    con = _make_minimal_con()
+    monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
+    monkeypatch.setattr(narrative.llm, "available", lambda: True)
+    too_long = "x " * (narrative._MAX_BRIEF_CHARS + 1)
+    monkeypatch.setattr(narrative.llm, "complete", lambda *_a, **_k: too_long)
+
+    with caplog.at_level(logging.WARNING):
+        text = narrative.generate_brief(con)
+
+    try:
+        assert "_(template; set an LLM key for AI narrative)_" in text
+        engine = con.execute(
+            "select engine from marts.market_brief order by created_at desc limit 1"
+        ).fetchone()[0]
+        assert engine == "offline-template (llm-rejected)"
+    finally:
+        con.close()
+
+
+def test_generate_brief_rejects_key_shaped_llm_output(monkeypatch, tmp_path, caplog):
+    """LLM output containing a key-shaped token → offline-template (llm-rejected)."""
+    con = _make_minimal_con()
+    monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
+    monkeypatch.setattr(narrative.llm, "available", lambda: True)
+    # Simulate an LLM that accidentally echoes back a credential-like string.
+    key_bearing = "Here is the summary. api_key=SUPER_SECRET_VALUE_XYZ for reference."
+    monkeypatch.setattr(narrative.llm, "complete", lambda *_a, **_k: key_bearing)
+
+    with caplog.at_level(logging.WARNING):
+        text = narrative.generate_brief(con)
+
+    try:
+        assert "_(template; set an LLM key for AI narrative)_" in text
+        engine = con.execute(
+            "select engine from marts.market_brief order by created_at desc limit 1"
+        ).fetchone()[0]
+        assert engine == "offline-template (llm-rejected)"
+        assert "falling back to offline template" in caplog.text
+    finally:
+        con.close()
+
+
+# ---------------------------------------------------------------------------
+# GB: body redaction — redact() runs before BOTH the .md write and mart insert
+# ---------------------------------------------------------------------------
+
+
+def test_generate_brief_redacts_body_in_mart_and_md_file(monkeypatch, tmp_path):
+    """A brief body containing a fake key is redacted before it reaches the mart and .md."""
+    con = _make_minimal_con()
+    monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
+    # Force the offline path (no LLM key) but inject a body that contains a bearer token
+    # by monkeypatching _offline_brief to return tainted content.
+    tainted = "SPY analysis. bearer FAKETOKEN123 Watch macro."
+    monkeypatch.setattr(narrative, "_offline_brief", lambda _facts: tainted)
+    monkeypatch.setattr(narrative.llm, "available", lambda: False)
+
+    text = narrative.generate_brief(con)
+
+    try:
+        # The returned text must have the token scrubbed.
+        assert "FAKETOKEN123" not in text
+        assert "bearer ***" in text
+
+        # The mart body must be scrubbed.
+        mart_body = con.execute(
+            "select brief from marts.market_brief order by created_at desc limit 1"
+        ).fetchone()[0]
+        assert "FAKETOKEN123" not in mart_body
+        assert "bearer ***" in mart_body
+
+        # The .md file must be scrubbed.
+        briefs_dir = tmp_path / "briefs"
+        md_files = list(briefs_dir.glob("*.md"))
+        assert md_files, "expected at least one .md brief file"
+        md_content = md_files[0].read_text(encoding="utf-8")
+        assert "FAKETOKEN123" not in md_content
+        assert "bearer ***" in md_content
     finally:
         con.close()
