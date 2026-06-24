@@ -18,10 +18,14 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # CI is fully local + token-free: a local DuckDB file with deterministic seeded data.
-      # MotherDuck vars are forced empty so use_motherduck stays False even if they leak in.
+      # MotherDuck + LLM keys are forced empty so use_motherduck stays False and `mmi ai`
+      # uses its deterministic-template fallback (matches the Makefile CI_ENV).
       MMI_DUCKDB_PATH: ${{ github.workspace }}/data/ci.duckdb
       MMI_MOTHERDUCK_DATABASE: ""
       MOTHERDUCK_TOKEN: ""
+      GEMINI_API_KEY: ""
+      GROQ_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -44,6 +48,10 @@ jobs:
         run: python -c "import duckdb, os; c = duckdb.connect(os.environ['MMI_DUCKDB_PATH']); c.execute('drop schema if exists marts cascade'); c.execute('drop schema if exists staging cascade'); c.close()"
       - name: dbt build + test (canonical transform, local DuckDB)
         run: dbt build --project-dir transform --profiles-dir transform --target dev
+      - name: Train + score ML models (lands marts.model_metrics)
+        run: mmi ml
+      - name: Generate GenAI market brief (deterministic fallback, no keys)
+        run: mmi ai
       - name: Dashboard read-path smoke (core marts accessors)
         run: PYTHONPATH=. python scripts/dashboard_smoke.py
       - name: Tests
