@@ -28,6 +28,11 @@ class YahooChartExtractor(Extractor):
     keys = ["symbol", "date"]
     required_columns = ["symbol", "date", "close"]
     required = True  # core price history — a *total* failure must fail the run, not pass silently
+    probe_url = _URL.format(symbol="SPY")
+
+    def probe(self) -> None:
+        """Probe Yahoo chart endpoint for SPY with a minimal 1-day range."""
+        get_json(self.probe_url, headers=_HEADERS, params={"range": "1d", "interval": "1d"})
 
     def fetch(self) -> pd.DataFrame:
         assets = load_assets()
