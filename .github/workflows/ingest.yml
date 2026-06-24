@@ -17,9 +17,13 @@ on:
         description: "Full refresh incl. the portfolio backtest (the weekly schedule does this automatically)"
         type: boolean
         default: false
-  schedule:
-    - cron: "0 6 * * *" # DAILY 06:00 UTC — cheap refresh (prices/macro/crypto/ML); preserves portfolio + brief
-    - cron: "0 4 * * 1" # WEEKLY Mon 04:00 UTC — FULL refresh incl. the portfolio backtest + brief
+  # Scheduled refresh is PAUSED while the ML model is refined locally — see #75 to re-enable.
+  # The weekly FULL backtest currently exceeds the 60-min Actions limit (#75), and there's no point
+  # committing partial daily snapshots while the pipeline is in flux. Run on demand via "Run workflow"
+  # (tick `full` for the portfolio backtest). Uncomment to restore daily + weekly auto-refresh.
+  # schedule:
+  #   - cron: "0 6 * * *" # DAILY 06:00 UTC — cheap refresh (prices/macro/crypto/ML); preserves portfolio + brief
+  #   - cron: "0 4 * * 1" # WEEKLY Mon 04:00 UTC — FULL refresh incl. the portfolio backtest + brief
 
 # The job commits the refreshed Parquet snapshot back to the repo.
 permissions:
