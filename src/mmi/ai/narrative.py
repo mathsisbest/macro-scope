@@ -6,6 +6,7 @@ always works (and CI/demo stay free).
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,6 +19,54 @@ from mmi.utils.logging import get_logger
 from mmi.utils.redact import redact
 
 log = get_logger("ai.narrative")
+
+# ---------------------------------------------------------------------------
+# LLM output validation — reject outputs that are empty, too long, or contain
+# key-shaped tokens that a compromised/confused LLM might echo back.
+# ---------------------------------------------------------------------------
+_MAX_BRIEF_CHARS = 8000
+
+# Patterns that signal a secret leaked into the LLM response body.
+# Order matters: match the most-specific patterns first.
+_SECRET_PATTERNS: list[re.Pattern] = [
+    # URL query-param style: api_key=..., key=..., token=..., access_token=...
+    re.compile(r"(?i)(?:api_?key|access_token|token|key)\s*=\s*\S+"),
+    # Authorization: Bearer <token>
+    re.compile(r"(?i)bearer\s+\S+"),
+    # Google API key prefix (AIza...)
+    re.compile(r"AIza[0-9A-Za-z_\-]{30,}"),
+    # Long hex strings (≥32 hex chars) that look like raw secret material.
+    re.compile(r"\b[0-9a-fA-F]{32,}\b"),
+    # Long base64-ish tokens (≥32 chars, base64 alphabet including / and +).
+    re.compile(r"[A-Za-z0-9+/]{32,}={0,2}"),
+]
+
+
+def _validate_llm_output(text: str) -> str | None:
+    """Return a rejection reason string, or None if the output is acceptable.
+
+    Rejects:
+    * empty / whitespace-only responses
+    * responses longer than _MAX_BRIEF_CHARS
+    * responses containing key-shaped tokens (secret-leak guard)
+    """
+    if not text or not text.strip():
+        return "LLM returned an empty/whitespace-only brief"
+
+    if len(text) > _MAX_BRIEF_CHARS:
+        return f"LLM brief is too long ({len(text)} chars > {_MAX_BRIEF_CHARS} limit)"
+
+    for pat in _SECRET_PATTERNS:
+        m = pat.search(text)
+        if m:
+            # Log the pattern name, never the matched value.
+            return (
+                f"LLM brief contains a key-shaped token matching pattern "
+                f"{pat.pattern!r} — output rejected for safety"
+            )
+
+    return None
+
 
 # The brief narrates the long-history baseline window (the dashboard default), so its portfolio
 # facts are coherent now that the marts carry three windows. The BTC-effect (a cross-window
@@ -242,8 +291,20 @@ def generate_brief(con) -> str:
     if llm.available():
         try:
             # 2048 (not the 800 default) so medium thinking has room before the answer.
-            text = llm.complete(_build_prompt(facts), system=_SYSTEM, max_tokens=2048)
-            engine = llm.provider_model()
+            raw_text = llm.complete(_build_prompt(facts), system=_SYSTEM, max_tokens=2048)
+            rejection = _validate_llm_output(raw_text)
+            if rejection is not None:
+                # Log the rejection reason (no secret values in there — they matched by
+                # pattern, not value) and fall back to the offline template.
+                log.warning(
+                    "LLM brief rejected (%s); falling back to offline template",
+                    rejection,
+                )
+                text = _offline_brief(facts)
+                engine = "offline-template (llm-rejected)"
+            else:
+                text = raw_text
+                engine = llm.provider_model()
         except Exception as exc:  # noqa: BLE001 - GenAI is best-effort; template is the floor
             # redact: the provider key rides in the request URL/headers, so it can surface in the
             # httpx error string — never let it reach the logs (see utils/redact.py).
@@ -255,18 +316,22 @@ def generate_brief(con) -> str:
         engine = "offline-template"
     log.info("brief generated via %s", engine)
 
+    # Contract G: redact() EVERY persisted brief body before it is written to the .md file
+    # or the mart — closes the P1 where a raw (potentially key-bearing) body was stored.
+    safe_text = redact(text)
+
     # Persist to a dated markdown file (history of briefs).
     out_dir = Path(settings.duckdb_path).parent / "briefs"
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
-    (out_dir / f"{stamp}.md").write_text(text, encoding="utf-8")
+    (out_dir / f"{stamp}.md").write_text(safe_text, encoding="utf-8")
 
     # Persist to a mart for the dashboard.
     row = pd.DataFrame(
-        [{"created_at": datetime.now(timezone.utc), "engine": engine, "brief": text}]
+        [{"created_at": datetime.now(timezone.utc), "engine": engine, "brief": safe_text}]
     )
     con.register("_brief", row)
     con.execute("CREATE TABLE IF NOT EXISTS marts.market_brief AS SELECT * FROM _brief LIMIT 0")
     con.execute("INSERT INTO marts.market_brief SELECT * FROM _brief")
     con.unregister("_brief")
-    return text
+    return safe_text
