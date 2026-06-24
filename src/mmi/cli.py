@@ -172,12 +172,20 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
     Each runs as a SEPARATELY filtered panel — never one merged panel, whose dropna would collapse
     the 2002+ history to BTC's ~2015 start. The two 2015 windows share one derived BTC-inception
     floor so they are byte-identical in period; inc_btc aligns BTC to the equity calendar.
+
+    MMI_PORTFOLIO_N_BOOT controls the bootstrap iteration count (default 2000) for BOTH
+    bootstrap_strategy_stats and paired_btc_effect.  Lower values (e.g. 200) dramatically speed up
+    local iteration; the env var is the single dial — never hard-code a different default here.
     """
+    import os
+
     from mmi.ingestion import DuckDBLoader
     from mmi.ingestion.loader import reset_portfolio_raw_tables
     from mmi.portfolio import compute, windows
     from mmi.portfolio.stats import bootstrap_strategy_stats, paired_btc_effect
     from mmi.settings import load_assets
+
+    n_boot: int = int(os.environ.get("MMI_PORTFOLIO_N_BOOT", 2000))
 
     def run_window(loader: DuckDBLoader, window_id: str, wad) -> tuple[int, int, pd.DataFrame]:
         # Build the ML forecast + gate ONCE per window, then reuse for returns + attribution.
@@ -186,7 +194,7 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         n = loader.upsert("raw.portfolio_returns", results, ["window_id", "strategy", "date"])
         # Honest uncertainty: block-bootstrap Sharpe CIs. One window at a time — the bootstrap
         # pivots by date x strategy and would collide windows if handed more than one.
-        per_strategy, pairs = bootstrap_strategy_stats(results, window=window_id)
+        per_strategy, pairs = bootstrap_strategy_stats(results, window=window_id, n_boot=n_boot)
         loader.upsert("raw.portfolio_strategy_stats", per_strategy, ["window_id", "strategy"])
         loader.upsert(
             "raw.portfolio_strategy_pairs", pairs, ["window_id", "strategy_a", "strategy_b"]
@@ -236,7 +244,9 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         # the per-window bootstraps cannot give this CI without overstating the variance.
         if {windows.EX_BTC_2015, windows.INC_BTC_2015} <= results_by_window.keys():
             effect = paired_btc_effect(
-                results_by_window[windows.EX_BTC_2015], results_by_window[windows.INC_BTC_2015]
+                results_by_window[windows.EX_BTC_2015],
+                results_by_window[windows.INC_BTC_2015],
+                n_boot=n_boot,
             )
             if not effect.empty:
                 loader.upsert("raw.portfolio_btc_effect", effect, ["strategy"])
