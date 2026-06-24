@@ -176,6 +176,8 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
     MMI_PORTFOLIO_N_BOOT controls the bootstrap iteration count (default 2000) for BOTH
     bootstrap_strategy_stats and paired_btc_effect.  Lower values (e.g. 200) dramatically speed up
     local iteration; the env var is the single dial — never hard-code a different default here.
+    It is parsed defensively: a non-integer or non-positive value warns and falls back to 2000 so a
+    fat-fingered knob can never crash the whole run.
     """
     import os
 
@@ -185,7 +187,30 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
     from mmi.portfolio.stats import bootstrap_strategy_stats, paired_btc_effect
     from mmi.settings import load_assets
 
-    n_boot: int = int(os.environ.get("MMI_PORTFOLIO_N_BOOT", 2000))
+    # Owner-only tuning knob: parse defensively.  A non-integer ("", "abc", "2000.5") or a
+    # non-positive value (0, negative — which would degenerate the bootstrap) warns and falls back
+    # to the default rather than killing the run.  Unset keeps the default-2000 behaviour unchanged.
+    default_n_boot = 2000
+    raw_n_boot = os.environ.get("MMI_PORTFOLIO_N_BOOT")
+    n_boot = default_n_boot
+    if raw_n_boot is not None:
+        try:
+            parsed_n_boot = int(raw_n_boot)
+        except ValueError:
+            log.warning(
+                "MMI_PORTFOLIO_N_BOOT=%r is not an integer; falling back to %d",
+                raw_n_boot,
+                default_n_boot,
+            )
+        else:
+            if parsed_n_boot > 0:
+                n_boot = parsed_n_boot
+            else:
+                log.warning(
+                    "MMI_PORTFOLIO_N_BOOT=%d must be > 0; falling back to %d",
+                    parsed_n_boot,
+                    default_n_boot,
+                )
 
     def run_window(loader: DuckDBLoader, window_id: str, wad) -> tuple[int, int, pd.DataFrame]:
         # Build the ML forecast + gate ONCE per window, then reuse for returns + attribution.
