@@ -57,8 +57,6 @@ def _assets() -> pd.DataFrame:
     starts = {
         "SPY": 520,
         "QQQ": 440,
-        "AAPL": 190,
-        "MSFT": 420,
         "VEA": 50,
         "TLT": 90,
         "TIP": 108,
