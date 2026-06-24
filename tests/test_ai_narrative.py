@@ -341,6 +341,114 @@ def test_generate_brief_rejects_key_shaped_llm_output(monkeypatch, tmp_path, cap
 
 
 # ---------------------------------------------------------------------------
+# C7: vol_skill escape-hatch — NOT cleared → no-edge sentence; cleared → positive allowed
+# ---------------------------------------------------------------------------
+
+
+def _make_model_metrics_df(cleared: bool) -> "pd.DataFrame":
+    """Return a minimal model_metrics long-format DataFrame.
+
+    cleared=False: oos_r2 below threshold (0.05 < 0.10).
+    cleared=True:  oos_r2 above threshold (0.50 >= 0.10) + qlike_skill_ratio < 0.99 + folds ok.
+    """
+    if cleared:
+        rows = [
+            {"model": "rv_har", "symbol": "SPY", "metric": "oos_r2", "value": 0.50},
+            {"model": "rv_har", "symbol": "SPY", "metric": "qlike_skill_ratio", "value": 0.90},
+            {"model": "rv_har", "symbol": "SPY", "metric": "folds_passed", "value": 3},
+            {"model": "rv_har", "symbol": "SPY", "metric": "n_folds", "value": 5},
+            {"model": "rv_har", "symbol": "SPY", "metric": "n_obs", "value": 300},
+        ]
+    else:
+        rows = [
+            {"model": "rv_har", "symbol": "SPY", "metric": "oos_r2", "value": 0.05},
+            {"model": "rv_har", "symbol": "SPY", "metric": "qlike_skill_ratio", "value": 1.10},
+            {"model": "rv_har", "symbol": "SPY", "metric": "folds_passed", "value": 1},
+            {"model": "rv_har", "symbol": "SPY", "metric": "n_folds", "value": 5},
+            {"model": "rv_har", "symbol": "SPY", "metric": "n_obs", "value": 300},
+        ]
+    return pd.DataFrame(rows)
+
+
+def test_offline_brief_not_cleared_no_edge_sentence_no_beats():
+    """When vol_skill is NOT cleared, the brief must contain the no-edge sentence
+    and must NOT contain 'beats' or 'outperforms'."""
+    facts = {
+        "as_of": "2024-01-02 00:00 UTC",
+        "vol_skill": {"cleared": False, "oos_r2": 0.05, "reasons": ["oos_r2=0.05 < R2_MIN=0.10"]},
+    }
+    brief = narrative._offline_brief(facts)
+    # Must state clearly there is no edge
+    no_edge = (
+        "no demonstrated out-of-sample skill" in brief or "no reliable out-of-sample edge" in brief
+    )
+    assert no_edge
+    # Must NOT use positive phrasing
+    assert "beats" not in brief.lower()
+    assert "outperforms" not in brief.lower()
+    assert "beat its" not in brief.lower()
+
+
+def test_offline_brief_cleared_allows_positive_phrasing():
+    """When vol_skill IS cleared, the brief may say the model beat its baseline."""
+    facts = {
+        "as_of": "2024-01-02 00:00 UTC",
+        "vol_skill": {"cleared": True, "oos_r2": 0.50, "reasons": []},
+    }
+    brief = narrative._offline_brief(facts)
+    assert "beat its persistence baseline" in brief
+
+
+def test_gather_facts_includes_vol_skill_not_cleared(tmp_path):
+    """gather_facts sources skill_verdict() and stores vol_skill['cleared']=False
+    when model_metrics has below-threshold metrics."""
+    con = duckdb.connect()
+    con.execute("create schema if not exists marts")
+    metrics_df = _make_model_metrics_df(cleared=False)
+    con.register("_m", metrics_df)
+    con.execute("create table marts.model_metrics as select * from _m")
+    con.unregister("_m")
+    try:
+        facts = narrative.gather_facts(con)
+    finally:
+        con.close()
+    assert "vol_skill" in facts
+    assert facts["vol_skill"]["cleared"] is False
+
+
+def test_gather_facts_includes_vol_skill_cleared(tmp_path):
+    """gather_facts sources skill_verdict() and stores vol_skill['cleared']=True
+    when model_metrics has above-threshold metrics."""
+    con = duckdb.connect()
+    con.execute("create schema if not exists marts")
+    metrics_df = _make_model_metrics_df(cleared=True)
+    con.register("_m", metrics_df)
+    con.execute("create table marts.model_metrics as select * from _m")
+    con.unregister("_m")
+    try:
+        facts = narrative.gather_facts(con)
+    finally:
+        con.close()
+    assert "vol_skill" in facts
+    assert facts["vol_skill"]["cleared"] is True
+
+
+def test_gather_facts_vol_skill_fails_closed_on_missing_mart():
+    """gather_facts must not crash when marts.model_metrics doesn't exist;
+    skill_verdict() fails closed (cleared=False)."""
+    con = duckdb.connect()
+    con.execute("create schema if not exists marts")
+    # No model_metrics table — skill_verdict will receive an empty DataFrame
+    try:
+        facts = narrative.gather_facts(con)
+    finally:
+        con.close()
+    # vol_skill must be present but cleared=False (fail-closed)
+    assert "vol_skill" in facts
+    assert facts["vol_skill"]["cleared"] is False
+
+
+# ---------------------------------------------------------------------------
 # GB: body redaction — redact() runs before BOTH the .md write and mart insert
 # ---------------------------------------------------------------------------
 

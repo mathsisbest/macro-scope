@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from mmi.ai import llm
+from mmi.ml.skill_gate import skill_verdict
 from mmi.portfolio import windows
 from mmi.settings import settings
 from mmi.utils.logging import get_logger
@@ -83,6 +84,9 @@ _SYSTEM = (
     "If ml_gate is present, state in one sentence the mean weight the ML forecast earned in the "
     "mvo_ml blend and, when that weight is near zero, that the forecast showed no out-of-sample "
     "edge so mvo_ml tracked the historical-mean baseline. "
+    "If vol_skill is present: when cleared=false, state plainly that the volatility model showed "
+    "no demonstrated out-of-sample skill — do NOT use 'beats', 'outperforms', or similar phrasing; "
+    "when cleared=true, you may state the model beat its persistence baseline out-of-sample. "
     "End with one sentence on what to watch."
 )
 
@@ -197,6 +201,16 @@ def gather_facts(con) -> dict:
     if not gate.empty and not pd.isna(gate.iloc[0]["mean_weight"]):
         facts["ml_gate"] = gate.iloc[0].to_dict()
 
+    # Volatility model skill verdict — sources skill_verdict() which is the SINGLE source of the
+    # gate verdict (Contract E). Reads model_metrics long-format rows; fails closed if missing.
+    metrics_df = _q(con, "select model, symbol, metric, value from marts.model_metrics")
+    verdict = skill_verdict(metrics_df)
+    facts["vol_skill"] = {
+        "cleared": verdict["cleared"],
+        "oos_r2": verdict["oos_r2"],
+        "reasons": verdict["reasons"],
+    }
+
     return facts
 
 
@@ -281,6 +295,21 @@ def _offline_brief(facts: dict) -> str:
                     f"- ML gate: the forecast earned a mean weight of {weight:.0%} in mvo_ml's "
                     "blend over the historical-mean prior."
                 )
+    # Volatility model skill verdict — honest escape-hatch state (Contract E / Contract G).
+    vol_skill = facts.get("vol_skill")
+    if vol_skill is not None:
+        if vol_skill.get("cleared"):
+            r2 = vol_skill.get("oos_r2")
+            r2_str = f" (OOS R² {r2:.2f})" if r2 is not None else ""
+            lines.append(
+                f"- Volatility model (HAR/SPY): the model beat its persistence baseline "
+                f"out-of-sample{r2_str}."
+            )
+        else:
+            lines.append(
+                "- Volatility model (HAR/SPY): the model showed no demonstrated "
+                "out-of-sample skill — no reliable out-of-sample edge; baseline-only state."
+            )
     lines += ["", "_Watch: macro releases and any shift in the yield-curve spread._"]
     return "\n".join(lines)
 
