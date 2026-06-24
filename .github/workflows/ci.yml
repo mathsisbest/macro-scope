@@ -1,11 +1,15 @@
 name: CI
 
 on:
-  # The job below mirrors `make ci`. Runs automatically on every PR to main; still
-  # manually triggerable. Stays within the free private-repo Actions tier (~few min/run).
-  # `make ci` remains the local pre-flight you run before opening the PR.
+  # The job mirrors `make ci`. Runs on PRs to main — but NOT on draft PRs (only once you
+  # mark "ready for review", see the job `if:` guard) and NOT on docs-only changes (paths-ignore).
+  # Still manually triggerable. `make ci` remains the local pre-flight before you open the PR.
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   workflow_dispatch:
 
 concurrency:
@@ -15,6 +19,8 @@ concurrency:
 
 jobs:
   quality:
+    # Skip draft PRs; always run on manual dispatch.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     env:
       # CI is fully local + token-free: a local DuckDB file with deterministic seeded data.
