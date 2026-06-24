@@ -45,3 +45,87 @@ def test_portfolio_windows_ordered_and_accessor_filters_by_window(monkeypatch, t
     assert len(inc) == 1 and inc["cumulative_return"].iloc[0] == 0.01
     ex = data.portfolio_returns("ex_btc_2002")
     assert len(ex) == 1 and ex["cumulative_return"].iloc[0] == 0.02
+
+
+def _provenance_db(tmp_path, source: str) -> "duckdb.DuckDBPyConnection":
+    db = tmp_path / "m.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema if not exists marts")
+    con.execute(
+        "create table marts.fct_market_macro as select * from (values "
+        "(DATE '2026-06-22', 1.0), (DATE '2026-06-23', 2.0)) t(date, spy_close)"
+    )
+    con.execute(
+        "create table marts.fct_asset_daily as select * from (values "
+        f"('SPY', DATE '2026-06-23', '{source}')) t(symbol, date, source)"
+    )
+    con.close()
+    return db
+
+
+def test_data_as_of_is_max_market_date_and_sample_flag_true(monkeypatch, tmp_path):
+    db = _provenance_db(tmp_path, "sample")
+    monkeypatch.setattr(data, "db_exists", lambda: True)
+    monkeypatch.setattr(data, "connect", lambda *a, **k: duckdb.connect(str(db), read_only=True))
+    data.query.clear()
+
+    assert data.data_as_of() == "2026-06-23"  # max(date), ISO string
+    assert data.is_sample_data() is True  # source is only "sample"
+
+
+def test_is_sample_data_false_for_real_source(monkeypatch, tmp_path):
+    db = _provenance_db(tmp_path, "yahoo")
+    monkeypatch.setattr(data, "db_exists", lambda: True)
+    monkeypatch.setattr(data, "connect", lambda *a, **k: duckdb.connect(str(db), read_only=True))
+    data.query.clear()
+
+    assert data.is_sample_data() is False  # a real ingestion source -> live
+
+
+def test_is_sample_data_none_when_mixed_or_null_source(monkeypatch, tmp_path):
+    # A partial ingest: one symbol still synthetic, one live, plus an unrecorded (NULL) source.
+    db = tmp_path / "m.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema if not exists marts")
+    con.execute(
+        "create table marts.fct_asset_daily as select * from (values "
+        "('SPY', DATE '2026-06-23', 'sample'), "
+        "('VEA', DATE '2026-06-23', 'yahoo'), "
+        "('TLT', DATE '2026-06-23', CAST(NULL AS VARCHAR))) t(symbol, date, source)"
+    )
+    con.close()
+    monkeypatch.setattr(data, "db_exists", lambda: True)
+    monkeypatch.setattr(data, "connect", lambda *a, **k: duckdb.connect(str(db), read_only=True))
+    data.query.clear()
+
+    # Mixed sample+live must NOT be reported as live — the provenance is ambiguous.
+    assert data.is_sample_data() is None
+
+
+def test_is_sample_data_none_when_only_null_source(monkeypatch, tmp_path):
+    db = tmp_path / "m.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema if not exists marts")
+    con.execute(
+        "create table marts.fct_asset_daily as select * from (values "
+        "('SPY', DATE '2026-06-23', CAST(NULL AS VARCHAR))) t(symbol, date, source)"
+    )
+    con.close()
+    monkeypatch.setattr(data, "db_exists", lambda: True)
+    monkeypatch.setattr(data, "connect", lambda *a, **k: duckdb.connect(str(db), read_only=True))
+    data.query.clear()
+
+    assert data.is_sample_data() is None  # no usable provenance signal
+
+
+def test_provenance_degrades_when_marts_absent(monkeypatch, tmp_path):
+    db = tmp_path / "empty.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema if not exists marts")
+    con.close()
+    monkeypatch.setattr(data, "db_exists", lambda: True)
+    monkeypatch.setattr(data, "connect", lambda *a, **k: duckdb.connect(str(db), read_only=True))
+    data.query.clear()
+
+    assert data.data_as_of() == ""  # missing mart -> empty frame -> ""
+    assert data.is_sample_data() is None  # missing mart -> empty frame -> None
