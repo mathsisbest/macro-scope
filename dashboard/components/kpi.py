@@ -12,6 +12,7 @@ no inline hex strings.
 
 from __future__ import annotations
 
+import math
 from typing import Literal
 
 import streamlit as st
@@ -54,7 +55,9 @@ def format_value(
     Returns
     -------
     str
-        A human-readable string, or ``"—"`` when *raw* is ``None``.
+        A human-readable string, or ``"—"`` when *raw* is ``None``, ``NaN``, or
+        infinite (these are missing/undefined, not real values — rendering them
+        as ``"$nan"`` / ``"+inf%"`` would look valid but isn't).
     """
     if raw is None:
         return "—"  # em-dash for missing data
@@ -64,6 +67,9 @@ def format_value(
         return f"{prefix}{raw}{suffix}"
 
     val = float(raw)
+
+    if math.isnan(val) or math.isinf(val):
+        return "—"  # NaN / inf are not real values — match the None convention
 
     if kind == "price":
         return f"${val:,.2f}"
