@@ -21,6 +21,7 @@ from mmi.ml.volatility import (
     _ewma_vol,
     _make_targets,
     _qlike,
+    _walk_forward_ewma_baseline,
     train_and_backtest_vol,
 )
 from mmi.utils.db import init_schemas
@@ -122,6 +123,42 @@ def test_ewma_vol_positive_finite() -> None:
     assert result.notna().all(), "EWMA should contain no NaN"
     assert (result > 0).all(), "EWMA should be positive"
     assert np.isfinite(result).all(), "EWMA should be finite"
+
+
+def test_ewma_baseline_no_forward_dependence() -> None:
+    """The walk-forward EWMA baseline for a fold must not depend on rows AFTER that fold.
+
+    Mutating gk-vol rows beyond a fold's last test point must leave that fold's baseline
+    predictions byte-identical — that is the honest-OOS contract the skill gate relies on.
+    As a guard against a vacuous test, mutating a row WITHIN the window must change them.
+    """
+    from sklearn.model_selection import TimeSeriesSplit
+
+    rng = np.random.default_rng(11)
+    n = 120
+    gk = np.abs(rng.normal(0.01, 0.003, n))
+
+    # Use a real TimeSeriesSplit fold — the same splitter train_and_backtest_vol uses.
+    splits = list(TimeSeriesSplit(n_splits=5).split(np.zeros((n, 1))))
+    _, test_idx = splits[2]  # a middle fold, so rows exist both before and after it
+    last = int(test_idx.max())
+    assert last < n - 1, "fold must leave rows after the test window to mutate"
+
+    base = _walk_forward_ewma_baseline(gk, test_idx)
+
+    # Mutate every row strictly AFTER the test window — the baseline must be unchanged.
+    gk_future = gk.copy()
+    gk_future[last + 1 :] = gk_future[last + 1 :] * 7.0 + 0.5
+    base_future = _walk_forward_ewma_baseline(gk_future, test_idx)
+    np.testing.assert_array_equal(
+        base, base_future, err_msg="baseline leaked future rows (forward dependence)"
+    )
+
+    # Sanity (non-vacuity): mutating a row WITHIN the test window DOES move the baseline.
+    gk_inside = gk.copy()
+    gk_inside[test_idx[0]] *= 3.0
+    base_inside = _walk_forward_ewma_baseline(gk_inside, test_idx)
+    assert not np.allclose(base, base_inside), "baseline should react to in-window changes"
 
 
 def test_qlike_positive() -> None:

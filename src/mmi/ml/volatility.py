@@ -56,6 +56,28 @@ def _ewma_vol(gk: pd.Series, lam: float = _EWMA_LAMBDA) -> pd.Series:
     return gk.ewm(alpha=1.0 - lam, adjust=False).mean()
 
 
+def _walk_forward_ewma_baseline(
+    gk: np.ndarray, test_idx: np.ndarray, lam: float = _EWMA_LAMBDA
+) -> np.ndarray:
+    """EWMA baseline predictions for one walk-forward fold — honest-OOS, no look-ahead.
+
+    The baseline forecast at a test point is the RiskMetrics EWMA *level* known at that
+    point.  We recompute the EWMA over ``gk`` truncated at the fold's LAST test row, so
+    rows beyond the test window never enter the recursion at all.  Because the EWMA
+    (``adjust=False``) is causal, the value at every test point depends only on ``gk`` up
+    to and including that point — there is no forward dependence on data the fold could
+    not have seen.
+
+    This replaces the earlier full-series EWMA (computed once, then indexed per fold),
+    whose leak-free-ness silently relied on the reader knowing ``ewm`` is causal.
+    Computing it per fold over a truncated series makes the walk-forward contract
+    structural — and the ``test_ewma_baseline_no_forward_dependence`` regression guards it.
+    """
+    upto = int(test_idx.max()) + 1
+    ewma = _ewma_vol(pd.Series(gk[:upto]), lam=lam)
+    return ewma.to_numpy()[test_idx]
+
+
 def _qlike(actuals: np.ndarray, preds: np.ndarray) -> float:
     """QLIKE loss: mean(h/sigma² - log(h/sigma²) - 1).
 
@@ -123,14 +145,9 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
 
     x = valid[vol_cols].to_numpy()
     y = valid["target_rv"].to_numpy()  # forward realized vol (positive daily scale)
-
-    # --- persistence and EWMA baselines (per-row: baseline at t = gk_vol at t) ---
-    # EWMA baseline: compute on the full series then index back to valid rows
-    ewma_full = _ewma_vol(feats["gk_vol"])
-    ewma_vals = ewma_full.loc[valid.index].to_numpy()
-
-    # Choose the better baseline per fold (use EWMA; it dominates persistence on vol)
-    baseline_preds = ewma_vals
+    # GK vol aligned to the x/y evaluation rows; the EWMA (RiskMetrics λ=0.94) baseline
+    # is derived from this per fold, never from the full series (see below).
+    gk_valid = valid["gk_vol"].to_numpy()
 
     # --- walk-forward evaluation ---
     tscv = TimeSeriesSplit(n_splits=5)
@@ -140,7 +157,9 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
         model.fit(x[train_idx], y[train_idx])
         preds.append(model.predict(x[test_idx]))
         actuals.append(y[test_idx])
-        base_preds.append(baseline_preds[test_idx])
+        # EWMA baseline computed walk-forward: only gk vol up to each fold's last test
+        # point feeds the recursion — no look-ahead (honest-OOS contract).
+        base_preds.append(_walk_forward_ewma_baseline(gk_valid, test_idx))
 
     preds_arr = np.concatenate(preds)
     actuals_arr = np.concatenate(actuals)
