@@ -1,6 +1,7 @@
 """build_returns_panel pivots correctly; compute covers all strategies; the CLI lands the table."""
 
 import argparse
+import logging
 
 import duckdb
 import numpy as np
@@ -9,6 +10,7 @@ import pandas as pd
 import mmi.cli as cli
 from mmi.portfolio import windows
 from mmi.portfolio.compute import (
+    btc_aligned_returns,
     build_returns_panel,
     compute_attribution,
     compute_portfolio_returns,
@@ -79,6 +81,89 @@ def test_compute_stamps_the_window_dimension():
         _long(150), lookback=30, freq="M", include_ml=False, window=windows.INC_BTC_2015
     )
     assert (tagged["window_id"] == windows.INC_BTC_2015).all()
+
+
+def _btc_asset_daily(dates, returns, equity_dates=None):
+    """Build a minimal asset_daily DataFrame with BTC rows and optional equity rows."""
+    rows = []
+    for d, r in zip(dates, returns, strict=True):
+        rows.append(
+            {"symbol": "BTC", "date": pd.Timestamp(d), "daily_return": r, "asset_class": "crypto"}
+        )
+    # Add at least one equity asset so equity_dates is non-empty (required by btc_aligned_returns).
+    eq_dates = list(equity_dates) if equity_dates is not None else list(dates)
+    for d in eq_dates:
+        rows.append(
+            {
+                "symbol": "SPY",
+                "date": pd.Timestamp(d),
+                "daily_return": 0.001,
+                "asset_class": "equities",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def test_btc_aligned_returns_warns_on_interior_nan(caplog):
+    """Interior NaN triggers exactly one WARNING with the fill count."""
+    dates = pd.bdate_range("2020-01-01", periods=10)
+    returns = [0.01] * 4 + [float("nan")] + [0.01] * 5  # 1 interior NaN at position 4
+    df = _btc_asset_daily(dates, returns)
+
+    with caplog.at_level(logging.WARNING, logger="portfolio.compute"):
+        result = btc_aligned_returns(df)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, f"Expected 1 warning, got: {[r.message for r in warnings]}"
+    assert "1" in warnings[0].message
+    # Numeric result is unchanged from fillna(0.0) — verify a non-empty frame is returned.
+    assert not result.empty
+    assert "daily_return" in result.columns
+
+
+def test_btc_aligned_returns_no_warning_on_clean_series(caplog):
+    """A clean BTC series with no NaN must produce no WARNING log entries."""
+    dates = pd.bdate_range("2020-01-01", periods=10)
+    returns = [0.01] * 10
+    df = _btc_asset_daily(dates, returns)
+
+    with caplog.at_level(logging.WARNING, logger="portfolio.compute"):
+        result = btc_aligned_returns(df)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == [], f"Unexpected warnings: {[r.message for r in warnings]}"
+    assert not result.empty
+
+
+def test_btc_aligned_returns_warns_with_correct_count(caplog):
+    """Multiple interior NaN values: warning message must contain the exact fill count."""
+    dates = pd.bdate_range("2020-01-01", periods=15)
+    # Positions 3 and 7 are interior NaN (not leading, not trailing)
+    returns = [
+        0.01,
+        0.01,
+        0.01,
+        float("nan"),
+        0.01,
+        0.01,
+        0.01,
+        float("nan"),
+        0.01,
+        0.01,
+        0.01,
+        0.01,
+        0.01,
+        0.01,
+        0.01,
+    ]
+    df = _btc_asset_daily(dates, returns)
+
+    with caplog.at_level(logging.WARNING, logger="portfolio.compute"):
+        btc_aligned_returns(df)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "2" in warnings[0].message
 
 
 def test_cmd_portfolio_lands_raw_portfolio_returns(monkeypatch, tmp_path):

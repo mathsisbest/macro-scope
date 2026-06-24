@@ -54,7 +54,22 @@ def btc_aligned_returns(asset_daily: pd.DataFrame, *, btc_symbol: str = "BTC") -
     )
     # Wealth index over BTC's own (7-day) calendar, then sampled at equity dates: the ratio between
     # consecutive equity dates is the compounded return over any intervening non-trading days.
-    wealth = (1.0 + btc.set_index("date")["daily_return"].sort_index().fillna(0.0)).cumprod()
+    btc_returns = btc.set_index("date")["daily_return"].sort_index()
+    # Warn if there are interior (non-leading, non-trailing) NaN values before filling.
+    # Leading/trailing NaN is expected warm-up; interior NaN suggests a data gap that silently
+    # becomes a 0% return — the caller should know.
+    _first_valid = btc_returns.first_valid_index()
+    _last_valid = btc_returns.last_valid_index()
+    if _first_valid is not None and _last_valid is not None:
+        _interior = btc_returns.loc[_first_valid:_last_valid]
+        _n_interior_nan = int(_interior.isna().sum())
+        if _n_interior_nan > 0:
+            log.warning(
+                "btc_aligned_returns: filling %d interior NaN value(s) with 0.0 "
+                "(each becomes a 0%% return — check for data gaps)",
+                _n_interior_nan,
+            )
+    wealth = (1.0 + btc_returns.fillna(0.0)).cumprod()
     on_equity = wealth.reindex(equity_dates).ffill()
     aligned = on_equity.pct_change()
     return pd.DataFrame({"date": equity_dates, "daily_return": aligned.to_numpy()})
