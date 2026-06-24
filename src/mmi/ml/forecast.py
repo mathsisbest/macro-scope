@@ -12,6 +12,22 @@ from mmi.utils.logging import get_logger
 
 log = get_logger("ml.forecast")
 
+# Fixed seed for reproducibility across CV and final fit.
+SEED: int = 0
+
+
+def make_regressor(n_estimators: int, seed: int = SEED) -> RandomForestRegressor:
+    # max_depth/min_samples_leaf/max_features control variance at ~1e-4 daily-return scale,
+    # where an unconstrained forest over-adapts to noise rather than signal.
+    return RandomForestRegressor(
+        n_estimators=n_estimators,
+        max_depth=5,
+        min_samples_leaf=20,
+        max_features="sqrt",
+        random_state=seed,
+        n_jobs=-1,
+    )
+
 
 def train_and_backtest(con, symbol: str = "SPY") -> tuple[dict, dict]:
     """Walk-forward backtest + a next-day forecast. Returns (metrics, forecast)."""
@@ -33,7 +49,7 @@ def train_and_backtest(con, symbol: str = "SPY") -> tuple[dict, dict]:
     tscv = TimeSeriesSplit(n_splits=5)
     preds, actuals = [], []
     for train_idx, test_idx in tscv.split(x):
-        model = RandomForestRegressor(n_estimators=100, random_state=0, n_jobs=-1)
+        model = make_regressor(n_estimators=100)
         model.fit(x[train_idx], y[train_idx])
         preds.append(model.predict(x[test_idx]))
         actuals.append(y[test_idx])
@@ -47,7 +63,7 @@ def train_and_backtest(con, symbol: str = "SPY") -> tuple[dict, dict]:
     baseline_dir = float(max((actuals_arr > 0).mean(), (actuals_arr <= 0).mean()))
 
     # --- final model on all data -> forecast the next day ---
-    final = RandomForestRegressor(n_estimators=200, random_state=0, n_jobs=-1).fit(x, y)
+    final = make_regressor(n_estimators=200).fit(x, y)
     next_ret = float(final.predict(feats[cols].iloc[[-1]].to_numpy())[0])
 
     metrics = {

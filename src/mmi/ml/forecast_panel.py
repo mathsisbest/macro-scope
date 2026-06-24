@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
 
 from mmi.ml.features import feature_columns, make_features
+from mmi.ml.forecast import make_regressor
 from mmi.utils.logging import get_logger
 
 log = get_logger("ml.forecast_panel")
@@ -85,7 +85,7 @@ def walk_forward_mu(
             x_pred = hist[cols].iloc[[-1]].to_numpy()  # latest features, all known before `rebal`
             if not np.isfinite(x_pred).all():
                 continue
-            model = RandomForestRegressor(n_estimators=n_estimators, random_state=seed, n_jobs=-1)
+            model = make_regressor(n_estimators=n_estimators, seed=seed)
             model.fit(train[cols].to_numpy(), train["target_h"].to_numpy())
             forecast = float(model.predict(x_pred)[0])  # cumulative forward-horizon return
             # Store as a daily-equivalent so mu is commensurate with daily cov / historical-mean mu.
