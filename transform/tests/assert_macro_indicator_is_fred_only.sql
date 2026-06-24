@@ -1,8 +1,8 @@
--- Singular test: the macro mart must contain ONLY FRED series. The dashboard's Macro tab shows an
--- unconditional "Source: FRED, Federal Reserve Bank of St. Louis" attribution caption (scope 5 of
--- #51) because every series here is FRED-sourced. If a non-FRED series (e.g. a World Bank indicator)
--- ever lands in this mart, that caption becomes a MISATTRIBUTION — so fail the build and force a
--- revisit of the attribution (add the series here AND gate the caption appropriately).
+-- Singular test: the macro mart must contain ONLY FRED series. This is the precondition for the
+-- dashboard's macro source caption (dashboard.data.macro_source_caption / scope 5 of #51), which
+-- attributes LIVE macro data to "FRED, Federal Reserve Bank of St. Louis". If a non-FRED series
+-- (e.g. a World Bank indicator) ever lands in this mart, that attribution would be a MISATTRIBUTION
+-- — so fail the build and force a revisit (add the series here AND adjust the caption logic).
 -- Passes when zero rows are returned.
 select distinct series_id
 from {{ ref('fct_macro_indicator') }}

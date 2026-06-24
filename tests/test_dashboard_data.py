@@ -129,3 +129,32 @@ def test_provenance_degrades_when_marts_absent(monkeypatch, tmp_path):
 
     assert data.data_as_of() == ""  # missing mart -> empty frame -> ""
     assert data.is_sample_data() is None  # missing mart -> empty frame -> None
+
+
+def test_is_sample_data_none_when_live_plus_null_source(monkeypatch, tmp_path):
+    # One live row + one unrecorded (NULL) row: NOT 'all live'. The invariant says don't claim it.
+    db = tmp_path / "m.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema if not exists marts")
+    con.execute(
+        "create table marts.fct_asset_daily as select * from (values "
+        "('SPY', DATE '2026-06-23', 'yahoo'), "
+        "('VEA', DATE '2026-06-23', CAST(NULL AS VARCHAR))) t(symbol, date, source)"
+    )
+    con.close()
+    monkeypatch.setattr(data, "db_exists", lambda: True)
+    monkeypatch.setattr(data, "connect", lambda *a, **k: duckdb.connect(str(db), read_only=True))
+    data.query.clear()
+
+    assert data.is_sample_data() is None  # an unrecorded source must not read as live
+
+
+def test_macro_source_caption_is_honest_per_provenance():
+    # Live FRED data earns the FRED attribution.
+    live = data.macro_source_caption(False)
+    assert live.startswith("Source: FRED, Federal Reserve Bank of St. Louis")
+    # Sample data must be flagged synthetic and must NOT be attributed to FRED.
+    sample = data.macro_source_caption(True)
+    assert "Source: FRED" not in sample and "not from FRED" in sample
+    # Mixed / unknown provenance makes no source claim at all.
+    assert data.macro_source_caption(None) == ""
