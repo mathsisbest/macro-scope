@@ -261,6 +261,14 @@ def test_format_table_contains_all_sources():
     assert "fail" in table
 
 
+def test_format_table_detail_not_duplicated():
+    # Regression: the reason belongs only in DETAIL — never embedded in STATUS too.
+    results = [ProbeResult(source="yahoo", status="skip", required=True, detail="no key")]
+    table = format_table(results)
+    assert table.count("no key") == 1, table
+    assert "skip(no key)" not in table
+
+
 def test_format_table_empty():
     assert "No sources" in format_table([])
 
