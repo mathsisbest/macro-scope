@@ -204,3 +204,54 @@ def pipeline_runs() -> pd.DataFrame:
         "select source, rows, status, finished_at from raw.pipeline_runs "
         "order by started_at desc limit 12"
     )
+
+
+def data_as_of() -> str:
+    """The freshest markets date (max `date` in `fct_market_macro`), as an ISO string — `""` if no
+    data. Drawn from a mart, so it is identical in live and snapshot mode (unlike `pipeline_runs`,
+    whose `raw.pipeline_runs` is never snapshotted)."""
+    # Cast to varchar in SQL so DuckDB yields a clean ISO date ("2026-06-23"); going through
+    # pandas would coerce the DATE to a Timestamp and str() it as "... 00:00:00".
+    df = query("select cast(max(date) as varchar) as d from marts.fct_market_macro")
+    if df.empty or pd.isna(df["d"].iloc[0]):
+        return ""
+    return str(df["d"].iloc[0])
+
+
+def is_sample_data() -> bool | None:
+    """Provenance of the displayed markets data: `True` if ALL synthetic sample data (from
+    `mmi seed`), `False` if ALL live (ingested), `None` if there's no data or the provenance is
+    mixed/unrecorded. Read from `fct_asset_daily.source` (stamped `"sample"` by `mmi seed`, and
+    with the source name by the extractors) so it stays honest in snapshot mode too, where
+    `raw.pipeline_runs` is unavailable. Anything short of a clean all-sample or all-live set —
+    a mixed set (a partial cron ingest leaving some symbols `"sample"`), OR any unrecorded
+    (null/blank) source — is deliberately `None`: never claim "all sample" or "all live" unless
+    every row genuinely is."""
+    df = query("select distinct source from marts.fct_asset_daily")
+    if df.empty:
+        return None
+    col = df["source"]
+    # Any null/blank source means a row's provenance is unrecorded — we can't claim "all X".
+    has_unrecorded = bool(col.isna().any() or (col.dropna() == "").any())
+    recorded = set(col.dropna()) - {""}
+    if not recorded or has_unrecorded:
+        return None  # no provenance signal, or some rows unrecorded
+    if recorded == {"sample"}:
+        return True  # every row is synthetic
+    if "sample" not in recorded:
+        return False  # every row is ingested/live
+    return None  # mixed sample + live
+
+
+def macro_source_caption(is_sample: bool | None) -> str:
+    """The honest source caption for the Macro tab, as a function of provenance — `""` when no
+    caption should show. Live FRED data earns the FRED attribution; **sample** data must NOT be
+    attributed to FRED (`mmi seed` synthesises the very same FRED series_ids, so a "Source: FRED"
+    caption over them is a misattribution); mixed/unknown provenance makes no source claim. Kept
+    pure (and unit-tested) because the `make ci` gate never renders the dashboard, so caption
+    honesty can't be caught by the smoke test."""
+    if is_sample is False:
+        return "Source: FRED, Federal Reserve Bank of St. Louis · https://fred.stlouisfed.org/"
+    if is_sample is True:
+        return "⚠️ Synthetic sample data — not from FRED (live data is sourced from FRED)."
+    return ""  # mixed / unknown provenance → make no source claim

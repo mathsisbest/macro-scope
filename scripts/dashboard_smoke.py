@@ -11,6 +11,11 @@ from dashboard.components import charts
 
 assert data.db_exists(), "db_exists() is False — the marts DB is missing"
 
+# Provenance accessors (scope 5): must not raise and must return sane types/values.
+assert isinstance(data.data_as_of(), str), "data_as_of() must return a str"
+assert data.is_sample_data() in (True, False, None), "is_sample_data() must be tri-state"
+print(f"provenance read-path OK (as_of={data.data_as_of()!r}, sample={data.is_sample_data()})")
+
 assets = data.assets()
 assert not assets.empty, "marts.dim_asset is empty — dashboard cannot read the core marts"
 assert {"symbol", "asset_class"} <= set(assets.columns)
