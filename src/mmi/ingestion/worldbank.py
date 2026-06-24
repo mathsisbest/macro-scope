@@ -17,6 +17,11 @@ class WorldBankExtractor(Extractor):
     table = "raw.worldbank"
     keys = ["indicator_id", "country", "date"]
     required_columns = ["indicator_id", "country", "date", "value"]
+    probe_url = "https://api.worldbank.org/v2/country/USA/indicator/NY.GDP.MKTP.CD"
+
+    def probe(self) -> None:
+        """Probe World Bank API with a single-row request."""
+        get_json(self.probe_url, params={"format": "json", "per_page": 1})
 
     def fetch(self) -> pd.DataFrame:
         frames = [self._fetch_indicator(i["id"]) for i in load_assets()["worldbank"]]
