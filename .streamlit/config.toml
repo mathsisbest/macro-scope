@@ -1,0 +1,14 @@
+# Streamlit theme mirroring dashboard/theme.py PALETTE.
+# Hex values are read directly from PALETTE and must stay in sync with it.
+# PALETTE keys used: bg=#0e1117, panel=#161a25, text=#e6e6e6, accent=#4f9dff
+
+[theme]
+base = "dark"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#161a25"
+textColor = "#e6e6e6"
+primaryColor = "#4f9dff"
+
+[client]
+# Keep raw stack traces off the public app; errors show a user-friendly message.
+showErrorDetails = false
