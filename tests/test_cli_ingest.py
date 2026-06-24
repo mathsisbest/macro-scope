@@ -165,3 +165,67 @@ def test_coingecko_is_optional_so_a_keyless_run_stays_green():
 
     assert CoinGeckoExtractor.required is False
     assert CoinGeckoExtractor(loader=None).skip_reason() is None  # never skips: it works keyless
+
+
+# ---------------------------------------------------------------------------
+# G1 — base.run() audit-mask fix (#50 item 2)
+# ---------------------------------------------------------------------------
+
+
+class _FailFetchAuditRaises(Extractor):
+    """Extractor whose fetch() fails AND whose loader.finish_run() also raises.
+
+    The ORIGINAL fetch exception must propagate; the audit failure must never
+    replace/mask it.
+    """
+
+    source = "fail_fetch_audit_raises"
+    table = "raw.fail_fetch_audit_raises"
+    keys = ["a"]
+    required = True
+
+    def fetch(self) -> pd.DataFrame:
+        raise RuntimeError("original ingest error — must propagate")
+
+
+class _BrokenAuditLoader:
+    """Minimal loader stub where finish_run raises to simulate an audit write failure."""
+
+    def __init__(self) -> None:
+        self._run_id = 0
+
+    def start_run(self, source: str) -> int:
+        self._run_id += 1
+        return self._run_id
+
+    def finish_run(self, run_id: int, rows: int, status: str, message: str = "") -> None:
+        if status == "failed":
+            raise OSError("audit write failed — DB locked")
+
+    def upsert(self, table: str, df: pd.DataFrame, keys: list) -> int:  # type: ignore[type-arg]
+        return len(df)
+
+
+def test_audit_write_failure_does_not_mask_original_ingest_exception():
+    """G1: when finish_run raises inside the except block the ORIGINAL exception propagates."""
+    loader = _BrokenAuditLoader()
+    extractor = _FailFetchAuditRaises(loader)
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="original ingest error — must propagate"):
+        extractor.run()
+
+
+def test_audit_write_failure_does_not_mask_original_exception_type():
+    """G1: the raised type is exactly the original (RuntimeError), not the audit OSError."""
+    import pytest
+
+    loader = _BrokenAuditLoader()
+    extractor = _FailFetchAuditRaises(loader)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        extractor.run()
+
+    # Ensure we are NOT seeing the audit OSError escape as the live exception
+    assert "audit write failed" not in str(exc_info.value)

@@ -89,5 +89,11 @@ class Extractor(ABC):
             # Redact before logging/persisting: httpx errors embed the request URL, which for
             # FRED/Gemini carries the API key as a query param.
             self.log.error("extractor failed:\n%s", redact(traceback.format_exc()))
-            self.loader.finish_run(run_id, 0, "failed", redact(str(exc)))
+            try:
+                self.loader.finish_run(run_id, 0, "failed", redact(str(exc)))
+            except Exception:  # noqa: BLE001 - audit failure must not mask the original error
+                self.log.error(
+                    "audit write failed after extractor error:\n%s",
+                    redact(traceback.format_exc()),
+                )
             raise
