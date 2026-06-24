@@ -56,6 +56,18 @@ def _q(con, sql: str) -> pd.DataFrame:
 def gather_facts(con) -> dict:
     facts: dict = {"as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
 
+    # Pull the most-recent data date from the asset mart so the brief header is grounded in
+    # actual data, not wall-clock.  Falls back to as_of (wall-clock) when the mart is empty.
+    data_date_row = _q(
+        con,
+        "select max(date) as data_date from marts.fct_asset_daily",
+    )
+    if not data_date_row.empty and data_date_row.iloc[0]["data_date"] is not None:
+        raw = data_date_row.iloc[0]["data_date"]
+        facts["data_date"] = str(raw)[:10]  # YYYY-MM-DD slice, handles both str and date/Timestamp
+    else:
+        facts["data_date"] = facts["as_of"][:10]
+
     crypto = _q(
         con,
         """
@@ -174,8 +186,11 @@ def _distinguishability_note(pairs: list) -> str:
 
 def _offline_brief(facts: dict) -> str:
     """Deterministic template used when no LLM key is set."""
+    # Use the data date (YYYY-MM-DD from the marts) in the header so it is grounded in the
+    # actual data window, not the wall-clock generation time (Contract G).
+    data_date = facts.get("data_date", facts.get("as_of", ""))
     lines = [
-        f"**Market brief — {facts['as_of']}** _(template; set an LLM key for AI narrative)_",
+        f"**Market brief — data as of {data_date}** _(template; set an LLM key for AI narrative)_",
         "",
     ]
     for c in facts.get("crypto", []):

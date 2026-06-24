@@ -18,14 +18,54 @@ log = get_logger("cli")
 
 
 def cmd_seed(_: argparse.Namespace) -> int:
-    """Seed deterministic sample data + build fallback marts."""
+    """Seed deterministic sample data + build fallback marts + offline brief.
+
+    After building the marts, generates the deterministic offline brief (LLM keys are
+    temporarily cleared so the seed step is network-free and reproducible — no API quota
+    consumed, no credentials required).  This seeds ``marts.market_brief`` so the AI tab
+    is never empty after a fresh ``mmi seed`` run.
+    """
     from mmi import sampledata, transform_fallback
+    from mmi.ai.narrative import generate_brief
 
     with connect() as con:
         sampledata.seed(con)
         transform_fallback.build_marts(con)
+        # Force the offline-template path: clear the LLM key on the *module-level* settings
+        # object (not the pydantic class) so generate_brief -> llm.available() returns False
+        # without touching env vars or spawning any network request.
+        _saved_key = _clear_llm_keys()
+        try:
+            generate_brief(con)
+        except Exception as exc:  # noqa: BLE001 - brief is best-effort; seed itself succeeded
+            log.warning("seed: brief generation failed (non-fatal): %s", redact(str(exc)))
+        finally:
+            _restore_llm_keys(_saved_key)
     log.info("seed complete")
     return 0
+
+
+def _clear_llm_keys() -> dict:
+    """Blank every provider key on the settings singleton; return originals for restore."""
+    from mmi.settings import settings as _s
+
+    saved = {
+        "gemini_api_key": _s.gemini_api_key,
+        "groq_api_key": _s.groq_api_key,
+        "anthropic_api_key": _s.anthropic_api_key,
+    }
+    # pydantic-settings models are normally immutable; bypass via object.__setattr__.
+    for attr in saved:
+        object.__setattr__(_s, attr, "")
+    return saved
+
+
+def _restore_llm_keys(saved: dict) -> None:
+    """Restore the original provider keys after the seed brief."""
+    from mmi.settings import settings as _s
+
+    for attr, val in saved.items():
+        object.__setattr__(_s, attr, val)
 
 
 def cmd_ingest(_: argparse.Namespace) -> int:
