@@ -336,89 +336,98 @@ with tab_portfolio:
         if not pairs.empty:
             st.info("📊 " + charts.distinguishability_verdict(pairs))
         st.plotly_chart(charts.portfolio_cumulative_chart(pf), use_container_width=True)
-        cda, cdb = st.columns(2)
-        with cda:
-            st.plotly_chart(charts.portfolio_drawdown_chart(pf), use_container_width=True)
-        with cdb:
-            st.plotly_chart(charts.portfolio_sharpe_chart(pf), use_container_width=True)
-        st.dataframe(
-            charts.portfolio_summary(pf).style.format(
-                {
-                    "Total return": "{:+.1%}",
-                    "Max drawdown": "{:.1%}",
-                    "Ann. vol": "{:.1%}",
-                    "Sharpe (252d)": "{:.2f}",
-                }
-            ),
-            use_container_width=True,
-        )
+
+        # ---- secondary sections (collapsible) --------------------------------
+        with st.expander("📉 Drawdown & rolling Sharpe", expanded=False):
+            cda, cdb = st.columns(2)
+            with cda:
+                st.plotly_chart(charts.portfolio_drawdown_chart(pf), use_container_width=True)
+            with cdb:
+                st.plotly_chart(charts.portfolio_sharpe_chart(pf), use_container_width=True)
+            st.dataframe(
+                charts.portfolio_summary(pf).style.format(
+                    {
+                        "Total return": "{:+.1%}",
+                        "Max drawdown": "{:.1%}",
+                        "Ann. vol": "{:.1%}",
+                        "Sharpe (252d)": "{:.2f}",
+                    }
+                ),
+                use_container_width=True,
+            )
 
         # Risk-adjusted scorecard: full-sample Sharpe + bootstrap CIs + pairwise distinguishability.
         stats = data.portfolio_strategy_stats(window_id)
         if not stats.empty:
             ci = int(round(stats["ci_pct"].iloc[0] * 100))
-            st.subheader(f"Risk-adjusted scorecard — Sharpe with {ci}% bootstrap CI")
-            sc1, sc2 = st.columns(2)
-            with sc1:
-                st.dataframe(
-                    charts.portfolio_scorecard(stats).style.format("{:.2f}"),
-                    use_container_width=True,
-                )
-            with sc2:
-                if not pairs.empty:
+            with st.expander(
+                f"📊 Risk-adjusted scorecard — Sharpe with {ci}% bootstrap CI", expanded=False
+            ):
+                sc1, sc2 = st.columns(2)
+                with sc1:
                     st.dataframe(
-                        charts.portfolio_pairs_table(pairs).style.format(
-                            {"Δ Sharpe": "{:.2f}", "CI low": "{:.2f}", "CI high": "{:.2f}"}
-                        ),
+                        charts.portfolio_scorecard(stats).style.format("{:.2f}"),
                         use_container_width=True,
                     )
-            st.caption(
-                f"Stationary block-bootstrap ({stats['n_boot'].iloc[0]:,} resamples, "
-                f"{stats['n_obs'].iloc[0]} obs). Distinguishable = Sharpe-diff CI excludes 0."
-            )
+                with sc2:
+                    if not pairs.empty:
+                        st.dataframe(
+                            charts.portfolio_pairs_table(pairs).style.format(
+                                {"Δ Sharpe": "{:.2f}", "CI low": "{:.2f}", "CI high": "{:.2f}"}
+                            ),
+                            use_container_width=True,
+                        )
+                st.caption(
+                    f"Stationary block-bootstrap ({stats['n_boot'].iloc[0]:,} resamples, "
+                    f"{stats['n_obs'].iloc[0]} obs). Distinguishable = Sharpe-diff CI excludes 0."
+                )
 
         # Return attribution — what drove each strategy's return.
         attr = data.portfolio_attribution(window_id)
         if not attr.empty:
-            st.subheader("Return attribution")
-            astrat = st.selectbox(
-                "Strategy", sorted(attr["strategy"].unique()), key="attribution_strategy"
-            )
-            st.plotly_chart(charts.attribution_chart(attr, astrat), use_container_width=True)
+            with st.expander("📈 Return attribution", expanded=False):
+                astrat = st.selectbox(
+                    "Strategy", sorted(attr["strategy"].unique()), key="attribution_strategy"
+                )
+                st.plotly_chart(charts.attribution_chart(attr, astrat), use_container_width=True)
 
         # Regime-conditional performance — behaviour across market volatility regimes.
         regime = data.portfolio_regime_performance(window_id)
         if not regime.empty:
-            st.subheader("Performance by market volatility regime")
-            st.plotly_chart(charts.regime_sharpe_chart(regime), use_container_width=True)
-            st.caption(
-                "Market regime = SPY 20-day-vol terciles; stats over each strategy's invested days."
-            )
+            with st.expander("🌡️ Performance by market volatility regime", expanded=False):
+                st.plotly_chart(charts.regime_sharpe_chart(regime), use_container_width=True)
+                st.caption(
+                    "Market regime = SPY 20-day-vol terciles; "
+                    "stats over each strategy's invested days."
+                )
 
         # ML experiment: did the forecast add value? (the gate makes mvo_ml ≈ mvo_histmean legible)
         gate = data.portfolio_ml_gate(window_id)
         if not gate.empty:
-            st.subheader("ML experiment — does the forecast add value?")
-            st.info("🔬 " + charts.ml_verdict(gate, pairs))
-            st.plotly_chart(charts.ml_gate_chart(gate), use_container_width=True)
-            st.caption(
-                "forecast_weight is the share mvo_ml puts on the ML forecast over the "
-                "historical-mean prior, gated point-in-time by the forecast's realised skill. "
-                "Pre-registered: expected to stay low."
-            )
+            with st.expander("🔬 ML experiment — does the forecast add value?", expanded=False):
+                st.info("🔬 " + charts.ml_verdict(gate, pairs))
+                st.plotly_chart(charts.ml_gate_chart(gate), use_container_width=True)
+                st.caption(
+                    "forecast_weight is the share mvo_ml puts on the ML forecast over the "
+                    "historical-mean prior, gated point-in-time by the forecast's realised skill. "
+                    "Pre-registered: expected to stay low."
+                )
 
         # BTC impact: the same-period (2015) paired comparison — independent of the window picker.
         btc_effect = data.portfolio_btc_effect()
         if not btc_effect.empty:
-            st.subheader("BTC impact — does adding BTC change risk-adjusted return?")
-            st.info("🪙 " + charts.btc_effect_verdict(btc_effect))
-            st.plotly_chart(charts.btc_effect_chart(btc_effect), use_container_width=True)
-            st.caption(
-                "Sharpe(inc-BTC@2015) − Sharpe(ex-BTC@2015): same dates ± BTC, with a paired "
-                "block-bootstrap 90% CI. The 60/40 benchmark (never holds BTC) is exactly zero — a "
-                "check that the comparison is genuinely paired. BTC's weekend moves fold into the "
-                "next trading day, so its standalone daily vol is understated here."
-            )
+            with st.expander(
+                "🪙 BTC impact — does adding BTC change risk-adjusted return?", expanded=False
+            ):
+                st.info("🪙 " + charts.btc_effect_verdict(btc_effect))
+                st.plotly_chart(charts.btc_effect_chart(btc_effect), use_container_width=True)
+                st.caption(
+                    "Sharpe(inc-BTC@2015) − Sharpe(ex-BTC@2015): same dates ± BTC, with a "
+                    "paired block-bootstrap 90% CI. The 60/40 benchmark (never holds BTC) is "
+                    "exactly zero — a check that the comparison is genuinely paired. "
+                    "BTC's weekend moves fold into the next trading day, "
+                    "so its standalone daily vol is understated here."
+                )
 
 # --------------------------------------------------------------------------- footer
 st.divider()
