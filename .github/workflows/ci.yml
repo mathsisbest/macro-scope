@@ -1,9 +1,17 @@
 name: CI
 
 on:
-  # Manual-only: local `make ci` is the gate (this preserves the free GitHub Actions tier).
-  # The job below mirrors `make ci`; re-add `pull_request:` / `push:` here to restore hosted CI.
+  # The job below mirrors `make ci`. Runs automatically on every PR to main; still
+  # manually triggerable. Stays within the free private-repo Actions tier (~few min/run).
+  # `make ci` remains the local pre-flight you run before opening the PR.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
+
+concurrency:
+  # Cancel superseded runs on the same branch to save Actions minutes.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   quality:
