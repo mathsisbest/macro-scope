@@ -16,6 +16,16 @@ class FredExtractor(Extractor):
     table = "raw.macro_series"
     keys = ["series_id", "date"]
     required_columns = ["series_id", "date", "value"]
+    probe_url = _URL
+
+    def probe(self) -> None:
+        """Probe FRED with a real key-authenticated request against a well-known series."""
+        params = {
+            "series_id": "DGS10",
+            "api_key": settings.fred_api_key,
+            "file_type": "json",
+        }
+        get_json(_URL, params=params)
 
     def skip_reason(self) -> str | None:
         # FRED needs a (free) key. Unkeyed, skip gracefully so the keyless core still lands and
