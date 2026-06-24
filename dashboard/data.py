@@ -204,3 +204,35 @@ def pipeline_runs() -> pd.DataFrame:
         "select source, rows, status, finished_at from raw.pipeline_runs "
         "order by started_at desc limit 12"
     )
+
+
+def data_as_of() -> str:
+    """The freshest markets date (max `date` in `fct_market_macro`), as an ISO string — `""` if no
+    data. Drawn from a mart, so it is identical in live and snapshot mode (unlike `pipeline_runs`,
+    whose `raw.pipeline_runs` is never snapshotted)."""
+    # Cast to varchar in SQL so DuckDB yields a clean ISO date ("2026-06-23"); going through
+    # pandas would coerce the DATE to a Timestamp and str() it as "... 00:00:00".
+    df = query("select cast(max(date) as varchar) as d from marts.fct_market_macro")
+    if df.empty or pd.isna(df["d"].iloc[0]):
+        return ""
+    return str(df["d"].iloc[0])
+
+
+def is_sample_data() -> bool | None:
+    """Provenance of the displayed markets data: `True` if ALL synthetic sample data (from
+    `mmi seed`), `False` if ALL live (ingested), `None` if there's no data or the provenance is
+    mixed/unrecorded. Read from `fct_asset_daily.source` (stamped `"sample"` by `mmi seed`, and
+    with the source name by the extractors) so it stays honest in snapshot mode too, where
+    `raw.pipeline_runs` is unavailable. A mixed set (e.g. a partial cron ingest leaving some
+    symbols `"sample"` while others go `"yahoo"`) is deliberately `None`: never claim "live"
+    unless every row is."""
+    df = query("select distinct source from marts.fct_asset_daily")
+    sources = set(df["source"].dropna()) if not df.empty else set()
+    sources.discard("")  # a blank source carries no provenance signal
+    if not sources:
+        return None  # no rows, or only null/blank sources
+    if sources == {"sample"}:
+        return True  # purely synthetic
+    if "sample" not in sources:
+        return False  # purely ingested
+    return None  # mixed sample + live → ambiguous; don't claim either

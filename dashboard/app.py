@@ -37,15 +37,36 @@ if not data.db_exists():
     )
     st.stop()
 
+# --------------------------------------------------------------------------- data provenance
+# Honest "data as of <date> · sample/live" badge. Both signals come from the marts, so they are
+# correct in BOTH live and snapshot (public Parquet) mode — raw.pipeline_runs isn't snapshotted.
+as_of = data.data_as_of()
+is_sample = data.is_sample_data()
+provenance = [f"📅 Data as of **{as_of}**"] if as_of else []
+if is_sample is True:
+    provenance.append("🧪 sample data (synthetic — run `mmi ingest` for live)")
+elif is_sample is False:
+    provenance.append("🟢 live data")
+elif as_of:
+    provenance.append("⚠️ mixed/unrecorded data provenance")
+if provenance:
+    st.caption(" · ".join(provenance))
+
 
 # --------------------------------------------------------------------------- sidebar
 with st.sidebar:
     st.subheader("⚙️ Pipeline health")
     runs = data.pipeline_runs()
-    if runs.empty:
-        st.caption("Sample data seeded (no live ingestion runs yet).")
-    else:
+    if not runs.empty:
         st.dataframe(runs, hide_index=True, use_container_width=True)
+    elif is_sample is True:
+        st.caption("Sample data seeded (synthetic; no live ingestion runs).")
+    elif is_sample is False:
+        st.caption("Live data from a committed snapshot (no in-app ingestion log).")
+    elif as_of:
+        st.caption("Mixed or unrecorded data provenance.")
+    else:
+        st.caption("No data yet — run `make demo` or `mmi ingest`.")
     st.divider()
     st.caption(f"`{settings.storage_label()}`")
     st.caption(f"LLM provider · `{settings.llm_provider}`")
@@ -132,6 +153,10 @@ with tab_macro:
             st.plotly_chart(charts.macro_chart(md, mid), use_container_width=True)
     if not mm.empty:
         st.plotly_chart(charts.yield_curve_chart(mm), use_container_width=True)
+    # Every macro series here (CPIAUCSL, UNRATE, DGS10, DGS2, FEDFUNDS) and the 10Y−2Y yield curve
+    # come from FRED, whose terms require attribution for public display.
+    if ids or not mm.empty:
+        st.caption("Source: FRED, Federal Reserve Bank of St. Louis · https://fred.stlouisfed.org/")
 
 with tab_ml:
     metrics = data.model_metrics()
