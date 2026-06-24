@@ -28,16 +28,12 @@ and serves it through a Streamlit dashboard. It's a **portfolio project** for th
   mirroring `make ci`; still `workflow_dispatch`-able). Stays within the free private-repo tier.
   The scheduled MotherDuck **`ingest.yml` stays disabled** (cron commented) — enable only with the owner's say-so.
 
-## Roles & session kickoff (three-Claude)
-Three separate Claude Code sessions, each a fresh `/clear`ed terminal. `CLAUDE.md` + `MEMORY.md`
-auto-load, so a kickoff only needs the role + the task.
-- **Claude 1 — Implementer.** Builds one small single-concern PR (branch `pNN-slug`, `make ci`,
-  structured body). Kickoff: `Implementer: build <issue #N / task>.`
-- **Claude 2 — Reviewer.** Separate session; runs `/review-pr <n>` (follows `docs/REVIEW_GUIDE.md`,
-  posts the verdict via `gh pr review`). Interacts with the implementer only through the repo +
-  PR comments — never chat relay. Kickoff: `/review-pr <n>`.
-- **Claude 3 — Architect.** Read-only strategy / Q&A; **no commits**. Catches up via open issues +
-  `gh pr list` + recent `git log` before answering, then hands specs to #1. Kickoff: `Architect: <question>.`
+## Roles & session kickoff
+Use the generic roles (Planner / Builder / Reviewer — see `~/.claude/velocity-playbook.md`). Run them
+as **separate sessions** with a repo-only handoff (no chat relay) — the anti-rubber-stamp rule.
+- **Build:** `Builder: implement <issue #N / task>` → one small single-concern PR (`make ci`, structured body).
+- **Review:** `/review-pr <n>` → separate session; loads `docs/REVIEW_GUIDE.md`, posts the verdict via `gh pr review`.
+- **Plan / architect:** `Planner: <question>` → read-only strategy/Q&A, **no commits**; hands specs to the builder via the repo.
 
 ## Key decisions (full rationale in PLAN.md + docs/adr/)
 - **Stack:** Python 3.10+, **DuckDB** (local dev/CI) + **MotherDuck** free tier (deployed),
