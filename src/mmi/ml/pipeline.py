@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from mmi.ml import forecast, regime
+from mmi.ml.volatility import MODEL_TAG as VOL_MODEL_TAG
+from mmi.ml.volatility import train_and_backtest_vol
 from mmi.utils.db import init_schemas
 from mmi.utils.logging import get_logger
 
@@ -28,7 +30,7 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
     # 1. Regimes for every asset.
     _write(con, "marts.fct_regime", regime.label_regimes(con))
 
-    # 2. Forecast + metrics per requested symbol.
+    # 2. Direction forecast + metrics per requested symbol.
     metric_rows, forecast_rows = [], []
     for sym in symbols:
         try:
@@ -37,6 +39,8 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
             log.warning("skip %s: %s", sym, exc)
             continue
         forecast_rows.append(fc)
+
+        # Original 5 direction-model metric rows
         for name in ("mae", "baseline_mae", "dir_acc", "baseline_dir_acc", "n_obs"):
             metric_rows.append(
                 {
@@ -47,6 +51,63 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
                     "trained_at": now,
                 }
             )
+
+        # C4: honest secondary skill rows for the direction model
+        mae_skill_ratio = (
+            metrics["mae"] / metrics["baseline_mae"]
+            if metrics["baseline_mae"] > 1e-20
+            else float("nan")
+        )
+        dir_acc_edge = metrics["dir_acc"] - metrics["baseline_dir_acc"]
+
+        for name, value in (
+            ("mae_skill_ratio", mae_skill_ratio),
+            ("dir_acc_edge", dir_acc_edge),
+        ):
+            metric_rows.append(
+                {
+                    "model": "random_forest",
+                    "symbol": sym,
+                    "metric": name,
+                    "value": float(value),
+                    "trained_at": now,
+                }
+            )
+
+    # 3. HAR realized-vol model (rv_har) per requested symbol.
+    for sym in symbols:
+        try:
+            vol_metrics, vol_fc = train_and_backtest_vol(con, sym)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("skip vol model for %s: %s", sym, exc)
+            continue
+
+        if not vol_metrics:
+            # Small-sample skip — train_and_backtest_vol already logged
+            continue
+
+        # Persist vol metric rows (Contract D: new rows only, never new columns)
+        for name in (
+            "oos_r2",
+            "qlike",
+            "baseline_qlike",
+            "qlike_skill_ratio",
+            "n_folds",
+            "folds_passed",
+            "n_obs",
+        ):
+            metric_rows.append(
+                {
+                    "model": VOL_MODEL_TAG,
+                    "symbol": sym,
+                    "metric": name,
+                    "value": float(vol_metrics[name]),
+                    "trained_at": now,
+                }
+            )
+
+        if vol_fc is not None:
+            forecast_rows.append(vol_fc)
 
     if metric_rows:
         _write(con, "marts.model_metrics", pd.DataFrame(metric_rows))
