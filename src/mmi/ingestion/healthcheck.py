@@ -89,25 +89,17 @@ def format_table(results: list[ProbeResult]) -> str:
     header_detail = "DETAIL"
 
     col_source = max(len(header_source), *(len(r.source) for r in results))
-    # Status column: "skip(reason)" or "fail(reason)" or "ok" — width based on rendered strings
-    rendered_statuses = [_render_status(r) for r in results]
-    col_status = max(len(header_status), *(len(s) for s in rendered_statuses))
+    col_status = max(len(header_status), *(len(r.status) for r in results))
 
     sep = f"  {'─' * col_source}  {'─' * col_status}  {'─' * max(len(header_detail), 1)}"
 
     lines: list[str] = []
     lines.append(f"  {header_source:<{col_source}}  {header_status:<{col_status}}  {header_detail}")
     lines.append(sep)
-    for r, status_str in zip(results, rendered_statuses, strict=True):
-        lines.append(f"  {r.source:<{col_source}}  {status_str:<{col_status}}  {r.detail}")
+    for r in results:
+        # STATUS column is the bare status; the reason lives in DETAIL only (no duplication).
+        lines.append(f"  {r.source:<{col_source}}  {r.status:<{col_status}}  {r.detail}")
     return "\n".join(lines)
-
-
-def _render_status(result: ProbeResult) -> str:
-    """Render status column value: 'ok', 'skip(reason)', or 'fail(reason)'."""
-    if result.status == "ok":
-        return "ok"
-    return f"{result.status}({result.detail})" if result.detail else result.status
 
 
 def exit_code(results: list[ProbeResult]) -> int:
