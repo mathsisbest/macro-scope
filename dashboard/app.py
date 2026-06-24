@@ -1,20 +1,29 @@
 """Markets & Macro Intelligence — Streamlit dashboard (BI layer).
 
-Run: `make dashboard` (or `make demo`). A bare `streamlit run dashboard/app.py` needs the repo
-root on PYTHONPATH (so `from dashboard import ...` resolves) — the make targets set that for you.
+Run: `make dashboard` / `make demo`, or `streamlit run dashboard/app.py` directly — this file
+puts the repo root on sys.path so `from dashboard import ...` resolves everywhere (local and
+Streamlit Community Cloud, which otherwise only has this file's own dir on the path).
 Reads the dbt marts from DuckDB; everything visual is defined in code.
 """
 
 from __future__ import annotations
 
-import streamlit as st
-from dashboard import data
-from dashboard.components import charts
-from dashboard.components.kpi import metric_row
-from dashboard.theme import inject_css
+import sys
+from pathlib import Path
 
-from mmi.settings import settings
-from mmi.utils.db import connect
+import streamlit as st
+
+# Streamlit Community Cloud runs this file with only its own directory on sys.path (not the
+# repo root), so the repo-root `dashboard` package isn't importable. Put the repo root first.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from dashboard import data  # noqa: E402
+from dashboard.components import charts  # noqa: E402
+from dashboard.components.kpi import metric_row  # noqa: E402
+from dashboard.theme import inject_css  # noqa: E402
+
+from mmi.settings import settings  # noqa: E402
+from mmi.utils.db import connect  # noqa: E402
 
 st.set_page_config(page_title="Markets & Macro Intelligence", page_icon="📈", layout="wide")
 inject_css()
