@@ -344,3 +344,145 @@ def test_module_constants_are_sane():
     assert pytest.approx(0.01) == QLIKE_MARGIN
     assert pytest.approx(0.6) == SUSTAIN_FRAC
     assert N_OBS_MIN == 250
+
+
+# ---------------------------------------------------------------------------
+# 11. Non-finite metric values (NaN / ±inf) must FAIL CLOSED — never silent pass
+# ---------------------------------------------------------------------------
+
+_NAN = float("nan")
+_INF = float("inf")
+
+
+def test_nan_oos_r2_not_cleared():
+    """NaN oos_r2 must NOT clear: ``nan < R2_MIN`` is False, so the naive check
+    would silently pass it. The honesty gate must treat NaN like a missing metric."""
+    df = _make_df(oos_r2=_NAN)
+    v = skill_verdict(df)
+    assert v["cleared"] is False, "NaN oos_r2 must never clear the honesty gate"
+    assert any("oos_r2" in r for r in v["reasons"]), v["reasons"]
+
+
+def test_nan_oos_r2_with_other_metrics_passing_not_cleared():
+    """The exact false-pass scenario from the bug report: a degenerate run writes
+    NaN oos_r2 while folds_passed / n_obs / qlike happen to satisfy their gates.
+    It must STILL fail closed rather than return cleared=True."""
+    df = _make_df(
+        oos_r2=_NAN,
+        qlike_skill_ratio=0.90,  # would pass on its own
+        folds_passed=5,  # would pass on its own
+        n_folds=5,
+        n_obs=600,  # would pass on its own
+    )
+    v = skill_verdict(df)
+    assert v["cleared"] is False
+
+
+def test_nan_qlike_skill_ratio_not_cleared():
+    """NaN qlike_skill_ratio must NOT clear: ``nan >= 0.99`` is False."""
+    df = _make_df(qlike_skill_ratio=_NAN)
+    v = skill_verdict(df)
+    assert v["cleared"] is False
+    assert any("qlike_skill_ratio" in r for r in v["reasons"]), v["reasons"]
+
+
+def test_inf_oos_r2_not_cleared():
+    """+inf oos_r2 is non-finite garbage and must not clear (``inf >= R2_MIN`` is True,
+    so without a finiteness guard it would silently pass)."""
+    df = _make_df(oos_r2=_INF)
+    v = skill_verdict(df)
+    assert v["cleared"] is False
+    assert any("oos_r2" in r for r in v["reasons"]), v["reasons"]
+
+
+def test_nan_folds_passed_not_cleared_no_exception():
+    """NaN folds_passed must not raise (``int(float('nan'))`` raises ValueError)
+    and must not clear."""
+    df = _make_df(folds_passed=_NAN)
+    v = skill_verdict(df)  # must not raise
+    assert v["cleared"] is False
+    assert any("folds_passed" in r for r in v["reasons"]), v["reasons"]
+
+
+def test_inf_n_obs_not_cleared_no_exception():
+    """±inf n_obs must not raise and must not clear."""
+    df = _make_df(n_obs=_INF)
+    v = skill_verdict(df)  # must not raise
+    assert v["cleared"] is False
+    assert any("n_obs" in r for r in v["reasons"]), v["reasons"]
+
+
+def test_nan_n_folds_not_cleared_no_exception():
+    """NaN n_folds must not raise (it feeds ``math.ceil`` / ``int``) and must not clear."""
+    df = _make_df(n_folds=_NAN)
+    v = skill_verdict(df)  # must not raise
+    assert v["cleared"] is False
+    assert any("n_folds" in r for r in v["reasons"]), v["reasons"]
+
+
+def test_nan_int_metric_in_partial_row_branch_no_exception():
+    """Gap #2 path: a NaN int metric while another metric is entirely absent must
+    not raise. The pre-fix code computed ``int(metric_map['folds_passed'])`` while
+    building the missing-metric return value, raising ValueError on NaN. It must
+    now fail closed without an exception."""
+    full = _make_df(folds_passed=_NAN)
+    partial = full[full["metric"] != "oos_r2"].copy()  # drop oos_r2 entirely
+    v = skill_verdict(partial)  # must not raise
+    assert v["cleared"] is False
+    assert v["reasons"]
+
+
+# ---------------------------------------------------------------------------
+# Out-of-range (finite-but-impossible) metrics must ALSO fail closed.
+# These are finite, so they pass the NaN/inf guard — but each would otherwise
+# slip through a threshold comparison and FALSELY clear the gate.
+# ---------------------------------------------------------------------------
+
+
+def test_impossible_oos_r2_above_one_not_cleared():
+    """A finite oos_r2 > 1.0 is impossible (R² ≤ 1); it must not satisfy `>= R2_MIN`."""
+    df = _make_df(oos_r2=1e308)  # all other metrics pass
+    v = skill_verdict(df)
+    assert v["cleared"] is False
+    assert any("oos_r2" in r and "1.0" in r for r in v["reasons"]), v["reasons"]
+
+
+def test_zero_n_folds_not_cleared():
+    """n_folds=0 makes ceil(0.6*0)=0, so `folds_passed < 0` is vacuously False —
+    the folds check would pass. A zero-fold run must fail closed instead."""
+    df = _make_df(n_folds=0, folds_passed=0)  # other metrics pass
+    v = skill_verdict(df)
+    assert v["cleared"] is False
+    assert any("n_folds" in r for r in v["reasons"]), v["reasons"]
+
+
+def test_negative_qlike_ratio_not_cleared():
+    """A negative qlike_skill_ratio is impossible (ratio of non-negative losses)
+    and would satisfy `< 0.99`; it must be rejected, not treated as great skill."""
+    df = _make_df(qlike_skill_ratio=-0.5)  # other metrics pass
+    v = skill_verdict(df)
+    assert v["cleared"] is False
+    assert any("qlike_skill_ratio" in r for r in v["reasons"]), v["reasons"]
+
+
+def test_folds_passed_exceeds_n_folds_not_cleared():
+    """folds_passed > n_folds is impossible and must fail closed."""
+    df = _make_df(folds_passed=9, n_folds=5)  # other metrics pass
+    v = skill_verdict(df)
+    assert v["cleared"] is False
+    assert any("folds_passed" in r for r in v["reasons"]), v["reasons"]
+
+
+def test_negative_n_obs_not_cleared():
+    """A negative n_obs is garbage; it must fail closed (and never clear)."""
+    df = _make_df(n_obs=-100)
+    v = skill_verdict(df)
+    assert v["cleared"] is False
+
+
+def test_in_range_boundary_values_still_clear():
+    """Sanity: legitimate in-range values at the edges (oos_r2=1.0, qlike=0.0,
+    folds_passed=n_folds) must STILL clear — the domain guard must not over-reject."""
+    df = _make_df(oos_r2=1.0, qlike_skill_ratio=0.0, folds_passed=5, n_folds=5, n_obs=500)
+    v = skill_verdict(df)
+    assert v["cleared"] is True, v["reasons"]
