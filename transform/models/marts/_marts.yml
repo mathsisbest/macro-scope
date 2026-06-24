@@ -129,6 +129,21 @@ models:
       - name: date
         tests: [not_null]
 
+  - name: fct_recession_risk
+    description: "Estrella-Mishkin probit recession-probability per date (NY Fed calibration). Spread is 10Y-3M when DGS3MO is present, 10Y-2Y proxy otherwise. Cheap daily mart — not portfolio-tagged."
+    columns:
+      - name: date
+        tests: [not_null, unique]
+      - name: spread_10y_3m
+        tests: [not_null]
+      - name: recession_prob
+        tests: [not_null]
+      - name: model
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["10y_3m", "10y_2y_proxy"]
+
   - name: fct_portfolio_btc_effect
     description: "Paired cross-window BTC effect: Sharpe(inc_btc_2015) − Sharpe(ex_btc_2015) per strategy, with a paired block-bootstrap CI. Grain: one row per strategy. A singular test re-derives diff + distinguishable."
     columns:
