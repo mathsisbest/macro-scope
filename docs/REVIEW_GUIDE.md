@@ -18,15 +18,16 @@ introduced subtle bugs. Be critical, specific, and evidence-based.
   the Akeneo email. (`git log main..HEAD --format='%an <%ae>'`.)
 - **Secrets never leak.** No token/key/connection-string in code, logs, committed files, or the
   dashboard UI. `MOTHERDUCK_TOKEN` flows via env only.
-- **Local-first, no hosted CI.** The gate is `make ci` locally. Don't approve a PR that depends
-  on GitHub Actions, and flag any change that silently re-enables Actions triggers.
+- **CI gate.** `make ci` runs locally (the author's pre-flight) **and** on every PR via GitHub
+  Actions (`ci.yml`, which mirrors `make ci`). CI must be green. Flag any change that enables the
+  scheduled `ingest.yml` cron without owner say-so, or that lets `ci.yml` drift from `make ci`.
 - **Storage:** DuckDB local (dev/CI) + MotherDuck (deployed). No `.duckdb` binary committed.
 - **Honest docs.** README/PLAN must not present unbuilt features as done.
 
 ## 3. How to review
 ```bash
 gh pr checkout <n>        # check out the branch
-make ci                   # MUST pass — this is the gate (no Actions). Paste failures.
+make ci                   # MUST pass locally — the same gate CI runs on the PR. Paste failures.
 git diff main...HEAD      # read every changed line
 git log main..HEAD --format='%an <%ae> | %s'   # check authorship + commit hygiene
 ```
@@ -58,3 +59,12 @@ Body structure: **Verdict** · **Blockers** (must-fix, each with `file:line` + w
 Skeptical by default. If unsure whether something is a bug, say so and explain the risk rather
 than waving it through. Approve **only** when `make ci` passes and nothing violates §2 or the
 checklist. You are review-only — never edit code.
+
+## 7. Project-specific watch-items (moved here from CLAUDE.md)
+- **ML baseline honesty:** on synthetic sample data the model *trails* the naive baseline (no
+  signal) — expected. On real data, re-evaluate (consider direction-classification + proper CV);
+  don't approve over-claimed predictive power.
+- **No data in git:** the scheduled cron writes to MotherDuck; the `.duckdb` binary and ingested
+  data are never committed — flag any data file in the diff.
+- **Secrets & freshness:** no keys in code/logs/UI; dbt source-freshness should surface in the UI.
+- **Yahoo v8** is an unofficial endpoint — best-effort; **FRED / World Bank** are the reliable core.
