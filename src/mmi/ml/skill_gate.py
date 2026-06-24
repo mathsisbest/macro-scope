@@ -37,6 +37,39 @@ class SkillVerdict(TypedDict):
     n_obs: int | None
 
 
+def _to_finite_float(value: float | None) -> float | None:
+    """Coerce a stored metric to a finite float.
+
+    Returns ``None`` if the value is missing (``None``), non-numeric, NaN, or
+    ±inf.  This is what makes the gate FAIL CLOSED: ``float('nan') < R2_MIN`` and
+    ``float('nan') >= threshold`` are BOTH ``False`` in Python, so a NaN metric
+    would otherwise silently satisfy every comparison and clear the gate.  We
+    treat NaN/inf exactly like a missing metric instead.
+    """
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(f):
+        return None
+    return f
+
+
+def _to_finite_int(value: float | None) -> int | None:
+    """Coerce a stored metric to an int, failing closed (never raising).
+
+    Returns ``None`` for missing/NaN/±inf/non-numeric values instead of letting
+    ``int(float('nan'))`` raise ``ValueError`` — preserving the contract that
+    absent or partial rows yield a verdict, never an exception.
+    """
+    f = _to_finite_float(value)
+    if f is None:
+        return None
+    return int(f)
+
+
 def skill_verdict(
     model_metrics_df: pd.DataFrame,
     symbol: str = "SPY",
@@ -61,18 +94,14 @@ def skill_verdict(
         * ``folds_passed >= ceil(SUSTAIN_FRAC * n_folds)`` (≥ 3 of 5 by default)
         * ``n_obs >= N_OBS_MIN`` (250)
 
-        Absent or partial rows for the requested ``(model='rv_har', symbol)``
-        combination always yield ``cleared=False`` with an explicit reason string
-        — never an exception.
+        Absent, partial, non-finite (NaN / ±inf), or implausible out-of-range
+        metric values for the requested ``(model='rv_har', symbol)`` combination
+        always yield ``cleared=False`` with an explicit reason string — never an
+        exception.  The gate FAILS CLOSED: a NaN/inf metric is treated exactly
+        like a missing one, and a finite-but-impossible value (e.g. ``oos_r2 >
+        1.0``, ``n_folds < 1``, or a negative ``qlike_skill_ratio``) is rejected
+        too — never silently passed.
     """
-    required_metrics = {
-        "oos_r2",
-        "qlike_skill_ratio",
-        "folds_passed",
-        "n_folds",
-        "n_obs",
-    }
-
     # -----------------------------------------------------------------------
     # Guard: must have the mandatory columns.
     # -----------------------------------------------------------------------
@@ -123,31 +152,97 @@ def skill_verdict(
     )
 
     # -----------------------------------------------------------------------
-    # Check for missing metrics before computing the verdict.
+    # Coerce every required metric to a usable numeric value.  A metric that is
+    # ABSENT, None, NaN, or ±inf is treated IDENTICALLY: it makes the verdict
+    # FAIL CLOSED.  This is the honesty gate — a degenerate run (zero-variance
+    # baseline, tiny sample) that writes NaN must NEVER silently clear, because
+    # ``nan < R2_MIN`` and ``nan >= threshold`` are both False in Python.
     # -----------------------------------------------------------------------
-    missing = required_metrics - set(metric_map.keys())
-    if missing:
+    oos_r2_v = _to_finite_float(metric_map.get("oos_r2"))
+    qlike_skill_ratio_v = _to_finite_float(metric_map.get("qlike_skill_ratio"))
+    folds_passed_v = _to_finite_int(metric_map.get("folds_passed"))
+    n_folds_v = _to_finite_int(metric_map.get("n_folds"))
+    n_obs_v = _to_finite_int(metric_map.get("n_obs"))
+
+    if (
+        oos_r2_v is None
+        or qlike_skill_ratio_v is None
+        or folds_passed_v is None
+        or n_folds_v is None
+        or n_obs_v is None
+    ):
+        unusable = sorted(
+            name
+            for name, value in (
+                ("oos_r2", oos_r2_v),
+                ("qlike_skill_ratio", qlike_skill_ratio_v),
+                ("folds_passed", folds_passed_v),
+                ("n_folds", n_folds_v),
+                ("n_obs", n_obs_v),
+            )
+            if value is None
+        )
         return SkillVerdict(
             cleared=False,
             reasons=[
-                f"missing metric(s) for model='rv_har', symbol='{symbol}': "
-                + ", ".join(sorted(missing))
+                "missing or non-finite metric(s) for model='rv_har', "
+                f"symbol='{symbol}': " + ", ".join(unusable)
             ],
-            oos_r2=metric_map.get("oos_r2"),
-            qlike_skill_ratio=metric_map.get("qlike_skill_ratio"),
-            folds_passed=int(metric_map["folds_passed"]) if "folds_passed" in metric_map else None,
-            n_folds=int(metric_map["n_folds"]) if "n_folds" in metric_map else None,
-            n_obs=int(metric_map["n_obs"]) if "n_obs" in metric_map else None,
+            oos_r2=oos_r2_v,
+            qlike_skill_ratio=qlike_skill_ratio_v,
+            folds_passed=folds_passed_v,
+            n_folds=n_folds_v,
+            n_obs=n_obs_v,
         )
 
     # -----------------------------------------------------------------------
-    # Extract typed values.
+    # All five metrics are present and finite (mypy narrows each to non-None).
     # -----------------------------------------------------------------------
-    oos_r2: float = float(metric_map["oos_r2"])
-    qlike_skill_ratio: float = float(metric_map["qlike_skill_ratio"])
-    folds_passed: int = int(metric_map["folds_passed"])
-    n_folds: int = int(metric_map["n_folds"])
-    n_obs: int = int(metric_map["n_obs"])
+    oos_r2: float = oos_r2_v
+    qlike_skill_ratio: float = qlike_skill_ratio_v
+    folds_passed: int = folds_passed_v
+    n_folds: int = n_folds_v
+    n_obs: int = n_obs_v
+
+    # -----------------------------------------------------------------------
+    # Domain guard: a metric can be FINITE yet physically impossible (a sign of
+    # a degenerate run or an upstream bug).  These "garbage but finite" values
+    # must ALSO fail closed, because each would otherwise slip through a
+    # threshold comparison written assuming a sane domain:
+    #   * oos_r2 > 1.0 would satisfy ``>= R2_MIN``,
+    #   * n_folds < 1 makes ceil(SUSTAIN_FRAC*n_folds)=0 so the folds check is
+    #     vacuously true,
+    #   * a negative qlike_skill_ratio would satisfy ``< qlike_threshold``.
+    # Treat out-of-range exactly like missing/non-finite: cleared=False.
+    # -----------------------------------------------------------------------
+    implausible: list[str] = []
+    if oos_r2 > 1.0:
+        implausible.append(f"oos_r2={oos_r2:.4f} > 1.0 (R² cannot exceed 1)")
+    if qlike_skill_ratio < 0.0:
+        implausible.append(
+            f"qlike_skill_ratio={qlike_skill_ratio:.4f} < 0 "
+            "(a ratio of non-negative losses cannot be negative)"
+        )
+    if n_folds < 1:
+        implausible.append(f"n_folds={n_folds} < 1 (no cross-validation folds ran)")
+    if folds_passed < 0 or folds_passed > n_folds:
+        implausible.append(f"folds_passed={folds_passed} outside [0, n_folds={n_folds}]")
+    if n_obs < 0:
+        implausible.append(f"n_obs={n_obs} < 0")
+
+    if implausible:
+        return SkillVerdict(
+            cleared=False,
+            reasons=[
+                "implausible (out-of-range) metric(s) for model='rv_har', "
+                f"symbol='{symbol}': " + "; ".join(implausible)
+            ],
+            oos_r2=oos_r2,
+            qlike_skill_ratio=qlike_skill_ratio,
+            folds_passed=folds_passed,
+            n_folds=n_folds,
+            n_obs=n_obs,
+        )
 
     # -----------------------------------------------------------------------
     # Evaluate gate conditions.
