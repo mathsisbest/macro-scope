@@ -299,6 +299,85 @@ def cmd_healthcheck(_: argparse.Namespace) -> int:
     return exit_code(results)
 
 
+def cmd_ml_gate(args: argparse.Namespace) -> int:
+    """Check the HAR realized-volatility skill gate against persisted model_metrics.
+
+    Reads ``marts.model_metrics`` via the normal DB connection and delegates ALL verdict
+    logic to ``skill_verdict()`` from ``src/mmi/ml/skill_gate.py`` — the single source of
+    truth for the gate (Contract E).  This command NEVER re-derives a verdict itself.
+
+    STRICT mode (default):
+      * Prints the verdict and any failure reasons.
+      * Exits non-zero when the gate is NOT cleared; exits 0 when cleared.
+
+    --warn-only mode:
+      * Prints the same output but always exits 0 (useful in CI contexts where a not-yet-
+        trained model should warn rather than block the pipeline).
+
+    Absent or partial metric rows (e.g. model not yet trained) yield a ``not-cleared``
+    result with an explanatory reason string — never an exception.
+
+    NOT wired into ``make ci``: sample data has no real edge so the gate would always fail,
+    which would break CI.  This command is for the owner's local pre-snapshot check only.
+    """
+    # Lazy import inside function: skill_gate has no module-scope ML lib imports, but we
+    # follow the convention of all other cmd_* functions to avoid import-time side effects.
+    from mmi.ml.skill_gate import skill_verdict
+
+    symbol: str = args.symbol
+    warn_only: bool = args.warn_only
+
+    # ------------------------------------------------------------------
+    # Read marts.model_metrics — absent/partial rows must not raise.
+    # ------------------------------------------------------------------
+    import pandas as pd
+
+    try:
+        with connect(read_only=True) as con:
+            try:
+                metrics_df: pd.DataFrame = con.execute(
+                    "select model, symbol, metric, value, trained_at from marts.model_metrics"
+                ).df()
+            except Exception as exc:  # noqa: BLE001 - table missing or schema mismatch
+                log.warning("ml-gate: could not read marts.model_metrics: %s", redact(str(exc)))
+                metrics_df = pd.DataFrame(
+                    columns=["model", "symbol", "metric", "value", "trained_at"]
+                )
+    except Exception as exc:  # noqa: BLE001 - DB connection failure
+        log.warning("ml-gate: DB connection failed: %s", redact(str(exc)))
+        metrics_df = pd.DataFrame(columns=["model", "symbol", "metric", "value", "trained_at"])
+
+    # ------------------------------------------------------------------
+    # Delegate to the single source of truth for the verdict.
+    # ------------------------------------------------------------------
+    verdict = skill_verdict(metrics_df, symbol=symbol)
+
+    cleared: bool = verdict["cleared"]
+    reasons: list[str] = verdict["reasons"]
+
+    # ------------------------------------------------------------------
+    # Print the verdict.
+    # ------------------------------------------------------------------
+    if cleared:
+        print(f"ml-gate: CLEARED — symbol={symbol}, model=rv_har")
+        print(
+            f"  oos_r2={verdict['oos_r2']:.4f}  "
+            f"qlike_skill_ratio={verdict['qlike_skill_ratio']:.4f}  "
+            f"folds_passed={verdict['folds_passed']}/{verdict['n_folds']}  "
+            f"n_obs={verdict['n_obs']}"
+        )
+    else:
+        print(f"ml-gate: NOT CLEARED — symbol={symbol}, model=rv_har")
+        for reason in reasons:
+            print(f"  reason: {reason}")
+
+    if warn_only and not cleared:
+        log.warning("ml-gate: not cleared (warn-only mode — exit 0)")
+        return 0
+
+    return 0 if cleared else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mmi", description="Markets & Macro Intelligence CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -314,6 +393,24 @@ def build_parser() -> argparse.ArgumentParser:
     ]:
         p = sub.add_parser(name, help=help_)
         p.set_defaults(func=fn)
+    # ml-gate has extra arguments so it is registered separately.
+    p_ml_gate = sub.add_parser(
+        "ml-gate",
+        help="Check HAR realized-vol skill gate against persisted model_metrics (not in make ci)",
+    )
+    p_ml_gate.set_defaults(func=cmd_ml_gate)
+    p_ml_gate.add_argument(
+        "--symbol",
+        default="SPY",
+        metavar="TICKER",
+        help="Asset ticker to evaluate (default: SPY)",
+    )
+    p_ml_gate.add_argument(
+        "--warn-only",
+        action="store_true",
+        default=False,
+        help="Print verdict but always exit 0 (never blocks the pipeline)",
+    )
     return parser
 
 
