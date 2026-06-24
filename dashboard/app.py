@@ -25,11 +25,72 @@ from dashboard.theme import inject_css  # noqa: E402
 from mmi.settings import settings  # noqa: E402
 from mmi.utils.db import connect  # noqa: E402
 
-st.set_page_config(page_title="Markets & Macro Intelligence", page_icon="📈", layout="wide")
+# --------------------------------------------------------------------------- page config
+_FAVICON = Path(__file__).resolve().parent / "assets" / "favicon.png"
+st.set_page_config(
+    page_title="Markets & Macro Intelligence",
+    page_icon=str(_FAVICON) if _FAVICON.exists() else "📈",
+    layout="wide",
+)
 inject_css()
 
+# --------------------------------------------------------------------------- hero / header
 st.title("📈 Markets & Macro Intelligence")
-st.caption("Live markets + macro · ingest → dbt → ML → GenAI → BI · all on free tiers")
+st.caption(
+    "Live markets + macro · **ingest → dbt → ML → GenAI → BI** · all free tiers · "
+    "walk-forward backtesting · no secrets required in the public app"
+)
+
+# --------------------------------------------------------------------------- methodology expander
+with st.expander("About & methodology", expanded=False):
+    st.markdown(
+        """
+**Pipeline**
+
+`mmi ingest` → `dbt build` → `mmi ml` → `mmi ai` → Streamlit BI
+
+Each stage is open-source and runs on free-tier infrastructure (Yahoo Finance unofficial API,
+FRED, CoinGecko, World Bank, DuckDB, scikit-learn, a local or serverless LLM).
+
+**Data sources**
+
+- **Yahoo Finance (unofficial)** — equities, ETFs, FX daily OHLCV.
+  Unofficial API; not endorsed by Yahoo Finance.
+- **FRED — Federal Reserve Bank of St. Louis** — macro series (CPI, unemployment,
+  Fed Funds rate, yield curve). [fred.stlouisfed.org](https://fred.stlouisfed.org/)
+- **CoinGecko** — crypto intraday prices. Free-tier API; rate-limited.
+- **World Bank** — additional macro indicators.
+  [data.worldbank.org](https://data.worldbank.org/)
+
+**ML headline target**
+
+The certified ML model forecasts **next-week (5-trading-day) realised volatility for SPY** using
+a HAR-style cascade (1d / 5d / 22d Garman-Klass vol + yield-curve macro features).
+Walk-forward `TimeSeriesSplit(5)` — no lookahead leakage.
+The go-live skill gate is `OOS R² ≥ 0.10 AND QLIKE-ratio < 0.99 AND ≥ 3/5 folds pass`.
+If the gate is not cleared the dashboard shows the honest "no demonstrated out-of-sample edge"
+state — the model is never re-tuned to pass.
+
+**Bond-return honesty note (TLT / TIP)**
+
+Bond-return predictability is well-documented **in-sample**: Fama-Bliss forward-rate regressions
+achieve ~15% R², and Cochrane-Piazzesi factors reach up to 0.44.  However, the evidence is
+**fragile out-of-sample** — Thornton & Valente (2012), Hodrick & Tomunen (2021), and Bauer &
+Hamilton (2018) all find that the in-sample gains largely disappear once accounting for
+data-snooping, statistical uncertainty, and real-time revision.
+
+**This is why mmi weights TLT and TIP by risk** (inverse-vol / risk-parity / MVO), **not by a
+return forecast**: the data cannot honestly support a forward-rate predictor, so we rely only on
+the diversification benefit of bonds within a risk-constrained portfolio.
+
+**Not investment advice**
+
+This dashboard is a personal data-engineering and machine-learning portfolio project.
+Nothing here constitutes financial, investment, or trading advice.
+All backtests are historical and do not guarantee future results.
+Use at your own risk.
+        """.strip()
+    )
 
 if not data.db_exists():
     st.warning(
@@ -137,12 +198,31 @@ with tab_mkt:
             if not d.empty:
                 st.plotly_chart(charts.price_chart(d, sym), use_container_width=True)
                 st.plotly_chart(charts.vol_chart(d, sym), use_container_width=True)
+            else:
+                st.info(
+                    f"No daily price data for {sym} yet. "
+                    "Run `mmi ingest` (or `make demo`) to populate."
+                )
+        else:
+            st.info(
+                "No asset data yet. Run `mmi ingest` or `make demo` to populate the markets tab."
+            )
     with col2:
         if csyms:
             c = st.selectbox("Crypto", csyms)
             cd = data.crypto_intraday(c)
             if not cd.empty:
                 st.plotly_chart(charts.crypto_chart(cd, c), use_container_width=True)
+            else:
+                st.info(
+                    f"No intraday data for {c} yet. Run `mmi ingest` (or `make demo`) to populate."
+                )
+        else:
+            st.info(
+                "No crypto data yet. "
+                "This is normal during the daily-cron partial state — "
+                "crypto data arrives on the next full ingest."
+            )
 
 with tab_macro:
     ids = data.macro_ids()
@@ -151,6 +231,14 @@ with tab_macro:
         md = data.macro(mid)
         if not md.empty:
             st.plotly_chart(charts.macro_chart(md, mid), use_container_width=True)
+        else:
+            st.info(f"No data for series {mid} yet.")
+    else:
+        st.info(
+            "No macro series yet. "
+            "Run `mmi ingest` (or `make demo`) to pull FRED / World Bank indicators. "
+            "In the daily-cron partial state this tab populates once the first full ingest runs."
+        )
     if not mm.empty:
         st.plotly_chart(charts.yield_curve_chart(mm), use_container_width=True)
     # Source line for the macro charts. Live FRED data (every series here — CPIAUCSL, UNRATE, DGS10,
@@ -164,7 +252,12 @@ with tab_ml:
     metrics = data.model_metrics()
     fc = data.ml_forecast()
     if metrics.empty:
-        st.info("No ML results yet. Run `make ml` (or `mmi ml`).")
+        st.info(
+            "No ML results yet. "
+            "This is expected in the daily-cron partial state: the ML step runs only in the full "
+            "local refresh (`make refresh-full`). Run `make ml` (or `mmi ml`) locally to train "
+            "and commit updated forecasts."
+        )
     else:
         c1, c2 = st.columns([1, 1])
         with c1:
@@ -183,7 +276,12 @@ with tab_ml:
 with tab_ai:
     brief = data.latest_brief()
     if brief.empty:
-        st.info("No brief yet. Run `make ai` (or `mmi ai`). Works offline without an LLM key.")
+        st.info(
+            "No AI brief yet. "
+            "This is expected in the daily-cron partial state: the brief is generated only in "
+            "the full local refresh. Run `make ai` (or `mmi ai`) locally — it works offline "
+            "without an LLM key (falls back to a deterministic template)."
+        )
     else:
         st.markdown(brief["brief"].iloc[0])
         st.caption(f"Generated by `{brief['engine'].iloc[0]}` · {brief['created_at'].iloc[0]}")
@@ -205,7 +303,13 @@ with tab_portfolio:
     # choke point so every chart/table is for exactly one window (no cross-window aggregation).
     present_windows = data.portfolio_windows()
     if not present_windows:
-        st.info("No portfolio backtest yet. Run `mmi portfolio` to compute strategy returns.")
+        st.info(
+            "No portfolio backtest yet. "
+            "This is expected in the daily-cron partial state: the portfolio backtest runs only "
+            "in the full local refresh (`make refresh-full` or `mmi portfolio`). "
+            "The committed `data/public/` snapshot will include portfolio results once the "
+            "owner's next full run completes."
+        )
     else:
         window_id = present_windows[0]
         if len(present_windows) > 1:
@@ -315,3 +419,19 @@ with tab_portfolio:
                 "check that the comparison is genuinely paired. BTC's weekend moves fold into the "
                 "next trading day, so its standalone daily vol is understated here."
             )
+
+# --------------------------------------------------------------------------- footer
+st.divider()
+_footer_col1, _footer_col2, _footer_col3 = st.columns([2, 2, 2])
+with _footer_col1:
+    st.caption(
+        "Source: [github.com/mathsisbest/markets-macro-intelligence]"
+        "(https://github.com/mathsisbest/markets-macro-intelligence)"
+    )
+with _footer_col2:
+    st.caption("Built by **mathsisbest** · not investment advice")
+with _footer_col3:
+    if as_of:
+        st.caption(f"Data as of {as_of}")
+    else:
+        st.caption("No data loaded")
