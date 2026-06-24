@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 import plotly.graph_objects as go
 from dashboard.theme import (
@@ -11,11 +13,14 @@ from dashboard.theme import (
     HEIGHT_TALL,
     PALETTE,
     SERIES_ALT,
+    SERIES_PRICE,
     SERIES_RETURN,
     SERIES_VOL,
     SERIES_YIELD,
     style_fig,
 )
+
+from mmi.ml.skill_gate import skill_verdict
 
 # ---------------------------------------------------------------------------
 # Shared layout helpers
@@ -237,6 +242,187 @@ def ml_gate_chart(gate: pd.DataFrame) -> go.Figure:
     )
     _apply_axis_fonts(fig)
     fig.update_yaxes(rangemode="tozero")
+    return style_fig(fig, height=HEIGHT_MEDIUM)
+
+
+# ---------------------------------------------------------------------------
+# ML tab — honest vol-skill builders (B7)
+# ---------------------------------------------------------------------------
+
+#: Scope caption required by Contract E / task B7.
+ML_SCOPE_CAPTION: str = "Forecast universe: SPY (single-asset baseline)"
+
+
+def vol_skill_r2_chart(metrics: pd.DataFrame, symbol: str = "SPY") -> go.Figure:
+    """Grouped bars: OOS R² for the rv_har model vs the persistence/EWMA baseline.
+
+    Baseline R² is always 0 by construction (persistence = the null model), so this
+    chart shows whether the HAR model explains any variance beyond naive persistence.
+    The bar colours use named PALETTE tokens — no inline hex.
+    """
+    m = metrics[(metrics["model"] == "rv_har") & (metrics["symbol"] == symbol)].set_index("metric")[
+        "value"
+    ]
+    oos_r2 = float(m.get("oos_r2", 0.0) or 0.0)
+    # Persistence (the baseline) has R²=0 by definition; we show it explicitly for context.
+    baseline_r2: float = 0.0
+
+    fig = go.Figure()
+    fig.add_bar(
+        x=["HAR model (rv_har)", "Persistence / EWMA baseline"],
+        y=[oos_r2, baseline_r2],
+        marker_color=[PALETTE["accent"], PALETTE["muted"]],
+        name="OOS R²",
+    )
+    fig.add_hline(
+        y=0.10,
+        line_color=PALETTE["up"],
+        line_dash="dot",
+        annotation_text="skill gate (R²≥0.10)",
+        annotation_font_color=PALETTE["up"],
+        annotation_position="top right",
+    )
+    fig.update_yaxes(title_text="Out-of-sample R²")
+    fig.update_layout(
+        title=dict(
+            text=f"{symbol} — HAR vol-model OOS R² vs persistence baseline",
+            font=_TITLE_FONT,
+        ),
+        showlegend=False,
+    )
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=HEIGHT_MEDIUM)
+
+
+def vol_skill_qlike_chart(metrics: pd.DataFrame, symbol: str = "SPY") -> go.Figure:
+    """Grouped bars: model QLIKE vs baseline QLIKE, with the skill-ratio annotated.
+
+    Lower QLIKE is better (it is a proper scoring rule for volatility forecasts).
+    The skill ratio (model / baseline) is annotated; < 0.99 is the go-live threshold.
+    """
+    m = metrics[(metrics["model"] == "rv_har") & (metrics["symbol"] == symbol)].set_index("metric")[
+        "value"
+    ]
+    model_qlike = float(m.get("qlike", float("nan")) or float("nan"))
+    baseline_qlike = float(m.get("baseline_qlike", float("nan")) or float("nan"))
+    skill_ratio = float(m.get("qlike_skill_ratio", float("nan")) or float("nan"))
+
+    ratio_label = f"{skill_ratio:.3f}" if not math.isnan(skill_ratio) else "n/a"
+
+    fig = go.Figure()
+    fig.add_bar(
+        x=["HAR model (rv_har)", "Persistence / EWMA baseline"],
+        y=[
+            model_qlike if not math.isnan(model_qlike) else 0.0,
+            baseline_qlike if not math.isnan(baseline_qlike) else 0.0,
+        ],
+        marker_color=[SERIES_VOL, PALETTE["muted"]],
+        name="QLIKE",
+    )
+    # Annotate the skill ratio on the model bar.
+    fig.add_annotation(
+        x="HAR model (rv_har)",
+        y=model_qlike if not math.isnan(model_qlike) else 0.0,
+        text=f"skill ratio: {ratio_label}",
+        showarrow=False,
+        yshift=12,
+        font=dict(color=PALETTE["text"], size=11),
+    )
+    fig.add_hline(
+        y=baseline_qlike * 0.99 if not math.isnan(baseline_qlike) else 0.0,
+        line_color=PALETTE["up"],
+        line_dash="dot",
+        annotation_text="gate: ratio < 0.99",
+        annotation_font_color=PALETTE["up"],
+        annotation_position="top right",
+    )
+    fig.update_yaxes(title_text="QLIKE (lower = better)")
+    fig.update_layout(
+        title=dict(
+            text=f"{symbol} — vol-model QLIKE vs baseline (skill ratio annotated)",
+            font=_TITLE_FONT,
+        ),
+        showlegend=False,
+    )
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=HEIGHT_MEDIUM)
+
+
+def vol_skill_verdict_text(metrics: pd.DataFrame, symbol: str = "SPY") -> str:
+    """One honest verdict string sourced ONLY from skill_verdict().
+
+    Returns 'beats baseline OOS' language ONLY when cleared=True; otherwise
+    returns an honest 'no demonstrated out-of-sample edge — baseline-only' message.
+    The verdict reflects the go-live gate conditions in Contract E verbatim.
+    """
+    verdict = skill_verdict(metrics, symbol=symbol)
+    if verdict["cleared"]:
+        r2 = verdict["oos_r2"]
+        ratio = verdict["qlike_skill_ratio"]
+        folds_passed = verdict["folds_passed"]
+        n_folds = verdict["n_folds"]
+        return (
+            f"HAR realized-volatility model beats baseline OOS "
+            f"(OOS R²={r2:.3f} ≥ 0.10; QLIKE skill ratio={ratio:.3f} < 0.99; "
+            f"{folds_passed}/{n_folds} folds passed). "
+            f"Forecast universe: SPY (single-asset baseline)."
+        )
+    reasons = "; ".join(verdict["reasons"]) if verdict["reasons"] else "metrics not yet available"
+    return (
+        "HAR realized-volatility model: no demonstrated out-of-sample edge — "
+        f"baseline-only. {reasons}. "
+        "Forecast universe: SPY (single-asset baseline)."
+    )
+
+
+def direction_skill_chart(metrics: pd.DataFrame, symbol: str = "SPY") -> go.Figure:
+    """Paired bars: next-day direction model MAE and directional accuracy vs baseline.
+
+    This is EXPLICITLY LABELLED as an honest secondary — there is no demonstrated
+    short-horizon edge for the direction model (Contract E, demoted status).
+    Both PALETTE named tokens are used; no inline hex.
+    """
+    # Direction rows carry model='random_forest' (or similar); filter broadly on !='rv_har'
+    # so this chart works with whatever direction model name is present.
+    dir_rows = metrics[(metrics["model"] != "rv_har") & (metrics["symbol"] == symbol)]
+    m = dir_rows.set_index("metric")["value"] if not dir_rows.empty else pd.Series(dtype=float)
+
+    mae_model = float(m.get("mae", float("nan")) or float("nan"))
+    mae_base = float(m.get("mae_baseline", float("nan")) or float("nan"))
+    dir_acc = float(m.get("dir_acc", float("nan")) or float("nan"))
+    dir_acc_base = float(m.get("baseline_dir_acc", float("nan")) or float("nan"))
+
+    def _safe(v: float) -> float:
+        return 0.0 if math.isnan(v) else v
+
+    fig = go.Figure()
+    # MAE bars (lower is better — use SERIES_RISK for model to signal caution)
+    fig.add_bar(
+        x=["Model MAE", "Baseline MAE"],
+        y=[_safe(mae_model), _safe(mae_base)],
+        marker_color=[SERIES_RETURN, PALETTE["muted"]],
+        name="MAE",
+        offsetgroup=0,
+    )
+    # Dir-acc bars (higher is better)
+    fig.add_bar(
+        x=["Model dir-acc", "Baseline dir-acc"],
+        y=[_safe(dir_acc), _safe(dir_acc_base)],
+        marker_color=[SERIES_PRICE, PALETTE["muted"]],
+        name="Dir accuracy",
+        offsetgroup=1,
+    )
+    fig.update_layout(
+        title=dict(
+            text=(
+                f"{symbol} — next-day direction model vs baseline "
+                "(honest secondary — no demonstrated short-horizon edge)"
+            ),
+            font=_TITLE_FONT,
+        ),
+        barmode="group",
+    )
+    _apply_axis_fonts(fig)
     return style_fig(fig, height=HEIGHT_MEDIUM)
 
 

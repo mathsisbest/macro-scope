@@ -6,6 +6,7 @@ table raises here. The ML/AI marts (model_metrics/ml_forecast/fct_regime/market_
 exercised too, since `make ci` runs `mmi ml`/`mmi ai` before this smoke.
 """
 
+import pandas as pd
 from dashboard import data
 from dashboard.components import charts
 
@@ -140,5 +141,189 @@ assert {"created_at", "engine", "brief"} <= set(brief.columns), (
     f"marts.market_brief columns drifted: {set(brief.columns)}"
 )
 print(f"ml/ai read-path OK (brief engine: {brief.iloc[0]['engine']}, {len(metrics)} metric rows)")
+
+# ---------------------------------------------------------------------------
+# B7: honest vol-skill chart builders — exercise with both populated and empty
+# model_metrics DataFrames so the builders are proven crash-free in both states.
+# ---------------------------------------------------------------------------
+
+# -- empty-metrics path: builders must return figures / strings without raising
+_empty_metrics = pd.DataFrame(columns=["model", "symbol", "metric", "value", "trained_at"])
+_r2_fig_empty = charts.vol_skill_r2_chart(_empty_metrics, symbol="SPY")
+assert _r2_fig_empty is not None, "vol_skill_r2_chart returned None on empty metrics"
+_qlike_fig_empty = charts.vol_skill_qlike_chart(_empty_metrics, symbol="SPY")
+assert _qlike_fig_empty is not None, "vol_skill_qlike_chart returned None on empty metrics"
+_verdict_empty = charts.vol_skill_verdict_text(_empty_metrics, symbol="SPY")
+assert isinstance(_verdict_empty, str), "vol_skill_verdict_text must return str on empty metrics"
+assert "no demonstrated out-of-sample edge" in _verdict_empty, (
+    "vol_skill_verdict_text must use honest 'no edge' language when metrics are absent"
+)
+_dir_fig_empty = charts.direction_skill_chart(_empty_metrics, symbol="SPY")
+assert _dir_fig_empty is not None, "direction_skill_chart returned None on empty metrics"
+print("vol-skill builders OK (empty-metrics path — honest 'no edge' language verified)")
+
+# -- populated metrics path: exercise with a synthetic not-cleared row set
+_not_cleared_rows = pd.DataFrame(
+    [
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "oos_r2",
+            "value": 0.05,
+            "trained_at": "2026-01-01",
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "qlike",
+            "value": 1.2,
+            "trained_at": "2026-01-01",
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "baseline_qlike",
+            "value": 1.3,
+            "trained_at": "2026-01-01",
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "qlike_skill_ratio",
+            "value": 0.92,
+            "trained_at": "2026-01-01",
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "folds_passed",
+            "value": 2,
+            "trained_at": "2026-01-01",
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "n_folds",
+            "value": 5,
+            "trained_at": "2026-01-01",
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "n_obs",
+            "value": 300,
+            "trained_at": "2026-01-01",
+        },
+        # direction model rows (honest secondary)
+        {
+            "model": "random_forest",
+            "symbol": "SPY",
+            "metric": "dir_acc",
+            "value": 0.52,
+            "trained_at": "2026-01-01",
+        },
+        {
+            "model": "random_forest",
+            "symbol": "SPY",
+            "metric": "baseline_dir_acc",
+            "value": 0.50,
+            "trained_at": "2026-01-01",
+        },
+        {
+            "model": "random_forest",
+            "symbol": "SPY",
+            "metric": "mae",
+            "value": 0.008,
+            "trained_at": "2026-01-01",
+        },
+        {
+            "model": "random_forest",
+            "symbol": "SPY",
+            "metric": "mae_baseline",
+            "value": 0.009,
+            "trained_at": "2026-01-01",
+        },
+    ]
+)
+charts.vol_skill_r2_chart(_not_cleared_rows)
+charts.vol_skill_qlike_chart(_not_cleared_rows)
+_verdict_not_cleared = charts.vol_skill_verdict_text(_not_cleared_rows)
+assert isinstance(_verdict_not_cleared, str)
+# oos_r2=0.05 < 0.10 and folds_passed=2 < ceil(0.6*5)=3 → not cleared
+assert "no demonstrated out-of-sample edge" in _verdict_not_cleared, (
+    f"expected honest 'no edge' language when gate not cleared; got: {_verdict_not_cleared!r}"
+)
+assert "beats baseline" not in _verdict_not_cleared, (
+    "must NOT claim 'beats baseline' when gate not cleared"
+)
+charts.direction_skill_chart(_not_cleared_rows)
+print("vol-skill builders OK (not-cleared metrics path — honest language verified)")
+
+# -- cleared metrics path: OOS R²≥0.10, ratio<0.99, folds_passed≥3
+_cleared_rows = pd.DataFrame(
+    [
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "oos_r2",
+            "value": 0.15,
+            "trained_at": "2026-01-01",
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "qlike",
+            "value": 1.1,
+            "trained_at": "2026-01-01",
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "baseline_qlike",
+            "value": 1.3,
+            "trained_at": "2026-01-01",
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "qlike_skill_ratio",
+            "value": 0.846,
+            "trained_at": "2026-01-01",
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "folds_passed",
+            "value": 4,
+            "trained_at": "2026-01-01",
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "n_folds",
+            "value": 5,
+            "trained_at": "2026-01-01",
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "n_obs",
+            "value": 300,
+            "trained_at": "2026-01-01",
+        },
+    ]
+)
+charts.vol_skill_r2_chart(_cleared_rows)
+charts.vol_skill_qlike_chart(_cleared_rows)
+_verdict_cleared = charts.vol_skill_verdict_text(_cleared_rows)
+assert isinstance(_verdict_cleared, str)
+assert "beats baseline OOS" in _verdict_cleared, (
+    f"expected 'beats baseline OOS' when gate cleared; got: {_verdict_cleared!r}"
+)
+# Verify scope caption is present in cleared verdict
+assert charts.ML_SCOPE_CAPTION in _verdict_cleared or "SPY" in _verdict_cleared, (
+    "cleared verdict must reference the forecast scope / SPY"
+)
+print("vol-skill builders OK (cleared metrics path — 'beats baseline OOS' language verified)")
 
 print(f"dashboard read-path OK ({len(assets)} assets, core marts accessors exercised)")
