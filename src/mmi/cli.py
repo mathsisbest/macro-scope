@@ -209,6 +209,21 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_healthcheck(_: argparse.Namespace) -> int:
+    """Probe every data source for connectivity + key presence.
+
+    Prints a source -> ok | skip(reason) | fail(reason) table.
+    Exits non-zero only if a *required* source FAILs.
+    Does NOT open a DB connection.
+    """
+    from mmi.ingestion import EXTRACTORS
+    from mmi.ingestion.healthcheck import exit_code, format_table, run_healthcheck
+
+    results = run_healthcheck(EXTRACTORS)
+    print(format_table(results))
+    return exit_code(results)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mmi", description="Markets & Macro Intelligence CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -220,6 +235,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("ai", cmd_ai, "Generate GenAI market brief"),
         ("portfolio", cmd_portfolio, "Backtest portfolio strategies -> raw.portfolio_returns"),
         ("snapshot", cmd_snapshot, "Export marts.* to Parquet for the public demo"),
+        ("healthcheck", cmd_healthcheck, "Probe every data source for connectivity + key presence"),
     ]:
         p = sub.add_parser(name, help=help_)
         p.set_defaults(func=fn)

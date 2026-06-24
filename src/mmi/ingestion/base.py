@@ -29,6 +29,8 @@ class Extractor(ABC):
     required_columns: list[str] = []
     #: If True, a failure here fails the whole run; if False, it's a warn-and-continue source.
     required: bool = True
+    #: URL hit by the connectivity probe (no full fetch/parse). Empty string = not configured.
+    probe_url: str = ""
 
     def __init__(self, loader: DuckDBLoader) -> None:
         self.loader = loader
@@ -55,6 +57,20 @@ class Extractor(ABC):
         ``mmi ingest`` exits 0; adding the key later folds the source back in with no code change.
         """
         return None
+
+    def probe(self) -> None:
+        """Lightweight connectivity check for healthcheck.
+
+        Raise on any failure; return None on success.
+        Default: a single GET of probe_url via mmi.utils.http.get_json. Subclasses may override.
+        MUST NOT call self.fetch() or write to the DB.
+        MUST raise if probe_url is empty (no false ok).
+        """
+        from mmi.utils.http import get_json
+
+        if not self.probe_url:
+            raise RuntimeError(f"{self.source}: probe_url is not configured")
+        get_json(self.probe_url)
 
     def run(self) -> int:
         """Execute the full pipeline step with audit logging. Returns rows loaded."""

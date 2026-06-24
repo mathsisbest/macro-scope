@@ -21,6 +21,14 @@ class CoinGeckoExtractor(Extractor):
     # so a failure (rate-limit / network) is non-fatal: the scheduled ingest still exits 0 on the
     # macro/equity core. A key (COINGECKO_API_KEY) only raises the limits; it isn't required.
     required = False
+    probe_url = "https://api.coingecko.com/api/v3/ping"
+
+    def probe(self) -> None:
+        """Probe CoinGecko ping endpoint, sending the API key header iff configured."""
+        headers = (
+            {"x-cg-demo-api-key": settings.coingecko_api_key} if settings.coingecko_api_key else {}
+        )
+        get_json(self.probe_url, headers=headers)
 
     def fetch(self) -> pd.DataFrame:
         ids = load_assets()["crypto"]
