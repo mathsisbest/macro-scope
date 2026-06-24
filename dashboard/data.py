@@ -243,6 +243,20 @@ def is_sample_data() -> bool | None:
     return None  # mixed sample + live
 
 
+def recession_risk() -> pd.DataFrame:
+    """Estrella-Mishkin probit recession-probability time series.
+
+    Returns ``(date, spread_10y_3m, recession_prob, model)`` — one row per date present in the
+    mart. ``model`` is ``'10y_3m'`` when the canonical 10Y–3M spread was available, or
+    ``'10y_2y_proxy'`` when 10Y–2Y was used as a fallback (e.g. synthetic seed data). Returns an
+    empty DataFrame when the mart is not yet built.
+    """
+    return query(
+        "select date, spread_10y_3m, recession_prob, model "
+        "from marts.fct_recession_risk order by date"
+    )
+
+
 def macro_source_caption(is_sample: bool | None) -> str:
     """The honest source caption for the Macro tab, as a function of provenance — `""` when no
     caption should show. Live FRED data earns the FRED attribution; **sample** data must NOT be
