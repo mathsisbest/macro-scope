@@ -43,6 +43,21 @@ SUCCESS: str = PALETTE["up"]  # positive / cleared / passing
 WARN: str = PALETTE["down"]  # warning / failed / at-risk
 INFO: str = PALETTE["accent"]  # informational highlight
 
+# Named series colour tokens — use these instead of PALETTE["series"][<index>] in charts.
+# Ordering mirrors PALETTE["series"] so the rendered colour is stable.
+SERIES_PRICE: str = PALETTE["series"][0]  # #4f9dff — price / accent line
+SERIES_RETURN: str = PALETTE["series"][1]  # #27c08a — return / crypto / positive series
+SERIES_VOL: str = PALETTE["series"][2]  # #ffb454 — volatility / amber
+SERIES_YIELD: str = PALETTE["series"][3]  # #c678dd — yield-curve / macro / purple
+SERIES_RISK: str = PALETTE["series"][4]  # #ff5d6c — risk / drawdown / danger
+SERIES_ALT: str = PALETTE["series"][5]  # #56b6c2 — alternative / teal
+
+# Chart height scale — consistent height buckets for all figures.
+HEIGHT_TALL: int = 400  # full-width hero charts
+HEIGHT_DEFAULT: int = 360  # standard figure (matches style_fig default)
+HEIGHT_MEDIUM: int = 320  # secondary / paired charts
+HEIGHT_SHORT: int = 260  # sparkline / compact supplementary
+
 # Typography
 TITLE_SIZE: int = 18  # px — section / card titles
 BODY_SIZE: int = 13  # px — body copy (matches style_fig font size)
