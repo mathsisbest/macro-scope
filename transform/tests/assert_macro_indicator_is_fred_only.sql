@@ -6,4 +6,4 @@
 -- Passes when zero rows are returned.
 select distinct series_id
 from {{ ref('fct_macro_indicator') }}
-where series_id not in ('CPIAUCSL', 'UNRATE', 'DGS10', 'DGS2', 'FEDFUNDS')
+where series_id not in ('CPIAUCSL', 'UNRATE', 'DGS10', 'DGS2', 'DGS3MO', 'FEDFUNDS')

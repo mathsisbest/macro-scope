@@ -32,6 +32,7 @@ macro:             # FRED series ids
   - { id: UNRATE,   label: "US Unemployment Rate" }
   - { id: DGS10,    label: "US 10Y Treasury Yield" }
   - { id: DGS2,     label: "US 2Y Treasury Yield" }
+  - { id: DGS3MO,   label: "US 3-Month Treasury Yield" }
   - { id: FEDFUNDS, label: "Effective Fed Funds Rate" }
 
 worldbank:         # World Bank indicator codes (global context)
