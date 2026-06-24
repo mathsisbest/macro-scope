@@ -2,10 +2,12 @@
 data source. Exporting the whole schema means new marts are picked up automatically.
 
 Also covers the MMI_PORTFOLIO_N_BOOT env knob wired into cmd_portfolio (task D1).
+Also covers manifest writing, per-file atomicity, and daily-cron preservation invariant (task D7).
 """
 
 import argparse
 import contextlib
+import json
 import os
 from unittest.mock import MagicMock, patch
 
@@ -222,3 +224,225 @@ def test_portfolio_nboot_knob_non_positive_falls_back_to_2000(monkeypatch, tmp_p
     assert captured.get("n_boot_btc") == 2000, (
         f"Expected fallback n_boot=2000 for {bad_value!r}, got {captured.get('n_boot_btc')}"
     )
+
+
+# ---------------------------------------------------------------------------
+# D7 — manifest, atomicity, preservation invariant
+# ---------------------------------------------------------------------------
+
+
+def _marts_db_full(path) -> None:
+    """Seed a DB with FULL marts (including portfolio + market_brief tables)."""
+    con = duckdb.connect(str(path))
+    con.execute("create schema if not exists marts")
+    con.execute(
+        "create table marts.dim_asset as "
+        "select * from (values ('SPY', 'equities'), ('BTC', 'crypto')) t(symbol, asset_class)"
+    )
+    con.execute(
+        "create table marts.fct_portfolio_returns as select * from (values "
+        "('ex_btc_2002', 'equal_weight', DATE '2020-01-01', 0.01)) "
+        "t(window_id, strategy, date, daily_return)"
+    )
+    con.execute(
+        "create table marts.market_brief as select * from (values "
+        "(TIMESTAMPTZ '2020-01-01 00:00:00+00', 'offline', 'brief text')) "
+        "t(created_at, engine, brief)"
+    )
+    con.close()
+
+
+def _marts_db_daily(path) -> None:
+    """Seed a DB with only the cheap daily marts (NO portfolio or market_brief tables)."""
+    con = duckdb.connect(str(path))
+    con.execute("create schema if not exists marts")
+    con.execute(
+        "create table marts.dim_asset as "
+        "select * from (values ('SPY', 'equities'), ('BTC', 'crypto'), ('GLD', 'commodities')) "
+        "t(symbol, asset_class)"
+    )
+    con.execute(
+        "create table marts.fct_asset_daily as select * from (values "
+        "('SPY', DATE '2020-01-02', 0.002, 'equities')) "
+        "t(symbol, date, daily_return, asset_class)"
+    )
+    con.close()
+
+
+def test_snapshot_writes_manifest_json(monkeypatch, tmp_path):
+    """cmd_snapshot writes _manifest.json with exported table names + row counts."""
+    db = tmp_path / "m.duckdb"
+    _marts_db(db)
+    out = tmp_path / "public"
+    monkeypatch.setattr(settings_mod.settings, "snapshot_dir", out)
+    monkeypatch.setattr(cli, "connect", _connect_to(db))
+
+    assert cli.cmd_snapshot(argparse.Namespace()) == 0
+
+    manifest_path = out / "_manifest.json"
+    assert manifest_path.exists(), "_manifest.json must be written"
+    manifest = json.loads(manifest_path.read_text())
+
+    # All exported tables appear in the manifest.
+    assert set(manifest["tables"].keys()) == {"dim_asset", "fct_portfolio_returns"}
+    assert manifest["tables"]["dim_asset"]["rows"] == 2
+    assert manifest["tables"]["fct_portfolio_returns"]["rows"] == 1
+    # generated_at must be a parseable ISO timestamp with timezone info.
+    from datetime import datetime
+
+    dt = datetime.fromisoformat(manifest["generated_at"])
+    assert dt.tzinfo is not None, "generated_at must be timezone-aware"
+
+
+def test_snapshot_atomicity_mid_export_failure_leaves_good_parquet_intact(monkeypatch, tmp_path):
+    """A failure during a second table's export must NOT corrupt the first table's parquet.
+
+    We pre-seed a known-good dim_asset.parquet in the output dir, then cause DuckDB's COPY
+    to fail for fct_portfolio_returns.  After the exception, dim_asset.parquet must be
+    byte-identical to the pre-seeded file (atomicity preserved it).
+    """
+    db = tmp_path / "m.duckdb"
+    _marts_db(db)
+    out = tmp_path / "public"
+    out.mkdir()
+    monkeypatch.setattr(settings_mod.settings, "snapshot_dir", out)
+
+    # Pre-seed the known-good dim_asset.parquet.
+    with duckdb.connect(str(db), read_only=True) as con_pre:
+        con_pre.execute(f"copy marts.dim_asset to '{out / 'dim_asset.parquet'}' (format parquet)")
+
+    good_bytes = (out / "dim_asset.parquet").read_bytes()
+
+    # Patch connect so we get the real DB, but intercept the COPY for portfolio_returns
+    # by wrapping DuckDB's execute call.
+    original_connect = duckdb.connect
+
+    class _FailingCon:
+        """Wraps a real DuckDB connection; raises on the portfolio_returns COPY."""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def execute(self, sql, *a, **k):
+            if "fct_portfolio_returns" in sql and "copy" in sql.lower():
+                raise RuntimeError("simulated mid-export failure")
+            return self._inner.execute(sql, *a, **k)
+
+        def fetchall(self):
+            return self._inner.fetchall()
+
+        def __enter__(self):
+            self._inner.__enter__()
+            return self
+
+        def __exit__(self, *exc):
+            return self._inner.__exit__(*exc)
+
+    def _patched_connect(path=None, read_only=False, **k):
+        inner = original_connect(str(db), read_only=read_only)
+        return _FailingCon(inner)
+
+    monkeypatch.setattr(cli, "connect", _patched_connect)
+
+    with pytest.raises(RuntimeError, match="simulated mid-export failure"):
+        cli.cmd_snapshot(argparse.Namespace())
+
+    # The pre-seeded dim_asset.parquet must be byte-identical (not replaced by a partial write).
+    assert (out / "dim_asset.parquet").read_bytes() == good_bytes, (
+        "dim_asset.parquet was corrupted by the failed mid-export"
+    )
+    # No stray temp files should remain.
+    assert not list(out.glob("*.tmp")), "temp files must be cleaned up on failure"
+
+
+def test_snapshot_manifest_write_is_atomic(monkeypatch, tmp_path):
+    """The manifest is written atomically too, not just the parquets.
+
+    A failure during the manifest's atomic rename must leave any pre-existing
+    _manifest.json byte-identical (never truncated/clobbered) and clean up the
+    temp file — mirroring the per-parquet atomicity guarantee.
+    """
+    db = tmp_path / "m.duckdb"
+    _marts_db(db)
+    out = tmp_path / "public"
+    out.mkdir()
+    monkeypatch.setattr(settings_mod.settings, "snapshot_dir", out)
+    monkeypatch.setattr(cli, "connect", _connect_to(db))
+
+    # Pre-seed a known-good manifest; it must survive a failed re-write.
+    prior = out / "_manifest.json"
+    prior_text = '{"tables": {"OLD": {"rows": 7}}, "generated_at": "2020-01-01T00:00:00+00:00"}'
+    prior.write_text(prior_text)
+
+    real_replace = os.replace
+
+    def failing_replace(src, dst):
+        # Let the parquet renames succeed; fail only the manifest's atomic rename.
+        if str(dst).endswith("_manifest.json"):
+            raise RuntimeError("simulated manifest rename failure")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+
+    with pytest.raises(RuntimeError, match="simulated manifest rename failure"):
+        cli.cmd_snapshot(argparse.Namespace())
+
+    # The pre-existing manifest must be byte-identical (atomic rename never clobbered it).
+    assert prior.read_text() == prior_text, (
+        "pre-existing _manifest.json must be preserved on failure"
+    )
+    # The manifest temp file must be cleaned up.
+    assert not list(out.glob("_manifest_*.json.tmp")), (
+        "manifest temp files must be cleaned up on failure"
+    )
+
+
+def test_snapshot_preservation_invariant(monkeypatch, tmp_path):
+    """Daily-cron preservation invariant:
+
+    1.  Snapshot a FULL marts set (dim_asset + fct_portfolio_returns + market_brief).
+    2.  Drop portfolio + market_brief tables from the DB (simulating a daily-cron-only run).
+    3.  Re-run mmi snapshot into the SAME output directory.
+    4.  Assert:
+        - fct_portfolio_returns.parquet and market_brief.parquet are BYTE-IDENTICAL (preserved).
+        - dim_asset.parquet content reflects the new run (NOT identical — we change the row count).
+    """
+    db = tmp_path / "m.duckdb"
+    _marts_db_full(db)
+    out = tmp_path / "public"
+    monkeypatch.setattr(settings_mod.settings, "snapshot_dir", out)
+    monkeypatch.setattr(cli, "connect", _connect_to(db))
+
+    # STEP 1: Full snapshot.
+    assert cli.cmd_snapshot(argparse.Namespace()) == 0
+    portfolio_bytes = (out / "fct_portfolio_returns.parquet").read_bytes()
+    brief_bytes = (out / "market_brief.parquet").read_bytes()
+
+    # STEP 2: Drop portfolio + market_brief from the DB, add a new row to dim_asset.
+    with duckdb.connect(str(db)) as con:
+        con.execute("drop table marts.fct_portfolio_returns")
+        con.execute("drop table marts.market_brief")
+        # Modify dim_asset so its parquet will differ.
+        con.execute("insert into marts.dim_asset values ('TLT', 'bonds')")
+
+    # STEP 3: Re-run snapshot (daily-cron simulation: only dim_asset in DB now).
+    assert cli.cmd_snapshot(argparse.Namespace()) == 0
+
+    # STEP 4: Preservation + refresh assertions.
+    assert (out / "fct_portfolio_returns.parquet").read_bytes() == portfolio_bytes, (
+        "fct_portfolio_returns.parquet must be preserved (not overwritten) on daily re-run"
+    )
+    assert (out / "market_brief.parquet").read_bytes() == brief_bytes, (
+        "market_brief.parquet must be preserved (not overwritten) on daily re-run"
+    )
+    # dim_asset was in the DB for both runs; its parquet must reflect the new row.
+    with duckdb.connect() as rt:
+        n = rt.execute(f"select count(*) from '{out / 'dim_asset.parquet'}'").fetchone()[0]
+    assert n == 3, f"dim_asset.parquet should have 3 rows after re-run, got {n}"
+
+    # Manifest must list only the tables exported in this second run.
+    manifest = json.loads((out / "_manifest.json").read_text())
+    assert "dim_asset" in manifest["tables"]
+    # Portfolio and brief tables were NOT in the DB this run, so not in the manifest.
+    assert "fct_portfolio_returns" not in manifest["tables"]
+    assert "market_brief" not in manifest["tables"]

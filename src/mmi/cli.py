@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
 import traceback
 from typing import TYPE_CHECKING
@@ -141,7 +142,22 @@ def cmd_snapshot(_: argparse.Namespace) -> int:
     The public dashboard reads this static, secret-free snapshot (no hosted DB, no MotherDuck
     token). Exporting the WHOLE marts schema means any new mart is included automatically — no
     hand-maintained table list to drift.
+
+    Atomicity: each parquet is written to a temp file then renamed, so a mid-export failure
+    cannot leave a half-written parquet in place of a previously-good one.
+
+    Preservation: if a parquet already exists in the output directory and is NOT in the current
+    marts schema (e.g. portfolio/market_brief tables absent from a daily-cron-only run), the
+    existing file is left byte-identical.  Only tables present in the DB are exported.
+
+    Manifest: after a successful export, writes data/public/_manifest.json with the list of
+    exported tables, per-table row counts, and a generated_at timestamp.
     """
+    import json
+    import os
+    import tempfile
+    from datetime import datetime, timezone
+
     from mmi.settings import settings
 
     out_dir = settings.snapshot_dir
@@ -157,9 +173,43 @@ def cmd_snapshot(_: argparse.Namespace) -> int:
         if not tables:
             log.warning("snapshot: no marts tables to export — run the pipeline first")
             return 0
+
+        manifest: dict = {"tables": {}, "generated_at": ""}
         for table in tables:
-            path = out_dir / f"{table}.parquet"
-            con.execute(f"copy marts.\"{table}\" to '{path}' (format parquet)")
+            dest = out_dir / f"{table}.parquet"
+            # Write to a temp file in the same directory, then atomically rename.
+            # Same-directory temp ensures the rename is on the same filesystem.
+            fd, tmp_path = tempfile.mkstemp(dir=out_dir, prefix=f"_{table}_", suffix=".parquet.tmp")
+            try:
+                os.close(fd)  # DuckDB opens by path; release the fd first.
+                con.execute(f"copy marts.\"{table}\" to '{tmp_path}' (format parquet)")
+                os.replace(tmp_path, dest)  # atomic on POSIX; on Windows may raise on open handles
+            except Exception:
+                # Clean up the temp file; leave any pre-existing dest untouched (preservation).
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp_path)
+                raise
+
+            # Collect row count for manifest.
+            row = con.execute(f'select count(*) from marts."{table}"').fetchone()
+            manifest["tables"][table] = {"rows": row[0] if row else 0}
+
+    manifest["generated_at"] = datetime.now(timezone.utc).isoformat()
+    manifest_path = out_dir / "_manifest.json"
+    # Write the manifest atomically too (mirror the per-parquet pattern): a crash
+    # mid-write must never leave a truncated/invalid _manifest.json. Serialise to a
+    # temp file in the same dir, then atomically rename; a pre-existing manifest is
+    # left intact if anything fails.
+    fd, tmp_manifest = tempfile.mkstemp(dir=out_dir, prefix="_manifest_", suffix=".json.tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(manifest, fh, indent=2)
+        os.replace(tmp_manifest, manifest_path)
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_manifest)
+        raise
+
     log.info("snapshot: exported %d marts tables to %s", len(tables), out_dir)
     return 0
 
