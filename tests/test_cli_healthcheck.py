@@ -250,12 +250,12 @@ def test_format_table_contains_all_sources():
     results = [
         ProbeResult(source="fred", status="ok", required=True),
         ProbeResult(source="yahoo", status="skip", required=True, detail="no key"),
-        ProbeResult(source="coingecko", status="fail", required=False, detail="err"),
+        ProbeResult(source="worldbank", status="fail", required=False, detail="err"),
     ]
     table = format_table(results)
     assert "fred" in table
     assert "yahoo" in table
-    assert "coingecko" in table
+    assert "worldbank" in table
     assert "ok" in table
     assert "skip" in table
     assert "fail" in table

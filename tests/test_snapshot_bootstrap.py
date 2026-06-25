@@ -34,7 +34,6 @@ REQUIRED_MARTS = [
     # Core markets
     "dim_asset",
     "fct_asset_daily",
-    "fct_crypto_intraday",
     "fct_macro_indicator",
     "fct_market_macro",
     "fct_regime",
@@ -110,7 +109,6 @@ MART_REQUIRED_COLUMNS: dict[str, set[str]] = {
         "high",
         "low",
     },
-    "fct_crypto_intraday": {"ts", "price_usd", "pct_change", "symbol"},
     "fct_macro_indicator": {"date", "value", "change", "series_id"},
     "fct_market_macro": {"date"},
     "fct_regime": {"date", "vol_20d", "regime"},

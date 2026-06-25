@@ -53,9 +53,8 @@ available for an optional local run, but it isn't required.)
 
 | Source | Data | Tier |
 |---|---|---|
-| [Yahoo Finance](https://finance.yahoo.com/) (`yfinance`) | Equities & ETF daily OHLCV (SPY, TLT, GLD, QQQ, EFA, TIP, IWM) | Free, no key |
+| [Yahoo Finance](https://finance.yahoo.com/) (`yfinance`) | Equities, ETF, FX & BTC (BTC-USD) daily OHLCV | Free, no key |
 | [FRED](https://fred.stlouisfed.org/) (St Louis Fed) | Macro series: DGS10, DGS2, DGS3MO, CPIAUCSL, UNRATE, FEDFUNDS, T10YIE, BAMLH0A0HYM2 | Free, key required |
-| [CoinGecko](https://www.coingecko.com/) | Bitcoin daily price/volume | Free tier, key optional |
 | [World Bank](https://data.worldbank.org/) | GDP growth, current-account balance | Free, no key |
 
 ---
@@ -75,7 +74,7 @@ free APIs ──> ingestion (DE) ──> DuckDB raw ──> dbt (AE) ──> mar
 
 - **Streaming, for free:** GitHub Actions cron does scheduled, incremental, idempotent
   micro-batch ingestion (the realistic, free-tier way to "stream").
-- **Sources:** Yahoo Finance (equities), CoinGecko (crypto), FRED (macro), World Bank (macro).
+- **Sources:** Yahoo Finance (equities, FX, BTC daily), FRED (macro), World Bank (macro).
 - **Everything in code:** charts, theme and layout are defined in Python — no Power BI/Tableau.
 
 ## Quickstart (runs with generated sample data, no API keys)
@@ -90,7 +89,7 @@ make demo
 # open http://localhost:8501
 ```
 
-Want live data? Copy `.env.example` → `.env`, add free API keys (FRED, CoinGecko, an LLM key),
+Want live data? Copy `.env.example` → `.env`, add free API keys (FRED, an LLM key),
 then:
 
 ```bash

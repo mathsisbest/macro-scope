@@ -116,7 +116,6 @@ secrets (all optional — without them the keyless core still runs and `mmi inge
 | Secret name | Purpose | Required? |
 |---|---|---|
 | `FRED_API_KEY` | Real macro data (FRED) | Recommended |
-| `COINGECKO_API_KEY` | Real crypto prices | Optional |
 | `GEMINI_API_KEY` | AI brief (else deterministic offline template) | Optional |
 
 The job already has `contents: write` permission to push the snapshot commit. If `main` has

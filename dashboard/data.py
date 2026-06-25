@@ -185,19 +185,6 @@ def portfolio_btc_effect() -> pd.DataFrame:
     )
 
 
-def crypto_intraday(symbol: str) -> pd.DataFrame:
-    return query(
-        "select ts, price_usd, pct_change from marts.fct_crypto_intraday "
-        "where symbol = ? order by ts",
-        (symbol,),
-    )
-
-
-def crypto_symbols() -> list[str]:
-    df = query("select distinct symbol from marts.fct_crypto_intraday order by symbol")
-    return df["symbol"].tolist() if not df.empty else []
-
-
 def macro_ids() -> list[str]:
     df = query("select distinct series_id from marts.fct_macro_indicator order by series_id")
     return df["series_id"].tolist() if not df.empty else []

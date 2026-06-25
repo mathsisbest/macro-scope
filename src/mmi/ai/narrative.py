@@ -172,19 +172,13 @@ def gather_facts(con) -> FactsDict:
     else:
         facts["data_date"] = facts["as_of"][:10]
 
+    # Crypto = BTC daily via Yahoo (marts.fct_asset_daily). The latest close + its daily return,
+    # shaped with the same record keys (symbol/last_price/chg_24h) the template expects.
     crypto = _q(
         con,
-        """
-        with ranked as (
-            select symbol, ts, price_usd,
-                   row_number() over (partition by symbol order by ts desc) rn
-            from marts.fct_crypto_intraday
-        )
-        select a.symbol, a.price_usd as last_price,
-               a.price_usd / b.price_usd - 1 as chg_24h
-        from ranked a join ranked b on a.symbol = b.symbol and b.rn = 25
-        where a.rn = 1
-        """,
+        "select symbol, close as last_price, daily_return as chg_24h "
+        "from marts.fct_asset_daily "
+        "where asset_class = 'crypto' and symbol = 'BTC' order by date desc limit 1",
     )
     if not crypto.empty:
         facts["crypto"] = crypto.to_dict("records")
@@ -321,9 +315,8 @@ def _offline_brief(facts: FactsDict, note: str = "no LLM key set") -> str:
         "",
     ]
     for c in facts.get("crypto", []):
-        lines.append(
-            f"- {c['symbol'].title()}: ${c['last_price']:,.0f} ({c['chg_24h'] * 100:+.1f}% 24h)"
-        )
+        chg = (c.get("chg_24h") or 0) * 100
+        lines.append(f"- {c['symbol'].title()}: ${c['last_price']:,.0f} ({chg:+.1f}% 1d)")
     if "spy" in facts:
         s = facts["spy"]
         ret = (s.get("daily_return") or 0) * 100

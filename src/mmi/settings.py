@@ -43,7 +43,6 @@ class Settings(BaseSettings):
 
     # Data source keys
     fred_api_key: str = Field(default="", alias="FRED_API_KEY")
-    coingecko_api_key: str = Field(default="", alias="COINGECKO_API_KEY")
     odds_api_key: str = Field(default="", alias="ODDS_API_KEY")
 
     # GenAI layer

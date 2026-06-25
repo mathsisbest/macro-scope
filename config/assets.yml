@@ -1,11 +1,6 @@
 # Declarative list of what the platform tracks.
 # Edit this file to change coverage — no code changes needed.
 
-crypto:            # CoinGecko ids
-  - bitcoin
-  - ethereum
-  - solana
-
 equities:          # Broad-market ETFs ONLY — deliberately no single names. Keeps the portfolio
                    # an asset-CLASS allocation story and avoids double-counting a factor (e.g. tech
                    # beta loaded by SPY + QQQ + individual mega-caps) in the covariance solvers.
@@ -24,8 +19,8 @@ fx:                # Yahoo FX pairs (fetched as e.g. EURUSD=X)
   - EURUSD
   - GBPUSD
 
-crypto_daily:      # Yahoo daily crypto — long history for the portfolio backtest (distinct from
-  - BTC-USD        # the CoinGecko intraday path). BTC-USD lands as symbol 'BTC', asset_class 'crypto'.
+crypto_daily:      # Yahoo daily crypto — the ONLY crypto path; long history for the portfolio
+  - BTC-USD        # backtest. BTC-USD lands as symbol 'BTC', asset_class 'crypto'.
 
 macro:             # FRED series ids
   - { id: CPIAUCSL, label: "US CPI (all items)" }
