@@ -20,21 +20,20 @@ import streamlit as st
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
-from dashboard.snapshot_boot import resolve_snapshot_mode  # noqa: E402
+from dashboard.snapshot_boot import configure_dashboard_env  # noqa: E402
 
 # Make config visible to pydantic-settings (which reads env vars) BEFORE the settings singleton
 # is built below. Streamlit Community Cloud exposes secrets via st.secrets and does not reliably
 # promote them to env vars, so bridge any scalar secret into the environment first (real env vars
-# win via setdefault). Then default to the committed Parquet snapshot when there's no live DB to
-# read — this is what makes the public app zero-config ("no secrets required").
+# win via setdefault).
 with contextlib.suppress(Exception):  # no secrets.toml in local dev — that's fine
     for _k, _v in st.secrets.items():
         if isinstance(_v, (str, int, float, bool)):
             os.environ.setdefault(_k, str(_v))
 
-_snapshot_mode = resolve_snapshot_mode(os.environ, _REPO_ROOT)
-if _snapshot_mode is not None:
-    os.environ["MMI_SNAPSHOT_MODE"] = _snapshot_mode
+# Pin the committed-snapshot dir to this checkout and default to snapshot mode when there's no
+# live DB — makes the public app zero-config and correct even on a non-editable package install.
+configure_dashboard_env(os.environ, _REPO_ROOT)
 
 from dashboard import data  # noqa: E402
 from dashboard.components import charts  # noqa: E402

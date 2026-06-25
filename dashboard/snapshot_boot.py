@@ -11,8 +11,28 @@ without import side effects.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from pathlib import Path
+
+
+def configure_dashboard_env(environ: MutableMapping[str, str], repo_root: Path) -> None:
+    """Prepare ``environ`` so the settings singleton (built right after) reads the committed
+    snapshot from *this* repo checkout. Call from the dashboard entrypoint before importing
+    ``mmi.settings``. Two fixes for the public Streamlit Cloud deploy, both no-ops when the
+    operator has set the value explicitly:
+
+    1. **Pin ``MMI_SNAPSHOT_DIR``** to ``<repo>/data/public``. Cloud installs the package
+       non-editably (``requirements.txt`` is ``.[dashboard]``), so ``settings``' default
+       ``snapshot_dir`` is rooted at the *package* install location (site-packages), not the repo
+       — ``db_exists()`` would then look for ``data/public`` in the wrong place. ``app.py`` always
+       lives in the real checkout, so it can point settings at the right directory.
+    2. **Default ``MMI_SNAPSHOT_MODE`` on** when there's no live DB to read but the snapshot
+       exists (see ``resolve_snapshot_mode``).
+    """
+    environ.setdefault("MMI_SNAPSHOT_DIR", str(repo_root / "data" / "public"))
+    mode = resolve_snapshot_mode(environ, repo_root)
+    if mode is not None:
+        environ["MMI_SNAPSHOT_MODE"] = mode
 
 
 def resolve_snapshot_mode(environ: Mapping[str, str], repo_root: Path) -> str | None:
