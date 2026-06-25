@@ -31,18 +31,21 @@ A **zero-cost, code-first** data platform that streams live markets + macro data
 The deployed app runs entirely from **committed Parquet snapshots** — no MotherDuck token, no API
 keys, no live database connection. The pipeline works as follows:
 
-1. A daily GitHub Actions cron (`ingest.yml`) pulls prices, macro, and crypto from free-tier APIs
-   into an **ephemeral local DuckDB**, runs `dbt build`, and calls `mmi snapshot` to export every
-   mart to `data/public/*.parquet`.
+1. Two GitHub Actions cron schedules (`ingest.yml`) pull prices, macro, and crypto from free-tier
+   APIs into an **ephemeral local DuckDB**, run `dbt build`, and call `mmi snapshot` to export the
+   marts to `data/public/*.parquet`. A **daily** run does the cheap refresh (prices/macro/crypto/ML);
+   a **weekly** run additionally runs the heavy portfolio backtest + the GenAI brief.
 2. The Action commits the Parquet files back to the repo. Streamlit Community Cloud detects the
    push and auto-redeploys.
 3. The public Streamlit app starts with `MMI_SNAPSHOT_MODE=1`, opens the committed Parquet files
    in-process, and never touches a network connection — no MotherDuck, no API secrets required at
    serve time.
 
-The heavy portfolio backtest (24 years × 3 windows × MVO + bootstrap) is too slow for a
-60-minute Actions run, so it is run **locally** by the owner via `make refresh-full` and its
-output committed directly. The daily cron preserves but never regenerates those files.
+Because this is a **public** repo, GitHub Actions gives free unlimited minutes and a 6-hour job cap,
+so even the heavy portfolio backtest (24 years × 3 windows × MVO + bootstrap, `n_boot=2000`) runs in
+the **weekly** Actions job — no laptop, no local data. The **daily** run is cheap (~3–5 min) and
+preserves the committed portfolio + brief Parquet between weekly runs. (`make refresh-full` remains
+available for an optional local run, but it isn't required.)
 
 ---
 
