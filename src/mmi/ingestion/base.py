@@ -21,7 +21,7 @@ class Extractor(ABC):
 
     #: Human-readable source name (used in logs + audit).
     source: str = "base"
-    #: Fully-qualified raw table, e.g. ``raw.crypto_prices``.
+    #: Fully-qualified raw table, e.g. ``raw.asset_prices``.
     table: str = "raw.unknown"
     #: Natural key columns used for idempotent upserts.
     keys: list[str] = []

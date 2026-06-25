@@ -112,23 +112,6 @@ def vol_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
     return style_fig(fig, height=HEIGHT_SHORT)
 
 
-def crypto_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
-    fig = go.Figure()
-    fig.add_scatter(
-        x=df["ts"],
-        y=df["price_usd"],
-        name=symbol,
-        line=dict(color=SERIES_RETURN),
-    )
-    fig.update_layout(
-        title=dict(text=f"{symbol.title()} — intraday price (USD)", font=_TITLE_FONT),
-    )
-    _apply_axis_fonts(fig)
-    if not df.empty and "price_usd" in df.columns:
-        _guard_yrange(fig, df["price_usd"])
-    return style_fig(fig, height=HEIGHT_DEFAULT)
-
-
 # ---------------------------------------------------------------------------
 # Macro tab
 # ---------------------------------------------------------------------------

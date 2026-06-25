@@ -16,9 +16,7 @@ _SQL = [
     # dim_asset -------------------------------------------------------------
     """
     CREATE OR REPLACE TABLE marts.dim_asset AS
-    SELECT DISTINCT symbol, asset_class FROM raw.asset_prices
-    UNION
-    SELECT DISTINCT symbol, 'crypto' AS asset_class FROM raw.crypto_prices;
+    SELECT DISTINCT symbol, asset_class FROM raw.asset_prices;
     """,
     # fct_asset_daily: returns + rolling vol + moving average -----------------
     """
@@ -39,13 +37,6 @@ _SQL = [
             PARTITION BY symbol ORDER BY date ROWS BETWEEN 49 PRECEDING AND CURRENT ROW
         ) AS ma_50
     FROM ret;
-    """,
-    # fct_crypto_intraday -----------------------------------------------------
-    """
-    CREATE OR REPLACE TABLE marts.fct_crypto_intraday AS
-    SELECT symbol, ts, price_usd, market_cap, volume_24h,
-        price_usd / LAG(price_usd) OVER (PARTITION BY symbol ORDER BY ts) - 1 AS pct_change
-    FROM raw.crypto_prices;
     """,
     # fct_macro_indicator -----------------------------------------------------
     """

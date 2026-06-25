@@ -27,11 +27,11 @@
 #   MMI_PORTFOLIO_N_BOOT  — bootstrap resamples for portfolio (default: 2000)
 #                           Set to a low value by refresh-full-fast (NOT for committing)
 #   MMI_DUCKDB_PATH       — path to local DuckDB file (default: data/mmi.duckdb)
-#   All standard mmi env vars (FRED_API_KEY, COINGECKO_API_KEY, GEMINI_API_KEY, etc.)
+#   All standard mmi env vars (FRED_API_KEY, GEMINI_API_KEY, etc.)
 #   are read from the environment / .env — this script does NOT source .env automatically.
 #
 # Dry-run note (ml-gate STRICT):
-#   When run against keyless / sample data (no FRED_API_KEY / COINGECKO_API_KEY),
+#   When run against keyless / sample data (no FRED_API_KEY),
 #   the HAR realized-vol model will train on synthetic data and is very unlikely to
 #   clear the skill gate (oos_r2 >= 0.10 AND qlike_skill_ratio < 0.99 AND
 #   folds_passed >= ceil(0.6*n_folds)). In that case `mmi ml-gate` exits non-zero

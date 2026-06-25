@@ -56,8 +56,8 @@ class YahooChartExtractor(Extractor):
     def _fetch_one(self, symbol: str, kind: str) -> pd.DataFrame:
         yahoo_symbol = f"{symbol}=X" if kind == "fx" else symbol
         # crypto_daily holds Yahoo crypto tickers (e.g. BTC-USD); store them as a clean symbol
-        # ('BTC') under asset_class 'crypto' so they join the daily price path, kept distinct from
-        # the CoinGecko intraday rows ('bitcoin') that stg_crypto_prices stamps as 'crypto' too.
+        # ('BTC') under asset_class 'crypto' so they join the daily price path. This is the only
+        # crypto source — BTC daily via Yahoo.
         stored_symbol = symbol.split("-")[0] if kind == "crypto_daily" else symbol
         asset_class = "crypto" if kind == "crypto_daily" else kind
         # Use explicit period1/period2 (not range=max, which silently coarsens to monthly bars)

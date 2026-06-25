@@ -159,14 +159,6 @@ def test_fred_skips_only_when_unkeyed(monkeypatch):
     assert fred_mod.FredExtractor(loader=None).skip_reason() is None
 
 
-def test_coingecko_is_optional_so_a_keyless_run_stays_green():
-    """CoinGecko works keyless but is non-fatal, so a scheduled ingest can't fail on it."""
-    from mmi.ingestion.coingecko import CoinGeckoExtractor
-
-    assert CoinGeckoExtractor.required is False
-    assert CoinGeckoExtractor(loader=None).skip_reason() is None  # never skips: it works keyless
-
-
 # ---------------------------------------------------------------------------
 # G1 — base.run() audit-mask fix (#50 item 2)
 # ---------------------------------------------------------------------------

@@ -27,8 +27,6 @@ for sym in assets[assets["asset_class"] != "crypto"]["symbol"].tolist()[:3]:
     data.asset_daily(sym)
 for mid in data.macro_ids():
     data.macro(mid)
-for sym in data.crypto_symbols():
-    data.crypto_intraday(sym)
 
 # Portfolio read-path + chart/summary builders (the backtest mart may be absent on a partial run).
 # Phase D: drive every portfolio accessor through one selected window (the dashboard's choke point).

@@ -166,7 +166,7 @@ def test_wcag_aa_series_palette_contrast(series_idx: int) -> None:
     """Every categorical series colour must achieve WCAG AA for normal text (≥ 4.5:1).
 
     series[0] == accent and is already covered by test_wcag_aa_normal_text_contrast;
-    series[1..5] are rendered as lines/markers in crypto_chart, vol_chart,
+    series[1..5] are rendered as lines/markers in price_chart, vol_chart,
     yield_curve_chart, ml_gate_chart and regime_sharpe_chart. style_fig() gives every
     figure a transparent plot/paper background, so the effective backdrop is the app
     background (PALETTE['bg']), not the metric-card panel — hence we test against 'bg'.

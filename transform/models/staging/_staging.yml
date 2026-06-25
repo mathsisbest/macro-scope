@@ -1,13 +1,6 @@
 version: 2
 
 models:
-  - name: stg_crypto_prices
-    description: "Typed, cleaned crypto snapshots."
-    columns:
-      - name: symbol
-        tests: [not_null]
-      - name: price_usd
-        tests: [not_null]
   - name: stg_asset_prices
     description: "Typed daily OHLCV per asset."
     columns:

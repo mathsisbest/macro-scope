@@ -21,14 +21,6 @@ models:
       - name: daily_return
         description: "Simple daily return; sanity-bounded by a singular test."
 
-  - name: fct_crypto_intraday
-    description: "Crypto snapshots with snapshot-over-snapshot pct change."
-    columns:
-      - name: symbol
-        tests: [not_null]
-      - name: ts
-        tests: [not_null]
-
   - name: fct_macro_indicator
     description: "Macro series values with period-over-period change."
     columns:

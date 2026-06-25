@@ -18,7 +18,6 @@ _STAGING_NEEDS = {
         "volume",
         "source",
     },
-    "raw.crypto_prices": {"symbol", "ts", "price_usd", "market_cap", "volume_24h", "source"},
     "raw.macro_series": {"series_id", "date", "value", "source"},
     "raw.worldbank": {"indicator_id", "country", "date", "value", "source"},
 }

@@ -30,10 +30,6 @@ _RAW_TABLES = {
         "symbol VARCHAR, asset_class VARCHAR, date TIMESTAMPTZ, open DOUBLE, high DOUBLE, "
         "low DOUBLE, close DOUBLE, volume DOUBLE, source VARCHAR, loaded_at TIMESTAMPTZ"
     ),
-    "raw.crypto_prices": (
-        "symbol VARCHAR, ts TIMESTAMPTZ, price_usd DOUBLE, market_cap DOUBLE, "
-        "volume_24h DOUBLE, source VARCHAR, loaded_at TIMESTAMPTZ"
-    ),
     "raw.macro_series": (
         "series_id VARCHAR, date TIMESTAMPTZ, value DOUBLE, source VARCHAR, loaded_at TIMESTAMPTZ"
     ),

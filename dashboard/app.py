@@ -69,15 +69,14 @@ with st.expander("About & methodology", expanded=False):
 `mmi ingest` → `dbt build` → `mmi ml` → `mmi ai` → Streamlit BI
 
 Each stage is open-source and runs on free-tier infrastructure (Yahoo Finance unofficial API,
-FRED, CoinGecko, World Bank, DuckDB, scikit-learn, a local or serverless LLM).
+FRED, World Bank, DuckDB, scikit-learn, a local or serverless LLM).
 
 **Data sources**
 
-- **Yahoo Finance (unofficial)** — equities, ETFs, FX daily OHLCV.
+- **Yahoo Finance (unofficial)** — equities, ETFs, FX and BTC (BTC-USD) daily OHLCV.
   Unofficial API; not endorsed by Yahoo Finance.
 - **FRED — Federal Reserve Bank of St. Louis** — macro series (CPI, unemployment,
   Fed Funds rate, yield curve). [fred.stlouisfed.org](https://fred.stlouisfed.org/)
-- **CoinGecko** — crypto intraday prices. Free-tier API; rate-limited.
 - **World Bank** — additional macro indicators.
   [data.worldbank.org](https://data.worldbank.org/)
 
@@ -218,8 +217,8 @@ tab_mkt, tab_macro, tab_ml, tab_ai, tab_portfolio = st.tabs(
 with tab_mkt:
     # One unified asset selector spanning every class — equities, ETFs, bonds, commodities, FX AND
     # crypto (BTC has full daily history in fct_asset_daily, so it gets price + volatility like any
-    # other asset). The old separate CoinGecko spot panel is gone (it was a degenerate ~3-point
-    # series); the BTC headline KPI above covers the live figure.
+    # other asset). BTC daily via Yahoo is the only crypto path; the BTC headline KPI above covers
+    # the live figure.
     adf = data.assets()
     syms = adf["symbol"].tolist() if not adf.empty else []
     if syms:

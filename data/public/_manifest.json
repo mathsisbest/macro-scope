@@ -6,9 +6,6 @@
     "fct_asset_daily": {
       "rows": 53176
     },
-    "fct_crypto_intraday": {
-      "rows": 3
-    },
     "fct_macro_indicator": {
       "rows": 42570
     },
