@@ -6,7 +6,7 @@
 > portfolio + brief Parquet (it never rebuilds them). The heavy backtest is never run in CI.
 >
 > ⚠️ **Current status (pre-go-live):** the scheduled cron in `ingest.yml` is **PAUSED** (both
-> `schedule:` lines are commented out — see [#76](https://github.com/mathsisbest/markets-macro-intelligence/pull/76)).
+> `schedule:` lines are commented out — see [#76](https://github.com/mathsisbest/macro-scope/pull/76)).
 > Today, refreshes happen **manually** (the **Run workflow** button / `workflow_dispatch`, which
 > still carries a `full` toggle) or **locally**. **Re-enabling the daily-cheap cron is a go-live
 > step** (Step 3 below + [docs/RUNBOOK.md](../../docs/RUNBOOK.md)); the heavy refresh stays local
