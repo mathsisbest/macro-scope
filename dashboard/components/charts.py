@@ -491,6 +491,24 @@ def vol_skill_verdict_text(metrics: pd.DataFrame, symbol: str = "SPY") -> str:
     )
 
 
+def vol_forecast_value(fc: pd.DataFrame, symbol: str = "SPY") -> float | None:
+    """Predicted next-week annualised realised vol for ``symbol`` from the rv_har forecast.
+
+    Filters the ``ml_forecast`` frame on BOTH ``model == 'rv_har'`` AND ``symbol`` — never the
+    model alone — so that if the ML run ever covers multiple symbols (a future config override),
+    the positional ``.iloc[0]`` can't surface another asset's forecast in the SPY headline.
+    Returns ``None`` (honest empty state, no IndexError) when there is no matching row or the
+    frame lacks the expected columns.
+    """
+    needed = {"model", "symbol", "predicted_next_return"}
+    if fc.empty or not needed <= set(fc.columns):
+        return None
+    rows = fc[(fc["model"] == "rv_har") & (fc["symbol"] == symbol)]
+    if rows.empty:
+        return None
+    return float(rows["predicted_next_return"].iloc[0])
+
+
 def direction_skill_chart(metrics: pd.DataFrame, symbol: str = "SPY") -> go.Figure:
     """Paired bars: next-day direction model MAE and directional accuracy vs baseline.
 

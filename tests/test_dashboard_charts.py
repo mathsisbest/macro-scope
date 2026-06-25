@@ -150,3 +150,41 @@ def test_btc_effect_verdict_reports_none_when_all_within_noise():
 
 def test_btc_effect_verdict_handles_empty():
     assert "not computed" in charts.btc_effect_verdict(_btc_effect([]))
+
+
+# ---------------------------------------------------------------------------
+# vol_forecast_value — the ML-tab headline must pick the SPY rv_har forecast
+# specifically, never another asset's row via a positional .iloc[0].
+# ---------------------------------------------------------------------------
+
+_FC_COLS = ["symbol", "as_of", "predicted_next_return", "model"]
+
+
+def _forecast(rows: list) -> pd.DataFrame:
+    # Mirrors the marts.ml_forecast schema written by run_ml (symbol, as_of, pred, model).
+    return pd.DataFrame(rows, columns=_FC_COLS)
+
+
+def test_vol_forecast_picks_spy_rv_har_even_with_other_symbols_present():
+    # BTC's rv_har row sorts first positionally: a model-only filter + .iloc[0] would surface
+    # BTC's vol in the SPY headline. The symbol constraint must pin it to SPY's 0.18.
+    fc = _forecast(
+        [
+            ["BTC", "2026-06-20", 0.99, "rv_har"],
+            ["SPY", "2026-06-20", 0.18, "rv_har"],
+            ["SPY", "2026-06-20", 0.01, "random_forest"],
+        ]
+    )
+    assert charts.vol_forecast_value(fc, symbol="SPY") == 0.18
+
+
+def test_vol_forecast_none_when_selected_symbol_absent():
+    # Only BTC has an rv_har forecast — the SPY headline must show nothing, not BTC's row.
+    fc = _forecast([["BTC", "2026-06-20", 0.99, "rv_har"]])
+    assert charts.vol_forecast_value(fc, symbol="SPY") is None
+
+
+def test_vol_forecast_none_on_empty_or_missing_columns():
+    # Empty frame and a frame lacking model/symbol must degrade to None — no IndexError.
+    assert charts.vol_forecast_value(pd.DataFrame()) is None
+    assert charts.vol_forecast_value(pd.DataFrame({"predicted_next_return": [0.2]})) is None
