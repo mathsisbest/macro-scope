@@ -4,16 +4,16 @@
       "rows": 12
     },
     "fct_asset_daily": {
-      "rows": 3530
+      "rows": 53176
     },
     "fct_crypto_intraday": {
-      "rows": 2160
+      "rows": 3
     },
     "fct_macro_indicator": {
-      "rows": 360
+      "rows": 42570
     },
     "fct_market_macro": {
-      "rows": 400
+      "rows": 8408
     },
     "fct_performance_attribution": {
       "rows": 149
@@ -22,13 +22,13 @@
       "rows": 6
     },
     "fct_portfolio_ml_gate": {
-      "rows": 15
+      "rows": 469
     },
     "fct_portfolio_regime_performance": {
       "rows": 54
     },
     "fct_portfolio_returns": {
-      "rows": 6342
+      "rows": 56430
     },
     "fct_portfolio_strategy_pairs": {
       "rows": 45
@@ -37,10 +37,10 @@
       "rows": 18
     },
     "fct_recession_risk": {
-      "rows": 60
+      "rows": 12511
     },
     "fct_regime": {
-      "rows": 3512
+      "rows": 53158
     },
     "market_brief": {
       "rows": 1
@@ -52,5 +52,5 @@
       "rows": 14
     }
   },
-  "generated_at": "2026-06-25T09:13:20.397294+00:00"
+  "generated_at": "2026-06-25T14:07:48.363250+00:00"
 }
