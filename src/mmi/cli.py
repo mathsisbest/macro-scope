@@ -9,6 +9,8 @@ import traceback
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import pandas as pd
 
 from mmi.utils.db import connect
@@ -136,6 +138,29 @@ def cmd_ai(_: argparse.Namespace) -> int:
     return 0
 
 
+def _total_parquet_bytes(out_dir: Path) -> int:
+    """Sum the on-disk size of every ``*.parquet`` in ``out_dir`` for the size-cap check.
+
+    A parquet could, in theory, vanish or become unreadable between the ``glob()`` and the
+    ``stat()`` — concurrent deletion (FileNotFoundError), a locked file or a permission change
+    (OSError).  cmd_snapshot just wrote these files in a single process, so this is a purely
+    theoretical TOCTOU.  If it DOES happen we must FAIL LOUD, not silently skip the file: an
+    unmeasured parquet would UNDER-count the total and could let an over-cap snapshot slip past
+    the cap undetected — defeating the whole point of the fail-loud cap.  So we surface the error
+    (the caller turns it into a clean non-zero exit) rather than swallowing it.
+    """
+    total = 0
+    for p in out_dir.glob("*.parquet"):
+        try:
+            total += p.stat().st_size
+        except OSError as exc:
+            raise OSError(
+                f"cannot stat {p} for the snapshot size-cap tally ({exc}); "
+                "refusing to certify snapshot size"
+            ) from exc
+    return total
+
+
 def cmd_snapshot(_: argparse.Namespace) -> int:
     """Export every table in the marts schema to Parquet for the public demo.
 
@@ -218,10 +243,9 @@ def cmd_snapshot(_: argparse.Namespace) -> int:
     # pre-commit --maxkb=2000 limit), exit non-zero with a clear message so the
     # owner notices before committing an oversized snapshot.
     # The remedy is a new downsampled dbt mart; do NOT trim or exclude marts here.
-    import os as _os
-
+    # (``os`` is already imported at the top of this function.)
     default_max_bytes = 2_000_000
-    raw_max = _os.environ.get("MMI_SNAPSHOT_MAX_BYTES")
+    raw_max = os.environ.get("MMI_SNAPSHOT_MAX_BYTES")
     max_bytes = default_max_bytes
     if raw_max is not None:
         try:
@@ -241,7 +265,14 @@ def cmd_snapshot(_: argparse.Namespace) -> int:
                 default_max_bytes,
             )
 
-    total_bytes = sum(p.stat().st_size for p in out_dir.glob("*.parquet"))
+    try:
+        total_bytes = _total_parquet_bytes(out_dir)
+    except OSError as exc:
+        # An unreadable parquet means we cannot certify the snapshot's size — fail loud
+        # (a clean non-zero exit) rather than publish an unverified snapshot.
+        log.error("snapshot: %s — aborting before publish", exc)
+        print(f"ERROR: {exc} — aborting before publish.", file=sys.stderr)
+        return 1
     if total_bytes > max_bytes:
         log.error(
             "snapshot: total parquet size %d bytes exceeds cap %d bytes — "
