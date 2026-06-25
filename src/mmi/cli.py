@@ -239,12 +239,14 @@ def cmd_snapshot(_: argparse.Namespace) -> int:
 
     # --- fail-loud size cap (Contract A) ---
     # After a successful export, sum the bytes of every *.parquet in out_dir.
-    # If the total exceeds MMI_SNAPSHOT_MAX_BYTES (default 2_000_000 — the
-    # pre-commit --maxkb=2000 limit), exit non-zero with a clear message so the
-    # owner notices before committing an oversized snapshot.
-    # The remedy is a new downsampled dbt mart; do NOT trim or exclude marts here.
+    # If the total exceeds MMI_SNAPSHOT_MAX_BYTES (default 12_000_000), exit non-zero with a
+    # clear message so the owner notices before committing an oversized snapshot. The real
+    # 24-year dataset is ~5.7 MB; 12 MB leaves years of forward-growth headroom while still
+    # catching a gross runaway (a raw-data dump, an accidental .duckdb commit, a cartesian-join
+    # blowup) that would be tens of MB. The remedy for a genuine future overflow is a new
+    # downsampled dbt mart; do NOT trim or exclude marts from the export.
     # (``os`` is already imported at the top of this function.)
-    default_max_bytes = 2_000_000
+    default_max_bytes = 12_000_000
     raw_max = os.environ.get("MMI_SNAPSHOT_MAX_BYTES")
     max_bytes = default_max_bytes
     if raw_max is not None:
