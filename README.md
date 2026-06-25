@@ -13,13 +13,12 @@
 > **Desktop layout only.** The dashboard is optimised for a laptop or wider screen;
 > narrow/mobile viewports are not supported.
 
-> **Not investment advice.** This project is a portfolio demonstration of data engineering,
-> analytics engineering, ML, and BI skills. Nothing here constitutes financial advice or a
+> **Not investment advice.** Nothing here constitutes financial advice or a
 > recommendation to buy, sell, or hold any security.
 
 A **zero-cost, code-first** data platform that streams live markets + macro data, models it with
 **dbt**, scores it with **ML**, explains it with a **GenAI** layer, and serves it through a
-**Streamlit** dashboard. One repo, four skill areas:
+**Streamlit** dashboard — an end-to-end pipeline spanning
 **Data Engineering · Analytics Engineering · ML/AI · BI.**
 
 > Full design rationale, dataset choices and roadmap live in **[PLAN.md](./PLAN.md)**.
@@ -132,5 +131,4 @@ See [PLAN.md §6](./PLAN.md#6-repository-structure). TL;DR: `src/mmi/` (ingestio
 ## License
 
 **Source-available, not open source.** © 2026 mathsisbest — all rights reserved.
-This repository is public for portfolio and demonstration purposes only; no reuse
-license is granted. See [LICENSE](./LICENSE).
+No reuse license is granted. See [LICENSE](./LICENSE).
