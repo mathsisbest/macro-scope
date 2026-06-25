@@ -1,0 +1,56 @@
+{
+  "tables": {
+    "dim_asset": {
+      "rows": 12
+    },
+    "fct_asset_daily": {
+      "rows": 3530
+    },
+    "fct_crypto_intraday": {
+      "rows": 2160
+    },
+    "fct_macro_indicator": {
+      "rows": 360
+    },
+    "fct_market_macro": {
+      "rows": 400
+    },
+    "fct_performance_attribution": {
+      "rows": 149
+    },
+    "fct_portfolio_btc_effect": {
+      "rows": 6
+    },
+    "fct_portfolio_ml_gate": {
+      "rows": 15
+    },
+    "fct_portfolio_regime_performance": {
+      "rows": 54
+    },
+    "fct_portfolio_returns": {
+      "rows": 6342
+    },
+    "fct_portfolio_strategy_pairs": {
+      "rows": 45
+    },
+    "fct_portfolio_strategy_stats": {
+      "rows": 18
+    },
+    "fct_recession_risk": {
+      "rows": 60
+    },
+    "fct_regime": {
+      "rows": 3512
+    },
+    "market_brief": {
+      "rows": 1
+    },
+    "ml_forecast": {
+      "rows": 2
+    },
+    "model_metrics": {
+      "rows": 14
+    }
+  },
+  "generated_at": "2026-06-25T09:13:20.397294+00:00"
+}
