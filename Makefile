@@ -19,7 +19,7 @@ CI_ENV := MMI_MOTHERDUCK_DATABASE= MOTHERDUCK_TOKEN= MMI_DUCKDB_PATH=$(CI_DB) GE
 # `../data/mmi.duckdb` is relative to transform/ and otherwise resolves one dir too high).
 DEV_DB := $(CURDIR)/data/mmi.duckdb
 
-.PHONY: help setup install install-dev seed ingest healthcheck dbt-build ml ai snapshot dashboard demo test lint format typecheck ci ci-lite all clean app-smoke import-smoke
+.PHONY: help setup install install-dev seed ingest healthcheck dbt-build ml ai snapshot dashboard demo test lint format typecheck ci ci-lite all clean app-smoke import-smoke refresh-full refresh-full-fast
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -106,6 +106,22 @@ ci: ## Full local gate — run before every PR; the reviewer runs this too (no G
 	$(CI_ENV) PYTHONPATH=. $(PY) scripts/dashboard_app_smoke.py
 	$(BIN)pytest
 	@echo "make ci: PASS"
+
+refresh-full: ## LOCAL heavy refresh (needs real API keys + is uncapped). Runs the full pipeline:
+	##   ingest → dbt → portfolio → dbt → ml → ml-gate STRICT → ai → snapshot.
+	##   The ml-gate STRICT step exits non-zero and BLOCKS ai+snapshot if the HAR vol
+	##   model does not clear the skill bar — a failing model can NEVER produce a
+	##   committed artifact. Uses n_boot=2000 (the committed public artifact value).
+	##   NOT part of make ci — never call from CI.
+	##   Run after: make setup  (to create .venv + install all extras)
+	@bash scripts/live_refresh.sh
+
+refresh-full-fast: ## LOCAL fast refresh with low n_boot for tuning only. Sets
+	##   MMI_PORTFOLIO_N_BOOT=200 for speed. WARNING: do NOT commit data/public from
+	##   this run — bootstrap CIs are undersampled. Re-run make refresh-full
+	##   (n_boot=2000) before committing the public artifact. Same pipeline and
+	##   ml-gate STRICT gate as refresh-full.
+	@MMI_PORTFOLIO_N_BOOT=200 bash scripts/live_refresh.sh
 
 all: seed dbt-build ml ai ## Run the whole offline pipeline end-to-end
 
