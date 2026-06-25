@@ -8,6 +8,7 @@ Also covers manifest writing, per-file atomicity, and daily-cron preservation in
 import argparse
 import contextlib
 import json
+import logging
 import os
 from unittest.mock import MagicMock, patch
 
@@ -541,3 +542,79 @@ def test_snapshot_manifest_still_written_when_cap_exceeded(monkeypatch, tmp_path
 
     assert result == 1
     assert (out / "_manifest.json").exists(), "_manifest.json must be written even when cap fails"
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        "",  # empty string -> int("") raises ValueError
+        "abc",  # non-numeric -> ValueError
+        "2.5",  # float string -> int("2.5") raises ValueError
+        "-5",  # negative -> parsed but non-positive
+        "0",  # zero -> parsed but non-positive
+    ],
+)
+def test_snapshot_size_cap_invalid_env_falls_back_to_default(
+    monkeypatch, tmp_path, caplog, bad_value
+):
+    """An invalid MMI_SNAPSHOT_MAX_BYTES warns and falls back to the default 2_000_000 cap
+    instead of crashing — mirroring the MMI_PORTFOLIO_N_BOOT defensive-parse coverage.
+
+    Returning 0 *is* the proof of the fallback: the small fixture snapshot is well under the
+    2_000_000 default, so exit 0 means the default cap was used.  For "0"/"-5" this is decisive
+    — had the bad value been used as the cap (0 or -5 bytes), the non-empty snapshot would have
+    exceeded it and the command would have returned 1.
+    """
+    db = tmp_path / "m.duckdb"
+    _marts_db(db)
+    out = tmp_path / "public"
+    monkeypatch.setattr(settings_mod.settings, "snapshot_dir", out)
+    monkeypatch.setattr(cli, "connect", _connect_to(db))
+    monkeypatch.setenv("MMI_SNAPSHOT_MAX_BYTES", bad_value)
+
+    with caplog.at_level(logging.WARNING, logger="cli"):
+        result = cli.cmd_snapshot(argparse.Namespace())
+
+    assert result == 0, (
+        f"invalid MMI_SNAPSHOT_MAX_BYTES={bad_value!r} must fall back to the default 2_000_000 "
+        f"cap (exit 0), not crash or treat the bad value as the cap; got {result}"
+    )
+    # A warning must name the offending knob so the owner can spot the fat-fingered value.
+    assert any("MMI_SNAPSHOT_MAX_BYTES" in r.getMessage() for r in caplog.records), (
+        f"expected a warning mentioning MMI_SNAPSHOT_MAX_BYTES for {bad_value!r}"
+    )
+
+
+def test_snapshot_size_cap_unreadable_parquet_fails_loud(monkeypatch, tmp_path, capsys):
+    """If a parquet can't be stat'd during the size tally, the snapshot must FAIL LOUD
+    (exit 1), never silently skip the file and under-count the total — a silent skip would
+    let an over-cap snapshot slip past the cap undetected.
+    """
+    import pathlib
+
+    db = tmp_path / "m.duckdb"
+    _marts_db(db)
+    out = tmp_path / "public"
+    monkeypatch.setattr(settings_mod.settings, "snapshot_dir", out)
+    monkeypatch.setattr(cli, "connect", _connect_to(db))
+
+    real_stat = pathlib.Path.stat
+
+    def boom_stat(self, *a, **k):
+        # Only the size-cap tally stats the final *.parquet files; the export writes via
+        # DuckDB COPY + os.replace, so this targets the tally specifically.
+        if self.suffix == ".parquet":
+            raise OSError("simulated unreadable parquet")
+        return real_stat(self, *a, **k)
+
+    monkeypatch.setattr(pathlib.Path, "stat", boom_stat)
+
+    result = cli.cmd_snapshot(argparse.Namespace())
+    assert result == 1, (
+        f"an unreadable parquet during the size tally must fail loud (exit 1), "
+        f"not silently pass; got {result}"
+    )
+    err = capsys.readouterr().err
+    assert "size-cap" in err or "certify snapshot size" in err, (
+        f"expected a fail-loud stderr message about the size-cap tally; got: {err!r}"
+    )
