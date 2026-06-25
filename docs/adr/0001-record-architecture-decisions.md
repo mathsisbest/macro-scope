@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 
-**Context.** This is a portfolio project; the *reasoning* behind choices matters as much as
+**Context.** The *reasoning* behind choices matters as much as
 the code. Reviewers should be able to see why each significant decision was made.
 
 **Decision.** Use lightweight Architecture Decision Records (ADRs) in `docs/adr/`, one file
