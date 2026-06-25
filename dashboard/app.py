@@ -302,7 +302,9 @@ with tab_ml:
             )
 
         # Predicted next-week volatility and training date — read from the existing accessors.
-        rv_fc = fc[fc["model"] == "rv_har"] if not fc.empty and "model" in fc.columns else fc
+        # The forecast lookup filters on BOTH model AND symbol (see vol_forecast_value) so a
+        # future multi-symbol ML run can't surface another asset's row in the SPY headline.
+        pred_vol = charts.vol_forecast_value(fc, symbol="SPY")
         rv_metrics = (
             metrics[(metrics["model"] == "rv_har") & (metrics["symbol"] == "SPY")]
             if not metrics.empty
@@ -310,12 +312,13 @@ with tab_ml:
         )
         fc_col1, fc_col2 = st.columns([1, 1])
         with fc_col1:
-            if not rv_fc.empty and "predicted_next_return" in rv_fc.columns:
-                pred_vol = rv_fc["predicted_next_return"].iloc[0]
+            if pred_vol is not None:
                 st.metric(
                     "SPY predicted next-week realized vol (annualised)",
                     f"{pred_vol * 100:.2f}%",
                 )
+            else:
+                st.caption("No SPY volatility forecast available yet.")
         with fc_col2:
             if not rv_metrics.empty and "trained_at" in rv_metrics.columns:
                 trained_at = rv_metrics["trained_at"].dropna()
