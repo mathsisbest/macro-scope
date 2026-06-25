@@ -6,15 +6,14 @@
 ## Mission
 A **zero-cost, code-first data platform** ("Markets & Macro Intelligence") that ingests live
 markets + macro data, transforms it with dbt, scores it with ML, explains it with a GenAI layer,
-and serves it through a Streamlit dashboard. It's a **portfolio project** for the owner
-(GitHub `mathsisbest`) to showcase four skills in one coherent repo:
+and serves it through a Streamlit dashboard — an end-to-end pipeline spanning
 **Data Engineering · Analytics Engineering · ML/AI · BI.**
 
 ## Owner & constraints (do not violate)
 - **£0 / $0 forever.** Free tiers only — no paid hosting, DBs, or APIs.
 - **High-code, not BI tools.** No Power BI / Tableau; all charts/layout defined in Python.
-- **Private GitHub repo.** Future-proof; deliberately uses GenAI.
-- Owner is a product designer (SaaS/AI) in London — values clarity and good SWE hygiene.
+- **Public GitHub repo** (source-available, all rights reserved). Deliberately uses GenAI.
+- Values clarity and good SWE hygiene.
 - **Commit identity:** author commits as `mathsisbest` (`33107428+mathsisbest@users.noreply.github.com`).
   Never let an unrelated work email author.
 
