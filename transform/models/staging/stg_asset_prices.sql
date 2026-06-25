@@ -1,6 +1,12 @@
 with source as (
     select * from {{ source('raw', 'asset_prices') }}
     where close is not null
+      -- Yahoo injects a PHANTOM volume-0 bar (midnight-UTC, ~half the real price) for some ETFs —
+      -- notably on market holidays, where it is the ONLY bar for that date, so the dedup below keeps
+      -- it and the bad price corrupts daily returns (±50%+ spikes into/out of the holiday). Drop
+      -- volume-less bars for assets that trade with volume; FX legitimately has no volume, so it is
+      -- exempt. Verified: removes 26 out-of-bounds returns while preserving every real trading date.
+      and not (coalesce(volume, 0) = 0 and asset_class <> 'fx')
 ),
 deduped as (
     -- Yahoo's v8 chart returns a live/partial bar for the *current* day on top of the day's
