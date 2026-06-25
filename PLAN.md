@@ -2,8 +2,8 @@
 
 > A zero-cost, code-first data platform that ingests live markets + macro data, transforms
 > it with dbt, runs ML forecasts, layers a GenAI narrative on top, and serves it all through
-> a Streamlit dashboard. Built to showcase **Data Engineering**, **Analytics Engineering**,
-> **ML/AI**, and **BI** in one coherent, production-shaped repo.
+> a Streamlit dashboard — an end-to-end, production-shaped platform across **Data Engineering**,
+> **Analytics Engineering**, **ML/AI**, and **BI**.
 
 **Author:** mathsisbest · **Status:** Plan + working scaffold · **Cost target:** £0 / $0 forever
 
@@ -17,31 +17,30 @@
 
 ---
 
-## 1. Why this project (goals & rationale)
+## 1. Why this project
 
-Recruiters and engineering managers don't want four toy notebooks — they want to see one
-realistic system where data flows end-to-end and every layer is done *properly*. This project
-tells a single story:
+One realistic system where data flows end-to-end and every layer is done *properly*, rather than
+four disconnected notebooks. The whole platform tells a single story:
 
 > *"Raw market and macro data is streamed in on a schedule, modelled into clean analytical
 > tables, scored by ML models, explained in plain English by an LLM, and presented in a live
 > dashboard — all reproducible, tested, CI-checked, and running at zero cost."*
 
-That single sentence touches every layer of the platform.
+Each layer maps to a part of the modern data stack:
 
-| Layer | Where it shows up | Role |
+| Layer | Where it lives | What it does |
 |---|---|---|
-| **Data Engineering** | `ingestion/` extractors + GitHub Actions cron + idempotent loads to DuckDB/Parquet | You can build reliable, scheduled, incremental pipelines |
-| **Analytics Engineering** | `transform/` dbt project: staging → intermediate → marts, tests, docs, lineage | You can model data the modern-stack way, with tests and contracts |
-| **ML / AI** | `ml/` forecasting + regime detection with proper backtesting & tracked metrics | You can frame, train, evaluate and ship a model, not just `.fit()` |
-| **GenAI (future-proofing)** | `ai/` provider-agnostic LLM layer that writes the daily market narrative | You build with LLMs deliberately, with cost/abstraction awareness |
-| **BI** | `dashboard/` Streamlit app: code-defined Plotly charts, KPIs, filters | You can communicate insight visually, entirely in code |
+| **Data Engineering** | `ingestion/` extractors + GitHub Actions cron + idempotent loads to DuckDB/Parquet | Reliable, scheduled, incremental pipelines |
+| **Analytics Engineering** | `transform/` dbt project: staging → intermediate → marts, tests, docs, lineage | Modern-stack data modelling, with tests and contracts |
+| **ML / AI** | `ml/` forecasting + regime detection with proper backtesting & tracked metrics | Models framed, trained, evaluated and shipped — not just `.fit()` |
+| **GenAI** | `ai/` provider-agnostic LLM layer that writes the daily market narrative | LLMs used deliberately, with cost/abstraction awareness |
+| **BI** | `dashboard/` Streamlit app: code-defined Plotly charts, KPIs, filters | Insight communicated visually, entirely in code |
 
 ---
 
 ## 2. Domain decision — chosen on *free-data availability*
 
-You asked me to pick the domain based on which datasets are genuinely free. Here's the honest
+The domain was chosen on which datasets are genuinely free. Here's the honest
 comparison that drove the decision:
 
 | Domain | Best free source(s) | Free limit | History | "Streaming" fit | Verdict |
@@ -53,11 +52,11 @@ comparison that drove the decision:
 **Decision: anchor on "Markets & Macro."** Crypto gives a *real* high-frequency streaming
 narrative for free; equities/FX give deep ML-ready history; macro gives analytical depth and
 great BI storytelling. Sports betting is included as a **fully-specified optional module**
-(see §13) so you can switch it on later — but its free quota is too thin to carry the
+(see §13) so it can be switched on later — but its free quota is too thin to carry the
 "streaming" story, so it isn't the core.
 
-This also happens to combine two of your three stated interests (investing + macro) into one
-narrative: **treating markets and the economy as a single system you can measure and forecast.**
+Markets and macro combine into one narrative:
+**treating markets and the economy as a single system to measure and forecast.**
 
 ---
 
@@ -97,9 +96,9 @@ incremental, idempotent loads — which is how most real analytics platforms act
 - **Backfill path (roadmap):** a `make backfill` target to pull full history once is planned,
   not yet implemented.
 
-> If you ever want literal streaming as a follow-on, Phase 4 (§12) adds an optional Kafka-style
-> demo using **Redpanda Serverless free tier** or a local `kafka-python` producer/consumer —
-> but it's deliberately not on the critical path because it isn't free at scale.
+> Phase 4 (§12) adds an optional literal-streaming demo using **Redpanda Serverless free tier**
+> or a local `kafka-python` producer/consumer — deliberately not on the critical path because
+> it isn't free at scale.
 
 ---
 
@@ -273,14 +272,14 @@ markets-macro-intelligence/
 ### 7.4 GenAI layer (`src/mmi/ai/`) — the future-proofing
 - `llm.py` is a thin **provider-agnostic** wrapper: one `complete(prompt)` interface,
   swappable backend via `LLM_PROVIDER` env (`gemini` | `groq` | `claude`). This is the
-  forward-looking design — when models change, you change one config value.
+  forward-looking design — when models change, it's one config value.
 - `narrative.py` feeds the day's marts (top movers, regime, macro surprises) into a structured
   prompt and gets back a tight market brief shown in the dashboard and committed to
   `data/briefs/` so there's a history.
 - Default provider = **Gemini free tier** so it costs nothing; Claude is a one-line switch.
 
 ### 7.5 BI (`dashboard/`)
-- Streamlit app, **everything defined in code** (your requirement): code-defined theme,
+- Streamlit app, **everything defined in code**: code-defined theme,
   Plotly charts, KPI tiles, sidebar filters (asset, date range, frequency), a forecast panel,
   a regime ribbon, and the **AI narrative** panel.
 - `data.py` reads marts from DuckDB with `@st.cache_data` for snappy reloads.
@@ -329,10 +328,10 @@ markets-macro-intelligence/
 | GenAI | Google Gemini / Groq free tier | £0 |
 | **Total** | | **£0 / month** |
 
-> **Honesty note on "use Claude":** the *Claude API* is metered and **not free** — your Claude
+> **Honesty note on "use Claude":** the *Claude API* is metered and **not free** — a Claude
 > subscription covers chat, not API calls. So the GenAI layer is built provider-agnostic and
 > **defaults to a free model (Gemini/Groq)** to keep the project at £0. Switching to Claude is a
-> single env change (`LLM_PROVIDER=claude`) whenever you want to spend on it. Also note Streamlit
+> single env change (`LLM_PROVIDER=claude`). Also note Streamlit
 > free tier allows **one app from a private repo** and ~1 GB RAM — fine for this, worth knowing.
 
 ---
@@ -350,7 +349,7 @@ markets-macro-intelligence/
 | **6 — Optional** | Sports-odds module / real Kafka demo | See §13 |
 | **7 — Portfolio backtesting (capstone)** | Look-ahead-free allocation backtest (equal-wt / inverse-vol / true risk-parity; ML max-Sharpe frontier as a *measured* experiment), tested portfolio marts, bootstrap CIs, regime-conditional analysis, AI commentary | See **issue #7** + its critical review; built in sub-phases 0–D, **after** P1–P3 |
 
-> **Capstone (issue #7) — phased + dependency-noted.** The portfolio layer is the capstone
+> **Capstone (issue #7) — phased + dependency-noted.** The portfolio layer is the
 > capstone but sits on top of P1–P3, so it's sequenced after them and built in slices: **0** data
 > foundation (Yahoo *adjusted-close* ingestion — done), **A** honest core backtest, **B**
 > statistical rigor + attribution, **C** ML frontier as a pre-registered experiment, **D** BTC window
@@ -370,9 +369,9 @@ markets-macro-intelligence/
 
 ---
 
-## 13. Optional Phase-2: sports-betting module (your other interest)
+## 13. Optional Phase-2: sports-betting module
 
-If you want it as a follow-on, add `src/mmi/ingestion/odds.py` against **The Odds API** free tier
+To add it, build `src/mmi/ingestion/odds.py` against **The Odds API** free tier
 (500 credits/mo → pull 2–3 sports, 2×/day). New marts `fct_odds`, `fct_line_movement`; an ML
 module computing **closing-line value** and **model-vs-market edge**; a dashboard tab. It reuses
 every pattern above, so it's additive, not a rewrite — but it stays optional because the free
@@ -385,4 +384,4 @@ quota can't sustain frequent "streaming."
 1. Review this plan; tweak the asset list in `config/assets.yml`.
 2. Get free API keys: **FRED** (api.stlouisfed.org), **CoinGecko Demo**, **Gemini** (ai.google.dev).
 3. Create the private GitHub repo and push the scaffold (commands provided on delivery).
-4. Work the roadmap phase by phase — each phase is a clean set of PRs that tells the roadmap.
+4. Work the roadmap phase by phase — each phase is a clean, self-contained set of PRs.
