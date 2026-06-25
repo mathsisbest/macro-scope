@@ -41,16 +41,28 @@ def provider_model() -> str:
 
 
 @retry(
-    # Only retry transient HTTP failures (rate limits, 5xx, network). A deterministic
+    # Retry on transient HTTP failures (rate limits / 429, 5xx, network).  A deterministic
     # RuntimeError (e.g. Gemini returned no text) is NOT retried — it would just burn ~11s of
     # backoff + free quota before failing the same way, so we fail fast to the template.
+    #
+    # HTTP 429 (Too Many Requests) is an httpx.HTTPStatusError, which is a subclass of
+    # httpx.HTTPError.  After stop_after_attempt(3) exhausts retries, reraise=True propagates
+    # the exception to the caller (generate_brief's except clause) which logs it via redact()
+    # and sets engine = 'offline-template (llm-failed)'.  This guarantees a 429 never crashes
+    # the brief; it always degrades to the offline template.
     retry=retry_if_exception_type(httpx.HTTPError),
     stop=stop_after_attempt(3),
     wait=wait_exponential(min=1, max=10),
     reraise=True,
 )
 def complete(prompt: str, *, system: str | None = None, max_tokens: int = 800) -> str:
-    """Return a completion from the configured provider."""
+    """Return a completion from the configured provider.
+
+    Any transport error (including HTTP 429 rate-limits) is re-raised after up to 3 retries
+    so the caller (generate_brief) can degrade to 'offline-template (llm-failed)' without
+    crashing.  Logic errors (bad JSON, no text parts) raise RuntimeError which bypasses the
+    retry and surfaces immediately to the same handler.
+    """
     provider = settings.llm_provider
     if provider == "gemini":
         return _gemini(prompt, system, max_tokens)
