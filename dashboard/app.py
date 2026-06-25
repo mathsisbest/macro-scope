@@ -279,19 +279,65 @@ with tab_ml:
             "and commit updated forecasts."
         )
     else:
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            st.plotly_chart(charts.forecast_bar(metrics, "SPY"), use_container_width=True)
-        with c2:
-            if not fc.empty:
-                pr = fc["predicted_next_return"].iloc[0]
-                st.metric("SPY predicted next-day return", f"{pr * 100:+.2f}%")
-            wide = metrics[metrics["symbol"] == "SPY"].pivot_table(
-                index="symbol", columns="metric", values="value"
+        # ---- Headline: HAR realized-volatility model (Contract E) ---------------
+        # The certified ML target is next-week realized-volatility forecasting for SPY.
+        # Verdict text is ALWAYS sourced from skill_verdict() (via charts.vol_skill_verdict_text)
+        # — never re-derived here. The 'beats baseline OOS' language only appears when cleared.
+        st.subheader("Volatility forecast — HAR model (headline)")
+        st.caption(charts.ML_SCOPE_CAPTION)
+        verdict_text = charts.vol_skill_verdict_text(metrics, symbol="SPY")
+        if "no demonstrated out-of-sample edge" in verdict_text:
+            st.warning(verdict_text)
+        else:
+            st.success(verdict_text)
+
+        vol_col1, vol_col2 = st.columns([1, 1])
+        with vol_col1:
+            st.plotly_chart(
+                charts.vol_skill_r2_chart(metrics, symbol="SPY"), use_container_width=True
             )
-            st.dataframe(wide, use_container_width=True)
+        with vol_col2:
+            st.plotly_chart(
+                charts.vol_skill_qlike_chart(metrics, symbol="SPY"), use_container_width=True
+            )
+
+        # Predicted next-week volatility and training date — read from the existing accessors.
+        rv_fc = fc[fc["model"] == "rv_har"] if not fc.empty and "model" in fc.columns else fc
+        rv_metrics = (
+            metrics[(metrics["model"] == "rv_har") & (metrics["symbol"] == "SPY")]
+            if not metrics.empty
+            else metrics
+        )
+        fc_col1, fc_col2 = st.columns([1, 1])
+        with fc_col1:
+            if not rv_fc.empty and "predicted_next_return" in rv_fc.columns:
+                pred_vol = rv_fc["predicted_next_return"].iloc[0]
+                st.metric(
+                    "SPY predicted next-week realized vol (annualised)",
+                    f"{pred_vol * 100:.2f}%",
+                )
+        with fc_col2:
+            if not rv_metrics.empty and "trained_at" in rv_metrics.columns:
+                trained_at = rv_metrics["trained_at"].dropna()
+                if not trained_at.empty:
+                    st.caption(f"Model trained {trained_at.iloc[0]}")
+
         if not reg.empty:
             st.plotly_chart(charts.regime_chart(reg, "SPY"), use_container_width=True)
+
+        st.divider()
+
+        # ---- Secondary: next-day direction model (honestly demoted) ---------------
+        # No demonstrated short-horizon edge — shown as an honest secondary, not the gate.
+        st.subheader("Next-day direction model (honest secondary)")
+        st.caption(
+            "This model targets next-day SPY price direction. "
+            "Short-horizon equity direction is near-noise; this model carries "
+            "**no demonstrated out-of-sample edge** and is not used as a go-live gate."
+        )
+        st.plotly_chart(
+            charts.direction_skill_chart(metrics, symbol="SPY"), use_container_width=True
+        )
 
 with tab_ai:
     brief = data.latest_brief()
