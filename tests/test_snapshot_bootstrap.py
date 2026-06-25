@@ -7,10 +7,11 @@ Checks:
   (b) Each parquet readable via in-memory DuckDB snapshot connection; column NAMES match
       what dashboard/data.py SELECTs.
   (c) fct_asset_daily has the dbt-model column set (not the transform_fallback 5-mart shape)
-      AND source is uniformly 'sample'.
+      AND source is unambiguous — a clean all-sample XOR all-live set, never mixed/null — so
+      is_sample_data() yields a definite, honest badge.
   (d) model_metrics contains BOTH direction rows (model='random_forest') and vol rows
       (model='rv_har').
-  (e) Each committed *.parquet < 2_000_000 bytes.
+  (e) Each committed *.parquet is under the per-file size ceiling.
 """
 
 from __future__ import annotations
@@ -52,8 +53,11 @@ REQUIRED_MARTS = [
     "fct_portfolio_btc_effect",
 ]
 
-# Size cap from Contract A (D6 default).
-MAX_BYTES = 2_000_000
+# Per-file size guard. The total-snapshot cap lives in `mmi snapshot`
+# (MMI_SNAPSHOT_MAX_BYTES, default 12 MB); this is the complementary per-file ceiling, set
+# above any single real mart (the full 24-year snapshot is ~5.7 MB total) so it still catches a
+# single bloated file without tripping on legitimate live data.
+MAX_BYTES = 8_000_000
 
 # ---------------------------------------------------------------------------
 # Snapshot connection helper — mirrors dashboard/data.py _snapshot_connection()
@@ -194,7 +198,7 @@ def test_mart_columns_present(table: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# (c) fct_asset_daily — dbt-model shape + source='sample'
+# (c) fct_asset_daily — dbt-model shape + unambiguous source (honest badge)
 # ---------------------------------------------------------------------------
 
 
@@ -217,17 +221,29 @@ def test_fct_asset_daily_dbt_model_shape() -> None:
     )
 
 
-def test_fct_asset_daily_source_is_sample() -> None:
-    """All rows in fct_asset_daily must have source='sample' so is_sample_data()==True."""
+def test_fct_asset_daily_source_is_unambiguous() -> None:
+    """fct_asset_daily.source must be unambiguous so the dashboard badge stays honest: a clean
+    all-sample XOR all-live set, with NO null/blank rows. This mirrors is_sample_data()'s
+    definiteness contract — a mixed or unrecorded source makes the 'sample/live' badge a lie
+    (is_sample_data() returns None). The committed snapshot is the synthetic sample bootstrap
+    before go-live and real (e.g. 'yahoo') data after the first live refresh; both are honest,
+    a mixed/null set is not."""
     con = _snapshot_con()
     try:
-        df = con.execute('select distinct source from marts."fct_asset_daily"').df()
+        df = con.execute('select source from marts."fct_asset_daily"').df()
     finally:
         con.close()
-    sources = set(df["source"].dropna().tolist())
-    assert sources == {"sample"}, (
-        f"fct_asset_daily.source must be uniformly 'sample' for the bootstrap snapshot; "
-        f"found: {sources}"
+    assert not df.empty, "fct_asset_daily is empty — the committed snapshot has no markets data."
+    col = df["source"]
+    has_unrecorded = bool(col.isna().any() or (col.astype(str).str.strip() == "").any())
+    assert not has_unrecorded, (
+        "fct_asset_daily has null/blank source rows — provenance is unrecorded, which makes "
+        "is_sample_data() ambiguous (None) and the dashboard badge dishonest."
+    )
+    sources = set(col.dropna().tolist())
+    assert sources == {"sample"} or "sample" not in sources, (
+        f"fct_asset_daily.source must be a clean all-sample OR all-live set so the badge is "
+        f"definite; found a mixed set: {sources}"
     )
 
 
@@ -253,7 +269,7 @@ def test_model_metrics_has_direction_and_vol_rows() -> None:
 
 
 # ---------------------------------------------------------------------------
-# (e) Size cap — each .parquet < 2 MB
+# (e) Size cap — each .parquet under the per-file ceiling
 # ---------------------------------------------------------------------------
 
 
@@ -263,10 +279,10 @@ def test_model_metrics_has_direction_and_vol_rows() -> None:
     ids=lambda p: p.name,
 )
 def test_parquet_under_size_cap(parquet_path: Path) -> None:
-    """Each committed Parquet file must be < 2 000 000 bytes (Contract A D6 cap)."""
+    """Each committed Parquet file must be under the per-file size ceiling (MAX_BYTES)."""
     size = parquet_path.stat().st_size
     assert size < MAX_BYTES, (
-        f"{parquet_path.name} is {size:,} bytes — exceeds the 2 MB cap ({MAX_BYTES:,}). "
+        f"{parquet_path.name} is {size:,} bytes — exceeds the per-file cap ({MAX_BYTES:,}). "
         "Use a downsampled mart (Contract A D9) if the real snapshot exceeds this limit."
     )
 

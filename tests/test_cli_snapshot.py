@@ -557,11 +557,11 @@ def test_snapshot_manifest_still_written_when_cap_exceeded(monkeypatch, tmp_path
 def test_snapshot_size_cap_invalid_env_falls_back_to_default(
     monkeypatch, tmp_path, caplog, bad_value
 ):
-    """An invalid MMI_SNAPSHOT_MAX_BYTES warns and falls back to the default 2_000_000 cap
+    """An invalid MMI_SNAPSHOT_MAX_BYTES warns and falls back to the default 12_000_000 cap
     instead of crashing — mirroring the MMI_PORTFOLIO_N_BOOT defensive-parse coverage.
 
     Returning 0 *is* the proof of the fallback: the small fixture snapshot is well under the
-    2_000_000 default, so exit 0 means the default cap was used.  For "0"/"-5" this is decisive
+    12_000_000 default, so exit 0 means the default cap was used.  For "0"/"-5" this is decisive
     — had the bad value been used as the cap (0 or -5 bytes), the non-empty snapshot would have
     exceeded it and the command would have returned 1.
     """
@@ -576,7 +576,7 @@ def test_snapshot_size_cap_invalid_env_falls_back_to_default(
         result = cli.cmd_snapshot(argparse.Namespace())
 
     assert result == 0, (
-        f"invalid MMI_SNAPSHOT_MAX_BYTES={bad_value!r} must fall back to the default 2_000_000 "
+        f"invalid MMI_SNAPSHOT_MAX_BYTES={bad_value!r} must fall back to the default 12_000_000 "
         f"cap (exit 0), not crash or treat the bad value as the cap; got {result}"
     )
     # A warning must name the offending knob so the owner can spot the fat-fingered value.
