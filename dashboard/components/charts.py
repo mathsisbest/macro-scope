@@ -497,8 +497,8 @@ def vol_forecast_value(fc: pd.DataFrame, symbol: str = "SPY") -> float | None:
     Filters the ``ml_forecast`` frame on BOTH ``model == 'rv_har'`` AND ``symbol`` — never the
     model alone — so that if the ML run ever covers multiple symbols (a future config override),
     the positional ``.iloc[0]`` can't surface another asset's forecast in the SPY headline.
-    Returns ``None`` (honest empty state, no IndexError) when there is no matching row or the
-    frame lacks the expected columns.
+    Returns ``None`` (honest empty state, no IndexError) when there is no matching row, the
+    frame lacks the expected columns, or the matched value is null/non-finite.
     """
     needed = {"model", "symbol", "predicted_next_return"}
     if fc.empty or not needed <= set(fc.columns):
@@ -506,7 +506,18 @@ def vol_forecast_value(fc: pd.DataFrame, symbol: str = "SPY") -> float | None:
     rows = fc[(fc["model"] == "rv_har") & (fc["symbol"] == symbol)]
     if rows.empty:
         return None
-    return float(rows["predicted_next_return"].iloc[0])
+    value = rows["predicted_next_return"].iloc[0]
+    # A null/non-finite forecast must surface as the honest empty caption ("No SPY volatility
+    # forecast available yet."), never as a "looks-valid-but-isn't" "nan %" headline. Returning
+    # None here keeps the caller's `is not None` branch falsy. pd.isna also guards against a
+    # None/NULL object-dtype value raising TypeError in float(); math.isfinite additionally
+    # rejects ±inf (which pd.isna treats as non-null).
+    if value is None or pd.isna(value):
+        return None
+    forecast = float(value)
+    if not math.isfinite(forecast):
+        return None
+    return forecast
 
 
 def direction_skill_chart(metrics: pd.DataFrame, symbol: str = "SPY") -> go.Figure:
