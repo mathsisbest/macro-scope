@@ -4,11 +4,15 @@ brief hedges (says "not distinguishable") when the bootstrap says so — never i
 Also covers:
 - post-generation LLM output validation (empty / too-long / key-shaped → llm-rejected tag)
 - body redaction: redact() runs on EVERY persisted body before .md write + mart insert
+- GC: deterministic ordering → byte-identical offline brief regardless of row order
+- GC: HTTP 429 transport error → 'offline-template (llm-failed)', not a crash; tags distinct
+- GC: gather_facts() TypedDict key-set contract — unexpected/missing key raises ValueError
 """
 
 import logging
 
 import duckdb
+import httpx
 import pandas as pd
 
 from mmi.ai import narrative
@@ -486,3 +490,188 @@ def test_generate_brief_redacts_body_in_mart_and_md_file(monkeypatch, tmp_path):
         assert "bearer ***" in md_content
     finally:
         con.close()
+
+
+# ---------------------------------------------------------------------------
+# GC: Deterministic ordering — same facts, different row order → byte-identical brief
+# ---------------------------------------------------------------------------
+
+
+def _portfolio_facts_base() -> dict:
+    """Minimal facts dict with two portfolio strategies and two pairs."""
+    return {
+        "as_of": "2024-01-02 00:00 UTC",
+        "data_date": "2024-01-02",
+        "portfolio": [
+            {
+                "strategy": "sixty_forty",
+                "total_return": 0.08,
+                "max_drawdown": -0.01,
+                "sharpe": 1.10,
+                "sharpe_lo": 0.20,
+                "sharpe_hi": 2.00,
+            },
+            {
+                "strategy": "equal_weight",
+                "total_return": 0.05,
+                "max_drawdown": -0.02,
+                "sharpe": 0.80,
+                "sharpe_lo": 0.10,
+                "sharpe_hi": 1.50,
+            },
+        ],
+        "portfolio_pairs": [
+            {"strategy_a": "risk_parity", "strategy_b": "sixty_forty", "distinguishable": True},
+            {"strategy_a": "equal_weight", "strategy_b": "sixty_forty", "distinguishable": True},
+        ],
+    }
+
+
+def test_offline_brief_deterministic_same_row_order():
+    """Same facts in the same order → identical brief (sanity check)."""
+    facts = _portfolio_facts_base()
+    brief1 = narrative._offline_brief(facts)
+    brief2 = narrative._offline_brief(facts)
+    assert brief1 == brief2
+
+
+def test_offline_brief_byte_identical_regardless_of_portfolio_row_order():
+    """Same portfolio facts but rows in reversed order must produce a byte-identical brief."""
+    facts_a = _portfolio_facts_base()
+    facts_b = _portfolio_facts_base()
+    # Reverse the portfolio rows
+    facts_b["portfolio"] = list(reversed(facts_b["portfolio"]))
+
+    brief_a = narrative._offline_brief(facts_a)
+    brief_b = narrative._offline_brief(facts_b)
+    assert brief_a == brief_b, (
+        "Offline brief is NOT byte-identical when portfolio rows arrive in different order.\n"
+        f"--- facts_a brief ---\n{brief_a}\n--- facts_b brief ---\n{brief_b}"
+    )
+
+
+def test_offline_brief_byte_identical_regardless_of_pairs_row_order():
+    """Same pairs facts but rows in reversed order must produce a byte-identical brief."""
+    facts_a = _portfolio_facts_base()
+    facts_b = _portfolio_facts_base()
+    # Reverse the portfolio_pairs rows
+    facts_b["portfolio_pairs"] = list(reversed(facts_b["portfolio_pairs"]))
+
+    brief_a = narrative._offline_brief(facts_a)
+    brief_b = narrative._offline_brief(facts_b)
+    assert brief_a == brief_b, (
+        "Offline brief is NOT byte-identical when portfolio_pairs rows arrive in different order.\n"
+        f"--- facts_a brief ---\n{brief_a}\n--- facts_b brief ---\n{brief_b}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# GC: Engine tags — HTTP 429 → 'offline-template (llm-failed)', distinct tags
+# ---------------------------------------------------------------------------
+
+
+def test_generate_brief_http_429_degrades_to_llm_failed_not_crash(monkeypatch, tmp_path, caplog):
+    """An HTTP 429 from the LLM provider must degrade to 'offline-template (llm-failed)',
+    NOT crash, and the key must not appear in the logs."""
+    con = _make_minimal_con()
+    monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
+    monkeypatch.setattr(narrative.llm, "available", lambda: True)
+
+    def _rate_limited(*_a, **_k):
+        # Simulate what httpx raises on a 429 response (HTTPStatusError is a subclass of HTTPError)
+        request = httpx.Request("POST", "https://example.com/llm?key=SECRETKEY")
+        response = httpx.Response(429, request=request)
+        raise httpx.HTTPStatusError(
+            "429 Too Many Requests for url https://example.com/llm?key=SECRETKEY",
+            request=request,
+            response=response,
+        )
+
+    monkeypatch.setattr(narrative.llm, "complete", _rate_limited)
+
+    with caplog.at_level(logging.WARNING):
+        text = narrative.generate_brief(con)
+
+    try:
+        # Must not crash — fell back to the offline template.
+        assert "_(template; set an LLM key for AI narrative)_" in text
+        # Engine tag must be 'offline-template (llm-failed)', not the no-key variant.
+        engine = con.execute(
+            "select engine from marts.market_brief order by created_at desc limit 1"
+        ).fetchone()[0]
+        assert engine == "offline-template (llm-failed)"
+        # The warning must be present and the key must be redacted.
+        assert "falling back to offline template" in caplog.text
+        assert "SECRETKEY" not in caplog.text
+    finally:
+        con.close()
+
+
+def test_engine_tags_are_distinct():
+    """The three offline engine tags must all be distinct strings."""
+    tags = [
+        "offline-template",
+        "offline-template (llm-failed)",
+        "offline-template (llm-rejected)",
+    ]
+    assert len(set(tags)) == 3, "Engine tags are not distinct — a branch will be undiagnosable"
+    # The no-key tag must NOT contain a parenthetical suffix.
+    assert "(" not in "offline-template"
+    # The failed tag signals a transport error (429, 5xx, network).
+    assert "llm-failed" in "offline-template (llm-failed)"
+    # The rejected tag signals the LLM responded but the output failed validation.
+    assert "llm-rejected" in "offline-template (llm-rejected)"
+
+
+# ---------------------------------------------------------------------------
+# GC: gather_facts() TypedDict key-set contract
+# ---------------------------------------------------------------------------
+
+
+def test_gather_facts_typeddict_key_set_no_extra_keys():
+    """gather_facts() must return ONLY keys defined in FactsDict — no undocumented extras."""
+    con = duckdb.connect()
+    con.execute("create schema if not exists marts")
+    try:
+        facts = narrative.gather_facts(con)
+    finally:
+        con.close()
+    allowed = narrative._FACTS_REQUIRED_KEYS
+    extra = set(facts.keys()) - allowed
+    assert not extra, f"gather_facts() returned undocumented keys: {extra!r}"
+
+
+def test_validate_facts_keys_rejects_unexpected_key():
+    """_validate_facts_keys() must raise ValueError on an unknown key."""
+    bad_facts = {
+        "as_of": "2024-01-02",
+        "data_date": "2024-01-02",
+        "UNKNOWN_KEY": "should not be here",
+    }
+    import pytest
+
+    with pytest.raises(ValueError, match="unexpected keys"):
+        narrative._validate_facts_keys(bad_facts)
+
+
+def test_validate_facts_keys_accepts_all_valid_keys():
+    """_validate_facts_keys() must not raise when all keys are in the FactsDict contract."""
+    valid_facts = {
+        "as_of": "2024-01-02",
+        "data_date": "2024-01-02",
+        "crypto": [],
+        "spy": {},
+        "yields": {},
+        "portfolio": [],
+        "portfolio_pairs": [],
+        "ml_gate": {},
+        "vol_skill": {},
+    }
+    # Must not raise
+    narrative._validate_facts_keys(valid_facts)
+
+
+def test_validate_facts_keys_accepts_partial_keys():
+    """_validate_facts_keys() must not raise when only some optional keys are present."""
+    partial_facts = {"as_of": "2024-01-02", "data_date": "2024-01-02"}
+    narrative._validate_facts_keys(partial_facts)

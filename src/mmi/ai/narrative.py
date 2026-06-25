@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, TypedDict
 
 import pandas as pd
 
@@ -20,6 +21,56 @@ from mmi.utils.logging import get_logger
 from mmi.utils.redact import redact
 
 log = get_logger("ai.narrative")
+
+# ---------------------------------------------------------------------------
+# Facts TypedDict — contract-frozen key set.
+#
+# gather_facts() must return a dict whose keys are EXACTLY this set (some values
+# are absent / None when the mart is missing, but no extra or missing keys).
+# A contract test (see tests/test_ai_narrative.py) enforces this.
+# ---------------------------------------------------------------------------
+
+
+class FactsDict(TypedDict, total=False):
+    """Typed contract for the facts dict produced by gather_facts().
+
+    All keys are optional (total=False) because individual marts may be absent
+    when running against an empty DB (CI, seed, demo).  The REQUIRED set is
+    validated at runtime by _validate_facts_keys().
+    """
+
+    as_of: str
+    data_date: str
+    crypto: list[dict[str, Any]]
+    spy: dict[str, Any]
+    yields: dict[str, Any]
+    portfolio: list[dict[str, Any]]
+    portfolio_pairs: list[dict[str, Any]]
+    ml_gate: dict[str, Any]
+    vol_skill: dict[str, Any]
+
+
+# The exact set of keys gather_facts() is allowed to produce.  An unexpected
+# key is a contract violation; callers (template, LLM prompt) must not receive
+# undocumented structure.
+# Derived from FactsDict at import time so the contract is always in sync with the TypedDict;
+# __annotations__ is the canonical runtime mapping for TypedDict (works on all CPython ≥3.10).
+_FACTS_REQUIRED_KEYS: frozenset[str] = frozenset(FactsDict.__annotations__)
+
+
+def _validate_facts_keys(facts: dict) -> None:
+    """Raise ValueError if facts contains unknown keys or is missing required ones.
+
+    'as_of' and 'data_date' are unconditionally produced; the rest are conditional
+    on mart availability.  The FORBIDDEN direction is extra (undocumented) keys.
+    """
+    extra = set(facts.keys()) - _FACTS_REQUIRED_KEYS
+    if extra:
+        raise ValueError(
+            f"gather_facts() produced unexpected keys not in the FactsDict contract: {extra!r}. "
+            "Add them to FactsDict or remove them from gather_facts()."
+        )
+
 
 # ---------------------------------------------------------------------------
 # LLM output validation — reject outputs that are empty, too long, or contain
@@ -106,7 +157,7 @@ def _q(con, sql: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def gather_facts(con) -> dict:
+def gather_facts(con) -> FactsDict:
     facts: dict = {"as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
 
     # Pull the most-recent data date from the asset mart so the brief header is grounded in
@@ -180,6 +231,9 @@ def gather_facts(con) -> dict:
         """,
     )
     if not portfolio.empty:
+        # Sort deterministically by strategy name so same facts → byte-identical offline brief
+        # regardless of the order rows arrive from the mart.
+        portfolio = portfolio.sort_values("strategy").reset_index(drop=True)
         facts["portfolio"] = portfolio.to_dict("records")
 
     # Pairwise distinguishability so the brief can hedge when differences are within noise.
@@ -189,6 +243,8 @@ def gather_facts(con) -> dict:
         f"where window_id = '{_BRIEF_WINDOW}'",
     )
     if not pairs.empty:
+        # Sort deterministically so same pairs in any row order → identical brief output.
+        pairs = pairs.sort_values(["strategy_a", "strategy_b"]).reset_index(drop=True)
         facts["portfolio_pairs"] = pairs.to_dict("records")
 
     # The ML gate: the mean weight the forecast earned in mvo_ml's blend. A near-zero weight is the
@@ -211,10 +267,13 @@ def gather_facts(con) -> dict:
         "reasons": verdict["reasons"],
     }
 
-    return facts
+    # Contract enforcement: raise loudly if gather_facts() produced an undocumented key,
+    # so regressions are caught at generation time rather than silently drifting.
+    _validate_facts_keys(facts)
+    return facts  # type: ignore[return-value]
 
 
-def _build_prompt(facts: dict) -> str:
+def _build_prompt(facts: FactsDict) -> str:
     return "Here are today's structured market facts (JSON-like). Write the brief.\n\n" + str(facts)
 
 
@@ -239,15 +298,17 @@ def _distinguishability_note(pairs: list) -> str:
             "_Statistical note: at the 90% level no pair of strategies is distinguishable by "
             "Sharpe — the differences are within bootstrap noise._"
         )
+    # Sort deterministically so same pairs in any input order produce identical output.
+    sorted_distinct = sorted(distinct, key=lambda p: (p["strategy_a"], p["strategy_b"]))
     named = ", ".join(
         f"{_STRATEGY_LABELS.get(p['strategy_a'], p['strategy_a'])} vs "
         f"{_STRATEGY_LABELS.get(p['strategy_b'], p['strategy_b'])}"
-        for p in distinct
+        for p in sorted_distinct
     )
     return f"_Statistical note: only {named} differ beyond bootstrap noise (90% CI)._"
 
 
-def _offline_brief(facts: dict) -> str:
+def _offline_brief(facts: FactsDict) -> str:
     """Deterministic template used when no LLM key is set."""
     # Use the data date (YYYY-MM-DD from the marts) in the header so it is grounded in the
     # actual data window, not the wall-clock generation time (Contract G).
@@ -272,7 +333,9 @@ def _offline_brief(facts: dict) -> str:
         )
     if facts.get("portfolio"):
         lines += ["", "**Strategy comparison** (walk-forward, net of costs):"]
-        for p in facts["portfolio"]:
+        # Sort deterministically by strategy name so the same facts produce a byte-identical
+        # brief regardless of the order the caller assembled the list.
+        for p in sorted(facts["portfolio"], key=lambda x: x.get("strategy", "")):
             name = _STRATEGY_LABELS.get(p["strategy"], p["strategy"])
             lines.append(
                 f"- {name}: {p['total_return'] * 100:+.1f}% total return, "
