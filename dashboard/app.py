@@ -105,7 +105,6 @@ the diversification benefit of bonds within a risk-constrained portfolio.
 
 **Not investment advice**
 
-This dashboard is a data-engineering and machine-learning project.
 Nothing here constitutes financial, investment, or trading advice.
 All backtests are historical and do not guarantee future results.
 Use at your own risk.
