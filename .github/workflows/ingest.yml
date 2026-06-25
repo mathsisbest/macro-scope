@@ -1,12 +1,13 @@
 name: Refresh public snapshot (scheduled)
 
-# Scope 4 of #51 — the MotherDuck-free public path. Runs the pipeline against an EPHEMERAL local
-# DuckDB, exports marts -> data/public/*.parquet, and commits the Parquet. Streamlit Community Cloud
-# (deployed with MMI_SNAPSHOT_MODE=1) auto-redeploys on the push. No MotherDuck; the .duckdb binary
-# is never committed — only the Parquet snapshot. See .github/workflows/deploy-note.md.
+# The MotherDuck-free public path. Runs the pipeline against an EPHEMERAL local DuckDB, exports
+# marts -> data/public/*.parquet, and commits the Parquet. Streamlit Community Cloud (deployed with
+# MMI_SNAPSHOT_MODE=1) auto-redeploys on the push. No MotherDuck; the .duckdb binary is never
+# committed — only the Parquet snapshot. See .github/workflows/deploy-note.md.
 #
-# TWO cadences (the portfolio backtest is a ~static, multi-decade computation that's too heavy to run
-# daily — it barely moves when one new day is appended):
+# Runs ENTIRELY in GitHub Actions (this is a PUBLIC repo: free unlimited Actions minutes + a 6-hour
+# job cap), so even the heavy weekly backtest runs here — never on a laptop. Two cadences because the
+# portfolio backtest is a ~static, multi-decade computation that barely moves day-to-day:
 #   • DAILY  — cheap refresh of prices / macro / crypto / ML. Skips the portfolio backtest AND the
 #              brief; their committed Parquet from the last weekly run is preserved untouched.
 #   • WEEKLY — full refresh incl. the portfolio backtest + the (portfolio-grounded) brief.
@@ -17,13 +18,9 @@ on:
         description: "Full refresh incl. the portfolio backtest (the weekly schedule does this automatically)"
         type: boolean
         default: false
-  # Scheduled refresh is PAUSED while the ML model is refined locally — see #75 to re-enable.
-  # The weekly FULL backtest currently exceeds the 60-min Actions limit (#75), and there's no point
-  # committing partial daily snapshots while the pipeline is in flux. Run on demand via "Run workflow"
-  # (tick `full` for the portfolio backtest). Uncomment to restore daily + weekly auto-refresh.
-  # schedule:
-  #   - cron: "0 6 * * *" # DAILY 06:00 UTC — cheap refresh (prices/macro/crypto/ML); preserves portfolio + brief
-  #   - cron: "0 4 * * 1" # WEEKLY Mon 04:00 UTC — FULL refresh incl. the portfolio backtest + brief
+  schedule:
+    - cron: "0 6 * * *" # DAILY 06:00 UTC — cheap refresh (prices/macro/crypto/ML); preserves portfolio + brief
+    - cron: "0 4 * * 1" # WEEKLY Mon 04:00 UTC — FULL refresh incl. the portfolio backtest + brief
 
 # The job commits the refreshed Parquet snapshot back to the repo.
 permissions:
@@ -36,7 +33,7 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 60 # generous ceiling for the weekly backtest on a 2-core runner; the daily run is ~3-5 min
+    timeout-minutes: 300 # public repo: ~unlimited minutes + 6h job cap, so the heavy weekly backtest (24yr x 3 windows x MVO + n_boot=2000) runs here. Daily is ~3-5 min. Raise toward 360 / lower MMI_PORTFOLIO_N_BOOT if a weekly run nears the cap.
     env:
       # MotherDuck-free: an ephemeral local DuckDB file (gitignored). Force the MotherDuck vars
       # empty so use_motherduck stays False even if repo-level config leaks them in.
@@ -86,6 +83,10 @@ jobs:
             mmi portfolio
             dbt build --project-dir transform --profiles-dir transform --target dev
             mmi ml
+            # Log the headline-model skill verdict (WARN-ONLY: never blocks). We publish the snapshot
+            # regardless and the dashboard shows the honest verdict — "no demonstrated edge / baseline-only"
+            # when the bar isn't cleared. We never re-tune to force a pass (see issue #1).
+            mmi ml-gate --warn-only || true
             mmi ai
           else
             # Daily. Skip the heavy backtest AND the brief (both refresh weekly). Excluding tag:portfolio
@@ -95,6 +96,7 @@ jobs:
             # preserved untouched — the public snapshot stays complete while the daily run stays cheap.
             dbt build --project-dir transform --profiles-dir transform --target dev --exclude tag:portfolio --indirect-selection cautious
             mmi ml
+            mmi ml-gate --warn-only || true # log skill verdict; never blocks
           fi
           mmi snapshot
       # Commit only the Parquet snapshot (never the .duckdb binary, which is gitignored). The push to
