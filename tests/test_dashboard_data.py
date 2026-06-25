@@ -158,3 +158,41 @@ def test_macro_source_caption_is_honest_per_provenance():
     assert "Source: FRED" not in sample and "not from FRED" in sample
     # Mixed / unknown provenance makes no source claim at all.
     assert data.macro_source_caption(None) == ""
+
+
+def test_range_start_presets_map_to_correct_floor():
+    """range_start() turns a Google-style preset into an ISO date floor relative to the anchor
+    (the latest data date). 'Max'/None/empty/unknown -> None (no filter)."""
+    anchor = "2026-06-25"
+    assert data.range_start("Max", anchor) is None
+    assert data.range_start(None, anchor) is None
+    assert data.range_start("1M", anchor) == "2026-05-26"  # 30 days back
+    assert data.range_start("6M", anchor) == "2025-12-25"  # 182 days back
+    assert data.range_start("1Y", anchor) == "2025-06-25"  # 365 days back
+    assert data.range_start("5Y", anchor) == "2021-06-26"  # 5*365 days back
+    assert data.range_start("YTD", anchor) == "2026-01-01"  # Jan 1 of the anchor's year
+    # No anchor or an unparseable/unknown value -> no floor (don't crash).
+    assert data.range_start("1Y", "") is None
+    assert data.range_start("bogus", anchor) is None
+    assert data.range_start("1M", "not-a-date") is None
+
+
+def test_asset_daily_start_filters_rows(monkeypatch, tmp_path):
+    """asset_daily(symbol, start) adds a `date >= ?` floor; without start returns all rows."""
+    db = tmp_path / "m.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema marts")
+    con.execute(
+        "create table marts.fct_asset_daily as select * from (values "
+        "('SPY', DATE '2020-01-01', 10.0, 0.0, 1.0, 9.0), "
+        "('SPY', DATE '2026-06-25', 20.0, 0.0, 2.0, 19.0)) "
+        "as t(symbol, date, close, daily_return, vol_20d, ma_50)"
+    )
+    con.close()
+    monkeypatch.setattr(settings_mod.settings, "snapshot_mode", False)
+    monkeypatch.setattr(settings_mod.settings, "duckdb_path", db)
+    data.query.clear()
+    assert len(data.asset_daily("SPY")) == 2  # no floor → both rows
+    data.query.clear()
+    recent = data.asset_daily("SPY", "2026-01-01")  # floor drops the 2020 row
+    assert len(recent) == 1 and str(recent["date"].iloc[0]).startswith("2026")

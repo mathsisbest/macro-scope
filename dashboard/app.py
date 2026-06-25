@@ -152,19 +152,18 @@ with st.sidebar:
 
 
 # --------------------------------------------------------------------------- KPI row
+# Headline figures always show the LATEST value (unaffected by the date-range selector below).
 kpis: list[dict] = []
-csyms = data.crypto_symbols()
-if csyms:
-    cdf = data.crypto_intraday(csyms[0])
-    if len(cdf) > 25:
-        last, prev = cdf["price_usd"].iloc[-1], cdf["price_usd"].iloc[-25]
-        kpis.append(
-            {
-                "label": f"{csyms[0].title()} (USD)",
-                "value": f"${last:,.0f}",
-                "delta": f"{(last / prev - 1) * 100:+.1f}% 24h",
-            }
-        )
+btc = data.asset_daily("BTC")
+if not btc.empty:
+    br = btc["daily_return"].iloc[-1]
+    kpis.append(
+        {
+            "label": "BTC close",
+            "value": f"${btc['close'].iloc[-1]:,.0f}",
+            "delta": f"{(br or 0) * 100:+.2f}%",
+        }
+    )
 
 spy = data.asset_daily("SPY")
 if not spy.empty:
@@ -191,6 +190,19 @@ if kpis:
 
 st.divider()
 
+# --------------------------------------------------------------------------- global date range
+# One Google-Finance-style selector that filters EVERY time-series chart across all tabs. The
+# aggregate stat panels (bootstrap Sharpe CIs, attribution, BTC effect) stay full-window — they
+# are window-level statistics, not per-row series.
+_range = st.segmented_control(
+    "Date range",
+    data.RANGE_PRESETS,
+    default="Max",
+    key="chart_range",
+    help="Filters every time-series chart. Portfolio bootstrap stats stay full-window.",
+)
+rng_start = data.range_start(_range, as_of)
+
 # --------------------------------------------------------------------------- tabs
 # Human labels for the Phase-D backtest windows (the selector in the Portfolio tab).
 _WINDOW_LABELS = {
@@ -204,49 +216,33 @@ tab_mkt, tab_macro, tab_ml, tab_ai, tab_portfolio = st.tabs(
 )
 
 with tab_mkt:
+    # One unified asset selector spanning every class — equities, ETFs, bonds, commodities, FX AND
+    # crypto (BTC has full daily history in fct_asset_daily, so it gets price + volatility like any
+    # other asset). The old separate CoinGecko spot panel is gone (it was a degenerate ~3-point
+    # series); the BTC headline KPI above covers the live figure.
     adf = data.assets()
-    non_crypto = adf[adf["asset_class"] != "crypto"]["symbol"].tolist() if not adf.empty else []
-    col1, col2 = st.columns(2)
-    with col1:
-        if non_crypto:
-            sym = st.selectbox(
-                "Asset", non_crypto, index=non_crypto.index("SPY") if "SPY" in non_crypto else 0
-            )
-            d = data.asset_daily(sym)
-            if not d.empty:
+    syms = adf["symbol"].tolist() if not adf.empty else []
+    if syms:
+        sym = st.selectbox("Asset", syms, index=syms.index("SPY") if "SPY" in syms else 0)
+        d = data.asset_daily(sym, rng_start)
+        if not d.empty:
+            mc1, mc2 = st.columns(2)
+            with mc1:
                 st.plotly_chart(charts.price_chart(d, sym), use_container_width=True)
+            with mc2:
                 st.plotly_chart(charts.vol_chart(d, sym), use_container_width=True)
-            else:
-                st.info(
-                    f"No daily price data for {sym} yet. "
-                    "Run `mmi ingest` (or `make demo`) to populate."
-                )
         else:
             st.info(
-                "No asset data yet. Run `mmi ingest` or `make demo` to populate the markets tab."
+                f"No daily price data for {sym} yet. Run `mmi ingest` (or `make demo`) to populate."
             )
-    with col2:
-        if csyms:
-            c = st.selectbox("Crypto", csyms)
-            cd = data.crypto_intraday(c)
-            if not cd.empty:
-                st.plotly_chart(charts.crypto_chart(cd, c), use_container_width=True)
-            else:
-                st.info(
-                    f"No intraday data for {c} yet. Run `mmi ingest` (or `make demo`) to populate."
-                )
-        else:
-            st.info(
-                "No crypto data yet. "
-                "This is normal during the daily-cron partial state — "
-                "crypto data arrives on the next full ingest."
-            )
+    else:
+        st.info("No asset data yet. Run `mmi ingest` or `make demo` to populate the markets tab.")
 
 with tab_macro:
     ids = data.macro_ids()
     if ids:
         mid = st.selectbox("Series", ids)
-        md = data.macro(mid)
+        md = data.macro(mid, rng_start)
         if not md.empty:
             st.plotly_chart(charts.macro_chart(md, mid), use_container_width=True)
         else:
@@ -257,8 +253,9 @@ with tab_macro:
             "Run `mmi ingest` (or `make demo`) to pull FRED / World Bank indicators. "
             "In the daily-cron partial state this tab populates once the first full ingest runs."
         )
-    if not mm.empty:
-        st.plotly_chart(charts.yield_curve_chart(mm), use_container_width=True)
+    mm_view = data.market_macro(rng_start)
+    if not mm_view.empty:
+        st.plotly_chart(charts.yield_curve_chart(mm_view), use_container_width=True)
     # Source line for the macro charts. Live FRED data (every series here — CPIAUCSL, UNRATE, DGS10,
     # DGS2, FEDFUNDS — and the 10Y−2Y curve are FRED) earns the FRED attribution; sample data must
     # NOT be attributed to FRED (it's synthetic). Decision lives in a pure, tested helper.
@@ -270,7 +267,7 @@ with tab_macro:
     # Macro CONTEXT only — not a return/price forecast (Contract E, §8).
     # The panel is always rendered (even when the main macro series are empty) because
     # fct_recession_risk is an independent mart built from the yield-curve data.
-    rr = data.recession_risk()
+    rr = data.recession_risk(rng_start)
     with st.expander("📉 Recession-risk probability (yield-curve model)", expanded=not rr.empty):
         if rr.empty:
             st.info(
@@ -343,8 +340,9 @@ with tab_ml:
                 if not trained_at.empty:
                     st.caption(f"Model trained {trained_at.iloc[0]}")
 
-        if not reg.empty:
-            st.plotly_chart(charts.regime_chart(reg, "SPY"), use_container_width=True)
+        reg_view = data.regimes("SPY", rng_start)
+        if not reg_view.empty:
+            st.plotly_chart(charts.regime_chart(reg_view, "SPY"), use_container_width=True)
 
         st.divider()
 
@@ -413,7 +411,7 @@ with tab_portfolio:
                 "Volatility regimes are cut within each window, so regime labels aren't comparable "
                 "across windows."
             )
-        pf = data.portfolio_returns(window_id)
+        pf = data.portfolio_returns(window_id, rng_start)
         st.caption(
             "Walk-forward backtest: three allocation strategies vs a 60/40 benchmark — same dates, "
             "monthly rebalancing and round-trip costs, so the comparison is like-for-like."
@@ -489,7 +487,7 @@ with tab_portfolio:
                 )
 
         # ML experiment: did the forecast add value? (the gate makes mvo_ml ≈ mvo_histmean legible)
-        gate = data.portfolio_ml_gate(window_id)
+        gate = data.portfolio_ml_gate(window_id, rng_start)
         if not gate.empty:
             with st.expander("🔬 ML experiment — does the forecast add value?", expanded=False):
                 st.info("🔬 " + charts.ml_verdict(gate, pairs))
