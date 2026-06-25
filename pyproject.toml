@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Zero-cost, code-first markets + macro data platform: ingestion, dbt, ML, GenAI, Streamlit BI."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { text = "Proprietary — All Rights Reserved (see LICENSE)" }
 authors = [{ name = "mathsisbest" }]
 keywords = ["data-engineering", "analytics-engineering", "dbt", "duckdb", "streamlit", "ml", "genai"]
 

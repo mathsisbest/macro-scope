@@ -126,4 +126,6 @@ See [PLAN.md §6](./PLAN.md#6-repository-structure). TL;DR: `src/mmi/` (ingestio
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+**Source-available, not open source.** © 2026 mathsisbest — all rights reserved.
+This repository is public for portfolio and demonstration purposes only; no reuse
+license is granted. See [LICENSE](./LICENSE).
