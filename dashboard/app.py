@@ -28,14 +28,15 @@ from mmi.utils.db import connect  # noqa: E402
 # --------------------------------------------------------------------------- page config
 _FAVICON = Path(__file__).resolve().parent / "assets" / "favicon.png"
 st.set_page_config(
-    page_title="Markets & Macro Intelligence",
+    page_title="Macro Scope",
     page_icon=str(_FAVICON) if _FAVICON.exists() else "📈",
     layout="wide",
 )
 inject_css()
 
 # --------------------------------------------------------------------------- hero / header
-st.title("📈 Markets & Macro Intelligence")
+st.title("📈 Macro Scope")
+st.subheader("Markets & Macro Intelligence")
 st.caption(
     "Live markets + macro · **ingest → dbt → ML → GenAI → BI** · all free tiers · "
     "walk-forward backtesting · no secrets required in the public app"
