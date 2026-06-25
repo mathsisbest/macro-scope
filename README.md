@@ -1,4 +1,6 @@
-# Markets & Macro Intelligence 📈🌍
+# Macro Scope 📈🌍
+
+### Markets & Macro Intelligence
 
 [![CI](https://github.com/mathsisbest/macro-scope/actions/workflows/ci.yml/badge.svg)](https://github.com/mathsisbest/macro-scope/actions/workflows/ci.yml)
 [![Ingest](https://github.com/mathsisbest/macro-scope/actions/workflows/ingest.yml/badge.svg)](https://github.com/mathsisbest/macro-scope/actions/workflows/ingest.yml)
