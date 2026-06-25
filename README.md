@@ -36,9 +36,10 @@ keys, no live database connection. The pipeline works as follows:
    a **weekly** run additionally runs the heavy portfolio backtest + the GenAI brief.
 2. The Action commits the Parquet files back to the repo. Streamlit Community Cloud detects the
    push and auto-redeploys.
-3. The public Streamlit app starts with `MMI_SNAPSHOT_MODE=1`, opens the committed Parquet files
-   in-process, and never touches a network connection — no MotherDuck, no API secrets required at
-   serve time.
+3. The public Streamlit app reads those committed Parquet files in-process. It **auto-detects**
+   snapshot mode when no live database is configured (the deploy case), so **no secrets are
+   required at serve time** — no MotherDuck, no API keys, no network connection. (Set
+   `MMI_SNAPSHOT_MODE=1` to pin it explicitly if you ever need to.)
 
 Because this is a **public** repo, GitHub Actions gives free unlimited minutes and a 6-hour job cap,
 so even the heavy portfolio backtest (24 years × 3 windows × MVO + bootstrap, `n_boot=2000`) runs in
