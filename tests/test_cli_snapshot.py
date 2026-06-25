@@ -446,3 +446,98 @@ def test_snapshot_preservation_invariant(monkeypatch, tmp_path):
     # Portfolio and brief tables were NOT in the DB this run, so not in the manifest.
     assert "fct_portfolio_returns" not in manifest["tables"]
     assert "market_brief" not in manifest["tables"]
+
+
+# ---------------------------------------------------------------------------
+# D6 — fail-loud size cap (MMI_SNAPSHOT_MAX_BYTES)
+# ---------------------------------------------------------------------------
+
+
+def test_snapshot_size_cap_normal_passes(monkeypatch, tmp_path):
+    """A normal (small) snapshot stays under the default cap → exit 0."""
+    db = tmp_path / "m.duckdb"
+    _marts_db(db)
+    out = tmp_path / "public"
+    monkeypatch.setattr(settings_mod.settings, "snapshot_dir", out)
+    monkeypatch.setattr(cli, "connect", _connect_to(db))
+    # Ensure the env var is absent so the default 2_000_000 cap applies.
+    monkeypatch.delenv("MMI_SNAPSHOT_MAX_BYTES", raising=False)
+
+    assert cli.cmd_snapshot(argparse.Namespace()) == 0
+
+
+def test_snapshot_size_cap_exceeded_exits_nonzero(monkeypatch, tmp_path, capsys):
+    """Monkeypatching MMI_SNAPSHOT_MAX_BYTES to 1 forces the cap to trigger → exit 1."""
+    db = tmp_path / "m.duckdb"
+    _marts_db(db)
+    out = tmp_path / "public"
+    monkeypatch.setattr(settings_mod.settings, "snapshot_dir", out)
+    monkeypatch.setattr(cli, "connect", _connect_to(db))
+    monkeypatch.setenv("MMI_SNAPSHOT_MAX_BYTES", "1")
+
+    result = cli.cmd_snapshot(argparse.Namespace())
+
+    assert result == 1, "cmd_snapshot must exit non-zero when the size cap is exceeded"
+
+    # The error message must name both the total and the cap.
+    captured = capsys.readouterr()
+    assert "cap" in captured.err.lower() or "exceed" in captured.err.lower(), (
+        "stderr must mention the cap or 'exceed'"
+    )
+    # Parquets must still be present (we export first, cap check is after).
+    assert any(out.glob("*.parquet")), "parquets must be written before the cap check"
+
+
+def test_snapshot_size_cap_message_names_total_and_cap(monkeypatch, tmp_path, capsys):
+    """The cap-exceeded stderr message must include the numeric total and the cap value."""
+    db = tmp_path / "m.duckdb"
+    _marts_db(db)
+    out = tmp_path / "public"
+    monkeypatch.setattr(settings_mod.settings, "snapshot_dir", out)
+    monkeypatch.setattr(cli, "connect", _connect_to(db))
+    cap = 1
+    monkeypatch.setenv("MMI_SNAPSHOT_MAX_BYTES", str(cap))
+
+    cli.cmd_snapshot(argparse.Namespace())
+    captured = capsys.readouterr()
+
+    assert str(cap) in captured.err, "stderr must contain the cap value"
+    # The total bytes should appear somewhere in the message (may be formatted with commas).
+    total = sum(p.stat().st_size for p in out.glob("*.parquet"))
+    # Strip commas for comparison since the message formats with {:,}.
+    assert str(total).replace(",", "") in captured.err.replace(",", ""), (
+        "stderr must contain the total bytes"
+    )
+
+
+def test_snapshot_size_cap_whole_schema_exported_before_check(monkeypatch, tmp_path):
+    """Even when the cap is exceeded ALL marts are exported (cap check is post-export)."""
+    db = tmp_path / "m.duckdb"
+    _marts_db(db)  # dim_asset + fct_portfolio_returns
+    out = tmp_path / "public"
+    monkeypatch.setattr(settings_mod.settings, "snapshot_dir", out)
+    monkeypatch.setattr(cli, "connect", _connect_to(db))
+    monkeypatch.setenv("MMI_SNAPSHOT_MAX_BYTES", "1")
+
+    result = cli.cmd_snapshot(argparse.Namespace())
+
+    assert result == 1
+    # Both tables must be present — the export is whole-schema, not trimmed.
+    exported = {p.name for p in out.glob("*.parquet")}
+    assert "dim_asset.parquet" in exported
+    assert "fct_portfolio_returns.parquet" in exported
+
+
+def test_snapshot_manifest_still_written_when_cap_exceeded(monkeypatch, tmp_path):
+    """The manifest is written before the size-cap check, so it exists even on exit 1."""
+    db = tmp_path / "m.duckdb"
+    _marts_db(db)
+    out = tmp_path / "public"
+    monkeypatch.setattr(settings_mod.settings, "snapshot_dir", out)
+    monkeypatch.setattr(cli, "connect", _connect_to(db))
+    monkeypatch.setenv("MMI_SNAPSHOT_MAX_BYTES", "1")
+
+    result = cli.cmd_snapshot(argparse.Namespace())
+
+    assert result == 1
+    assert (out / "_manifest.json").exists(), "_manifest.json must be written even when cap fails"

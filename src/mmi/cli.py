@@ -211,6 +211,51 @@ def cmd_snapshot(_: argparse.Namespace) -> int:
         raise
 
     log.info("snapshot: exported %d marts tables to %s", len(tables), out_dir)
+
+    # --- fail-loud size cap (Contract A) ---
+    # After a successful export, sum the bytes of every *.parquet in out_dir.
+    # If the total exceeds MMI_SNAPSHOT_MAX_BYTES (default 2_000_000 — the
+    # pre-commit --maxkb=2000 limit), exit non-zero with a clear message so the
+    # owner notices before committing an oversized snapshot.
+    # The remedy is a new downsampled dbt mart; do NOT trim or exclude marts here.
+    import os as _os
+
+    default_max_bytes = 2_000_000
+    raw_max = _os.environ.get("MMI_SNAPSHOT_MAX_BYTES")
+    max_bytes = default_max_bytes
+    if raw_max is not None:
+        try:
+            parsed_max = int(raw_max)
+            if parsed_max > 0:
+                max_bytes = parsed_max
+            else:
+                log.warning(
+                    "MMI_SNAPSHOT_MAX_BYTES=%d must be > 0; using default %d",
+                    parsed_max,
+                    default_max_bytes,
+                )
+        except ValueError:
+            log.warning(
+                "MMI_SNAPSHOT_MAX_BYTES=%r is not an integer; using default %d",
+                raw_max,
+                default_max_bytes,
+            )
+
+    total_bytes = sum(p.stat().st_size for p in out_dir.glob("*.parquet"))
+    if total_bytes > max_bytes:
+        log.error(
+            "snapshot: total parquet size %d bytes exceeds cap %d bytes — "
+            "remedy is a new downsampled dbt mart, NOT trimming the export",
+            total_bytes,
+            max_bytes,
+        )
+        print(
+            f"ERROR: snapshot size {total_bytes:,} bytes exceeds cap {max_bytes:,} bytes. "
+            "Remedy: add a downsampled dbt mart — do NOT exclude marts from the export.",
+            file=sys.stderr,
+        )
+        return 1
+
     return 0
 
 
