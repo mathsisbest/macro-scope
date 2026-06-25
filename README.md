@@ -6,7 +6,7 @@
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230)](https://github.com/astral-sh/ruff)
 [![Cost](https://img.shields.io/badge/cost-%C2%A30%2Fmo-brightgreen)](#cost)
 
-**Live demo: _URL pending first deploy — see [docs/RUNBOOK.md](./docs/RUNBOOK.md)_**
+**Live demo: <https://macro-scope.streamlit.app>** &nbsp;·&nbsp; _free, public, auto-refreshing (see [docs/RUNBOOK.md](./docs/RUNBOOK.md))_
 
 > **Desktop layout only.** The dashboard is optimised for a laptop or wider screen;
 > narrow/mobile viewports are not supported.
