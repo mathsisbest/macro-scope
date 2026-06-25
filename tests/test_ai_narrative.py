@@ -122,6 +122,19 @@ def test_offline_brief_renders_sharpe_ci_and_hedges():
     assert "no pair of strategies is distinguishable" in brief  # honest hedge
 
 
+def test_offline_brief_header_states_the_reason_honestly():
+    """The header note must reflect WHY the template was used — defaulting to 'no LLM key set',
+    but stating the real reason when a key was present and the call failed (it used to always say
+    'set an LLM key', which lied when a key was configured but the provider 503'd)."""
+    facts = {"data_date": "2026-06-25"}
+    default = narrative._offline_brief(facts)
+    assert "data as of 2026-06-25" in default
+    assert "(deterministic template — no LLM key set)" in default
+    assert "set an LLM key" not in default  # the old misleading phrasing is gone
+    failed = narrative._offline_brief(facts, note="LLM temporarily unavailable")
+    assert "(deterministic template — LLM temporarily unavailable)" in failed
+
+
 def test_offline_brief_lists_distinguishable_pairs_when_present():
     facts = {
         "as_of": "x",
@@ -208,7 +221,7 @@ def test_generate_brief_falls_back_to_offline_template_on_api_error(monkeypatch,
 
     try:
         # Fell back to the deterministic template instead of raising.
-        assert "_(template; set an LLM key for AI narrative)_" in text
+        assert "_(deterministic template —" in text  # fell back to the offline template
         # Persisted, tagged distinctly from the no-key path so a failed live call is legible.
         engine = con.execute(
             "select engine from marts.market_brief order by created_at desc limit 1"
@@ -290,7 +303,7 @@ def test_generate_brief_rejects_empty_llm_output(monkeypatch, tmp_path, caplog):
         text = narrative.generate_brief(con)
 
     try:
-        assert "_(template; set an LLM key for AI narrative)_" in text
+        assert "_(deterministic template —" in text  # fell back to the offline template
         engine = con.execute(
             "select engine from marts.market_brief order by created_at desc limit 1"
         ).fetchone()[0]
@@ -312,7 +325,7 @@ def test_generate_brief_rejects_too_long_llm_output(monkeypatch, tmp_path, caplo
         text = narrative.generate_brief(con)
 
     try:
-        assert "_(template; set an LLM key for AI narrative)_" in text
+        assert "_(deterministic template —" in text  # fell back to the offline template
         engine = con.execute(
             "select engine from marts.market_brief order by created_at desc limit 1"
         ).fetchone()[0]
@@ -334,7 +347,7 @@ def test_generate_brief_rejects_key_shaped_llm_output(monkeypatch, tmp_path, cap
         text = narrative.generate_brief(con)
 
     try:
-        assert "_(template; set an LLM key for AI narrative)_" in text
+        assert "_(deterministic template —" in text  # fell back to the offline template
         engine = con.execute(
             "select engine from marts.market_brief order by created_at desc limit 1"
         ).fetchone()[0]
@@ -594,7 +607,7 @@ def test_generate_brief_http_429_degrades_to_llm_failed_not_crash(monkeypatch, t
 
     try:
         # Must not crash — fell back to the offline template.
-        assert "_(template; set an LLM key for AI narrative)_" in text
+        assert "_(deterministic template —" in text  # fell back to the offline template
         # Engine tag must be 'offline-template (llm-failed)', not the no-key variant.
         engine = con.execute(
             "select engine from marts.market_brief order by created_at desc limit 1"

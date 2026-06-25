@@ -71,10 +71,15 @@ CARD_PADDING: str = "14px 16px"  # inner padding for metric cards
 
 def style_fig(fig: go.Figure, height: int = 360) -> go.Figure:
     """Apply the house style to any Plotly figure."""
+    # A figure title and the horizontal top legend both sit above the plot area; with a tight top
+    # margin they collide (the SPY "price & 50d moving average" title overlapped its legend). Give
+    # titled figures extra top headroom and pin the title to the very top so the legend sits below
+    # it, not on top of it. Title-less figures keep the compact margin.
+    has_title = bool(fig.layout.title.text)
     fig.update_layout(
         template="plotly_dark",
         height=height,
-        margin=dict(l=10, r=10, t=40, b=10),
+        margin=dict(l=10, r=10, t=72 if has_title else 40, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color=PALETTE["text"], size=13),
@@ -82,6 +87,8 @@ def style_fig(fig: go.Figure, height: int = 360) -> go.Figure:
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         hovermode="x unified",
     )
+    if has_title:
+        fig.update_layout(title=dict(y=1.0, yanchor="top", x=0, xanchor="left", pad=dict(b=6)))
     fig.update_xaxes(gridcolor=PALETTE["grid"], zeroline=False)
     fig.update_yaxes(gridcolor=PALETTE["grid"], zeroline=False)
     return fig
@@ -92,6 +99,9 @@ def inject_css() -> None:
         f"""
         <style>
         .stApp {{ background: {PALETTE["bg"]}; }}
+        /* Trim Streamlit's tall default top padding (~6rem) so the KPIs and first chart sit
+           higher / closer to above-the-fold without crowding the top toolbar. */
+        .block-container {{ padding-top: 3rem; }}
         [data-testid="stMetric"] {{
             background: {PALETTE["panel"]}; border: 1px solid {PALETTE["grid"]};
             padding: 14px 16px; border-radius: 12px;
