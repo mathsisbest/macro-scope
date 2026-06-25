@@ -618,20 +618,11 @@ def compute_tsmom_overlay(
         )
         per_strategy["experiment"] = TSMOM_OVERLAY
         pairs["experiment"] = TSMOM_OVERLAY
-        stats = pd.concat(
-            [
-                per_strategy,
-                pairs.rename(
-                    columns={
-                        "strategy_a": "strategy",
-                        "sharpe_a": "sharpe",
-                    }
-                ),
-            ],
-            ignore_index=True,
-            sort=False,
-        )
-        # Return the two frames separately for callers that want them distinct
+        # One long stats frame stacking the per-strategy rows and the pairwise rows. Each row type
+        # keeps its own canonical bootstrap_strategy_stats columns (per-strategy: strategy/sharpe/…;
+        # pairwise: strategy_a/strategy_b/sharpe_a/sharpe_b/…) — the SAME schema used by the
+        # production raw.portfolio_strategy_stats / raw.portfolio_strategy_pairs tables — so the two
+        # row kinds stay distinguishable and consistent with the rest of the pipeline.
         stats = pd.concat([per_strategy, pairs], ignore_index=True, sort=False)
     except ValueError:
         log.warning("tsmom_overlay: too few invested dates for bootstrap CI; skipping stats")
