@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 
 import duckdb
@@ -66,16 +67,40 @@ def query(sql: str, params: tuple | None = None) -> pd.DataFrame:
         con.close()
 
 
+# Date-range presets for the global chart range selector (Google-Finance style).
+RANGE_PRESETS: tuple[str, ...] = ("1M", "6M", "YTD", "1Y", "5Y", "Max")
+
+
+def range_start(preset: str | None, anchor: str) -> str | None:
+    """Map a range preset to an ISO start-date floor relative to ``anchor`` (the latest data date,
+    ``"YYYY-MM-DD"``). Returns ``None`` for "Max"/unknown/empty (no floor). Pure + unit-tested; the
+    time-series accessors apply it as ``date >= ?`` so one global selector filters every chart."""
+    if not anchor or preset in (None, "Max"):
+        return None
+    try:
+        end = date.fromisoformat(anchor[:10])
+    except ValueError:
+        return None
+    if preset == "YTD":
+        return f"{end.year:04d}-01-01"
+    days = {"1M": 30, "6M": 182, "1Y": 365, "5Y": 365 * 5}.get(preset)
+    return (end - timedelta(days=days)).isoformat() if days else None
+
+
 def assets() -> pd.DataFrame:
     return query("select symbol, asset_class from marts.dim_asset order by asset_class, symbol")
 
 
-def asset_daily(symbol: str) -> pd.DataFrame:
-    return query(
-        "select date, close, daily_return, vol_20d, ma_50 from marts.fct_asset_daily "
-        "where symbol = ? order by date",
-        (symbol,),
+def asset_daily(symbol: str, start: str | None = None) -> pd.DataFrame:
+    sql = (
+        "select date, close, daily_return, vol_20d, ma_50 "
+        "from marts.fct_asset_daily where symbol = ?"
     )
+    params: tuple[str, ...] = (symbol,)
+    if start:
+        sql += " and date >= ?"
+        params += (start,)
+    return query(sql + " order by date", params)
 
 
 def portfolio_windows() -> list[str]:
@@ -89,12 +114,18 @@ def portfolio_windows() -> list[str]:
     return [w for w in windows.WINDOWS if w in present]
 
 
-def portfolio_returns(window_id: str = windows.DEFAULT_WINDOW) -> pd.DataFrame:
-    return query(
+def portfolio_returns(
+    window_id: str = windows.DEFAULT_WINDOW, start: str | None = None
+) -> pd.DataFrame:
+    sql = (
         "select strategy, date, daily_return, cumulative_return, drawdown, rolling_sharpe_252 "
-        "from marts.fct_portfolio_returns where window_id = ? order by strategy, date",
-        (window_id,),
+        "from marts.fct_portfolio_returns where window_id = ?"
     )
+    params: tuple[str, ...] = (window_id,)
+    if start:
+        sql += " and date >= ?"
+        params += (start,)
+    return query(sql + " order by strategy, date", params)
 
 
 def portfolio_strategy_stats(window_id: str = windows.DEFAULT_WINDOW) -> pd.DataFrame:
@@ -131,12 +162,18 @@ def portfolio_regime_performance(window_id: str = windows.DEFAULT_WINDOW) -> pd.
     )
 
 
-def portfolio_ml_gate(window_id: str = windows.DEFAULT_WINDOW) -> pd.DataFrame:
-    return query(
+def portfolio_ml_gate(
+    window_id: str = windows.DEFAULT_WINDOW, start: str | None = None
+) -> pd.DataFrame:
+    sql = (
         "select date, forecast_skill, forecast_weight "
-        "from marts.fct_portfolio_ml_gate where window_id = ? order by date",
-        (window_id,),
+        "from marts.fct_portfolio_ml_gate where window_id = ?"
     )
+    params: tuple[str, ...] = (window_id,)
+    if start:
+        sql += " and date >= ?"
+        params += (start,)
+    return query(sql + " order by date", params)
 
 
 def portfolio_btc_effect() -> pd.DataFrame:
@@ -166,15 +203,18 @@ def macro_ids() -> list[str]:
     return df["series_id"].tolist() if not df.empty else []
 
 
-def macro(series_id: str) -> pd.DataFrame:
-    return query(
-        "select date, value, change from marts.fct_macro_indicator "
-        "where series_id = ? order by date",
-        (series_id,),
-    )
+def macro(series_id: str, start: str | None = None) -> pd.DataFrame:
+    sql = "select date, value, change from marts.fct_macro_indicator where series_id = ?"
+    params: tuple[str, ...] = (series_id,)
+    if start:
+        sql += " and date >= ?"
+        params += (start,)
+    return query(sql + " order by date", params)
 
 
-def market_macro() -> pd.DataFrame:
+def market_macro(start: str | None = None) -> pd.DataFrame:
+    if start:
+        return query("select * from marts.fct_market_macro where date >= ? order by date", (start,))
     return query("select * from marts.fct_market_macro order by date")
 
 
@@ -186,11 +226,13 @@ def ml_forecast() -> pd.DataFrame:
     return query("select * from marts.ml_forecast")
 
 
-def regimes(symbol: str) -> pd.DataFrame:
-    return query(
-        "select date, vol_20d, regime from marts.fct_regime where symbol = ? order by date",
-        (symbol,),
-    )
+def regimes(symbol: str, start: str | None = None) -> pd.DataFrame:
+    sql = "select date, vol_20d, regime from marts.fct_regime where symbol = ?"
+    params: tuple[str, ...] = (symbol,)
+    if start:
+        sql += " and date >= ?"
+        params += (start,)
+    return query(sql + " order by date", params)
 
 
 def latest_brief() -> pd.DataFrame:
@@ -243,7 +285,7 @@ def is_sample_data() -> bool | None:
     return None  # mixed sample + live
 
 
-def recession_risk() -> pd.DataFrame:
+def recession_risk(start: str | None = None) -> pd.DataFrame:
     """Estrella-Mishkin probit recession-probability time series.
 
     Returns ``(date, spread_10y_3m, recession_prob, model)`` — one row per date present in the
@@ -251,10 +293,10 @@ def recession_risk() -> pd.DataFrame:
     ``'10y_2y_proxy'`` when 10Y–2Y was used as a fallback (e.g. synthetic seed data). Returns an
     empty DataFrame when the mart is not yet built.
     """
-    return query(
-        "select date, spread_10y_3m, recession_prob, model "
-        "from marts.fct_recession_risk order by date"
-    )
+    base = "select date, spread_10y_3m, recession_prob, model from marts.fct_recession_risk"
+    if start:
+        return query(base + " where date >= ? order by date", (start,))
+    return query(base + " order by date")
 
 
 def macro_source_caption(is_sample: bool | None) -> str:
