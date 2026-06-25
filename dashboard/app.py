@@ -206,7 +206,7 @@ rng_start = data.range_start(_range, as_of)
 # --------------------------------------------------------------------------- tabs
 # Human labels for the Phase-D backtest windows (the selector in the Portfolio tab).
 _WINDOW_LABELS = {
-    "ex_btc_2002": "2002–present · ex-BTC",
+    "ex_btc_2002": "~2004–present · ex-BTC",
     "ex_btc_2015": "2015–present · ex-BTC (BTC era)",
     "inc_btc_2015": "2015–present · incl. BTC",
 }

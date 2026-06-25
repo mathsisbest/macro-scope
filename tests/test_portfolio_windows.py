@@ -132,3 +132,26 @@ def test_cmd_portfolio_lands_all_three_windows(monkeypatch, tmp_path):
     assert {w[0] for w in wins} == {"ex_btc_2002", "ex_btc_2015", "inc_btc_2015"}
     lo = dict(zip(spans["window_id"], spans["lo"], strict=True))
     assert lo["ex_btc_2002"] < lo["ex_btc_2015"]  # the 2002 window is genuinely longer
+
+
+def test_window_restricts_to_universe_and_floors_to_common_start():
+    """ex_btc_2002 keeps only PORTFOLIO_UNIVERSE sleeves (drops redundant QQQ + FX) and floors to
+    the latest per-sleeve inception, so every rebalance optimises over the full universe."""
+    early = pd.bdate_range("2000-01-03", periods=1600)  # long history that spans past GLD's start
+    late = pd.bdate_range("2004-11-18", periods=300)  # a GLD-style later inception (overlaps early)
+    rng = np.random.default_rng(2)
+    rows = []
+    for sym, dts, cls in [
+        ("SPY", early, "equities"),
+        ("QQQ", early, "equities"),  # redundant equity beta — must be dropped
+        ("EURUSD", early, "fx"),  # FX — must be dropped
+        ("TLT", early, "bonds"),
+        ("GLD", late, "commodities"),  # later inception → sets the common-history floor
+    ]:
+        for d, r in zip(dts, rng.normal(0.0, 0.01, len(dts)), strict=True):
+            rows.append({"symbol": sym, "date": d, "daily_return": float(r), "asset_class": cls})
+    ad = pd.DataFrame(rows)
+
+    ex2002 = compute.window_asset_daily(ad, windows.EX_BTC_2002)
+    assert set(ex2002["symbol"]) == {"SPY", "TLT", "GLD"}  # universe only; QQQ + EURUSD dropped
+    assert ex2002["date"].min() == late[0]  # floored to GLD's (latest) inception, not 2000

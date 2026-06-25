@@ -87,13 +87,25 @@ def window_asset_daily(
 
     Built as a SEPARATE filtered frame per window — never one merged panel — because a merged
     panel's ``dropna(how='any')`` (in the ML path) would collapse the ex-BTC 2002+ history to BTC's
-    ~2015 start. ``ex_btc_2002`` is the full non-crypto history; the 2015 windows start at
+    ~2015 start. ``ex_btc_2002`` is the universe's longest common history; the 2015 windows start at
     ``btc_floor``; ``inc_btc_2015`` adds BTC on the equity calendar (``btc_aligned``) so it shares
     an identical date set with ``ex_btc_2015`` (the same-period control).
+
+    The asset set is restricted to ``windows.PORTFOLIO_UNIVERSE`` (one sleeve per class) so the
+    optimiser sees independent risks, not redundant ones (e.g. SPY+QQQ+VEA triple-counting equity
+    beta). Other ingested tickers stay available for the Markets charts; they're just not optimised.
     """
-    non_crypto = asset_daily[asset_daily["asset_class"] != "crypto"]
+    non_crypto = asset_daily[
+        (asset_daily["asset_class"] != "crypto")
+        & (asset_daily["symbol"].isin(windows.PORTFOLIO_UNIVERSE))
+    ]
     if window_id == windows.EX_BTC_2002:
-        return non_crypto.copy()
+        if non_crypto.empty:
+            return non_crypto.copy()
+        # Longest common history: floor to the latest per-sleeve inception (GLD lists Nov 2004), so
+        # every rebalance optimises over the FULL universe — no staggered entry / NaN columns.
+        common_start = non_crypto.groupby("symbol")["date"].min().max()
+        return non_crypto[non_crypto["date"] >= common_start].copy()
     if btc_floor is None:
         raise ValueError(f"{window_id} requires a BTC inception floor (BTC absent from the data)")
     non_crypto = non_crypto[non_crypto["date"] >= btc_floor]
