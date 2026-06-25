@@ -47,6 +47,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Pin the DuckDB path to an ABSOLUTE location so `mmi` and `dbt` use the SAME database. Without
+# this, dbt resolves its profile default ('../data/mmi.duckdb') relative to the repo-root CWD ->
+# one directory ABOVE the repo (e.g. .../Projects/data/mmi.duckdb), so it cannot find the DB that
+# `mmi ingest` just wrote to <repo>/data/mmi.duckdb. Respect a caller-supplied override.
+export MMI_DUCKDB_PATH="${MMI_DUCKDB_PATH:-$REPO_ROOT/data/mmi.duckdb}"
+
 # Resolve Python and dbt from the project venv if present.
 VENV="$REPO_ROOT/.venv"
 if [[ -f "$VENV/bin/python" ]]; then
