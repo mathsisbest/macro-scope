@@ -350,3 +350,61 @@ class TestComputeTsmomOverlay:
         )
         assert (returns_long["window_id"] == INC_BTC_2015).all()
         assert (signal_log["window_id"] == INC_BTC_2015).all()
+
+    def test_stats_columns_use_canonical_bootstrap_schema(self):
+        """The assembled stats frame stacks per-strategy and pairwise rows, each keeping the
+        canonical bootstrap_strategy_stats column names.
+
+        Regression guard: a removed dead-code path renamed strategy_a -> strategy / sharpe_a ->
+        sharpe before being overwritten, so the rename never took effect. The contract is that the
+        pairwise rows keep their canonical strategy_a / strategy_b / sharpe_a / sharpe_b columns —
+        the SAME schema as raw.portfolio_strategy_pairs — and are NOT renamed onto the per-strategy
+        schema. Every row is stamped experiment == 'tsmom_overlay'.
+        """
+        ad = _long_asset_daily(n_days=350)
+        _, stats, _ = compute_tsmom_overlay(ad, lookback=30, freq="M", n_boot=50)
+        assert not stats.empty, "expected a non-empty stats frame for a runnable panel"
+
+        per_strategy_cols = {
+            "window_id",
+            "strategy",
+            "sharpe",
+            "sharpe_lo",
+            "sharpe_hi",
+            "n_obs",
+            "n_boot",
+            "ci_pct",
+            "block_days",
+        }
+        pairwise_cols = {
+            "window_id",
+            "strategy_a",
+            "strategy_b",
+            "sharpe_a",
+            "sharpe_b",
+            "sharpe_diff",
+            "diff_lo",
+            "diff_hi",
+            "distinguishable",
+        }
+        expected = per_strategy_cols | pairwise_cols | {"experiment"}
+        assert set(stats.columns) == expected, (
+            f"unexpected stats columns; missing={expected - set(stats.columns)} "
+            f"extra={set(stats.columns) - expected}"
+        )
+        # The pairwise schema must NOT have been collapsed onto strategy/sharpe.
+        assert "strategy_a" in stats.columns and "sharpe_a" in stats.columns
+
+        # Every row carries the experiment tag.
+        assert (stats["experiment"] == TSMOM_OVERLAY).all()
+
+        # Per-strategy rows (identified by a populated `strategy`) cover all three strategies;
+        # pairwise rows (identified by a populated `strategy_a`) carry the comparisons.
+        per_strategy_rows = stats[stats["strategy"].notna()]
+        pairwise_rows = stats[stats["strategy_a"].notna()]
+        assert set(per_strategy_rows["strategy"]) == {
+            TSMOM_OVERLAY,
+            "equal_weight",
+            "buy_and_hold",
+        }
+        assert not pairwise_rows.empty, "expected pairwise Sharpe-difference rows in stats"
