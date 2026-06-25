@@ -308,13 +308,16 @@ def _distinguishability_note(pairs: list) -> str:
     return f"_Statistical note: only {named} differ beyond bootstrap noise (90% CI)._"
 
 
-def _offline_brief(facts: FactsDict) -> str:
-    """Deterministic template used when no LLM key is set."""
+def _offline_brief(facts: FactsDict, note: str = "no LLM key set") -> str:
+    """Deterministic template used when the LLM narrative is unavailable. ``note`` states *why*
+    (no key, the call failed, or the output was rejected) so the header stays honest — the old
+    text always said "set an LLM key", which was misleading when a key WAS set but the call 503'd.
+    """
     # Use the data date (YYYY-MM-DD from the marts) in the header so it is grounded in the
     # actual data window, not the wall-clock generation time (Contract G).
     data_date = facts.get("data_date", facts.get("as_of", ""))
     lines = [
-        f"**Market brief — data as of {data_date}** _(template; set an LLM key for AI narrative)_",
+        f"**Market brief — data as of {data_date}** _(deterministic template — {note})_",
         "",
     ]
     for c in facts.get("crypto", []):
@@ -392,7 +395,7 @@ def generate_brief(con) -> str:
                     "LLM brief rejected (%s); falling back to offline template",
                     rejection,
                 )
-                text = _offline_brief(facts)
+                text = _offline_brief(facts, note="LLM output failed validation")
                 engine = "offline-template (llm-rejected)"
             else:
                 text = raw_text
@@ -401,7 +404,7 @@ def generate_brief(con) -> str:
             # redact: the provider key rides in the request URL/headers, so it can surface in the
             # httpx error string — never let it reach the logs (see utils/redact.py).
             log.warning("LLM brief failed (%s); falling back to offline template", redact(str(exc)))
-            text = _offline_brief(facts)
+            text = _offline_brief(facts, note="LLM temporarily unavailable")
             engine = "offline-template (llm-failed)"
     else:
         text = _offline_brief(facts)
