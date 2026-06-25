@@ -8,7 +8,7 @@ For the automated deployment notes see [`.github/workflows/deploy-note.md`](../.
 
 ## Prerequisites
 
-- You have push access to `mathsisbest/markets-macro-intelligence` on GitHub.
+- You have push access to `mathsisbest/macro-scope` on GitHub.
 - You have free-tier accounts for the data sources you want to use (see below).
 - Python 3.10+ is installed locally for the heavy refresh step.
 
@@ -19,7 +19,7 @@ For the automated deployment notes see [`.github/workflows/deploy-note.md`](../.
 The daily cron is keyless-safe (it exits 0 if keys are absent), but real macro and crypto data
 require the optional keys. Add them once; the Action picks them up automatically on every run.
 
-1. Open the repo on GitHub: https://github.com/mathsisbest/markets-macro-intelligence
+1. Open the repo on GitHub: https://github.com/mathsisbest/macro-scope
 2. Go to **Settings → Secrets and variables → Actions**.
 3. Click **New repository secret** for each key you have:
 
@@ -89,7 +89,7 @@ The portfolio backtest (24 years × 3 windows × MVO + 2 000 bootstrap draws) ex
 1. Go to https://share.streamlit.io and sign in (free account, supports private repos).
 2. Click **New app**.
 3. Fill in the form:
-   - **Repository:** `mathsisbest/markets-macro-intelligence`
+   - **Repository:** `mathsisbest/macro-scope`
    - **Branch:** `main`
    - **Main file path:** `dashboard/app.py`
 4. Expand **Advanced settings** and add the following secret (the only one the public app needs):

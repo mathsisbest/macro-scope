@@ -1,7 +1,7 @@
 # Markets & Macro Intelligence 📈🌍
 
-[![CI](https://github.com/mathsisbest/markets-macro-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/mathsisbest/markets-macro-intelligence/actions/workflows/ci.yml)
-[![Ingest](https://github.com/mathsisbest/markets-macro-intelligence/actions/workflows/ingest.yml/badge.svg)](https://github.com/mathsisbest/markets-macro-intelligence/actions/workflows/ingest.yml)
+[![CI](https://github.com/mathsisbest/macro-scope/actions/workflows/ci.yml/badge.svg)](https://github.com/mathsisbest/macro-scope/actions/workflows/ci.yml)
+[![Ingest](https://github.com/mathsisbest/macro-scope/actions/workflows/ingest.yml/badge.svg)](https://github.com/mathsisbest/macro-scope/actions/workflows/ingest.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230)](https://github.com/astral-sh/ruff)
 [![Cost](https://img.shields.io/badge/cost-%C2%A30%2Fmo-brightgreen)](#cost)

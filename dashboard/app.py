@@ -503,8 +503,8 @@ st.divider()
 _footer_col1, _footer_col2, _footer_col3 = st.columns([2, 2, 2])
 with _footer_col1:
     st.caption(
-        "Source: [github.com/mathsisbest/markets-macro-intelligence]"
-        "(https://github.com/mathsisbest/markets-macro-intelligence)"
+        "Source: [github.com/mathsisbest/macro-scope]"
+        "(https://github.com/mathsisbest/macro-scope)"
     )
 with _footer_col2:
     st.caption("Built by **mathsisbest** · not investment advice")
