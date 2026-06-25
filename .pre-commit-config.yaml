@@ -12,5 +12,7 @@ repos:
       - id: trailing-whitespace
       - id: check-yaml
       - id: check-added-large-files
-        args: [--maxkb=2000]
+        # 8 MB per file — above any single real snapshot mart (the full 24-year data/public
+        # snapshot is ~5.7 MB total); the total-snapshot cap is enforced in `mmi snapshot`.
+        args: [--maxkb=8000]
       - id: detect-private-key
