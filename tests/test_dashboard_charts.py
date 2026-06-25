@@ -188,3 +188,25 @@ def test_vol_forecast_none_on_empty_or_missing_columns():
     # Empty frame and a frame lacking model/symbol must degrade to None — no IndexError.
     assert charts.vol_forecast_value(pd.DataFrame()) is None
     assert charts.vol_forecast_value(pd.DataFrame({"predicted_next_return": [0.2]})) is None
+
+
+def test_vol_forecast_none_when_value_is_nan():
+    # A NaN forecast must NOT render as "nan %": float(nan) is a float and would slip past the
+    # caller's `is not None` check. It must return None so the dashboard shows the honest
+    # "No SPY volatility forecast available yet." caption, not a looks-valid-but-isn't headline.
+    fc = _forecast([["SPY", "2026-06-20", float("nan"), "rv_har"]])
+    assert charts.vol_forecast_value(fc, symbol="SPY") is None
+
+
+def test_vol_forecast_none_when_value_is_null_object_dtype():
+    # An actual None/NULL (object-dtype column) must return None, not raise TypeError in float().
+    fc = _forecast([["SPY", "2026-06-20", None, "rv_har"]])
+    assert fc["predicted_next_return"].dtype == object  # guard: None stays NULL, not coerced
+    assert charts.vol_forecast_value(fc, symbol="SPY") is None
+
+
+def test_vol_forecast_none_when_value_is_infinite():
+    # ±inf is non-finite — pd.isna treats it as non-null, so the explicit math.isfinite guard
+    # keeps it out of the headline.
+    fc = _forecast([["SPY", "2026-06-20", float("inf"), "rv_har"]])
+    assert charts.vol_forecast_value(fc, symbol="SPY") is None
