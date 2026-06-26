@@ -215,14 +215,65 @@ tab_mkt, tab_macro, tab_ml, tab_ai, tab_portfolio = st.tabs(
 )
 
 with tab_mkt:
-    # One unified asset selector spanning every class — equities, ETFs, bonds, commodities, FX AND
-    # crypto (BTC has full daily history in fct_asset_daily, so it gets price + volatility like any
-    # other asset). BTC daily via Yahoo is the only crypto path; the BTC headline KPI above covers
-    # the live figure.
+    # Cross-asset view spanning every class — equities, bonds, commodities, FX AND crypto (BTC has
+    # full daily history in fct_asset_daily, so it joins the cross-asset stats like any other
+    # asset). Four layers, overview → relationships → drill-down, all governed by the global range:
+    #   1. leaderboard (over-the-window return + ann. vol, one card per asset)
+    #   2. rebased performance (every line starts at 0% on the range's first date)
+    #   3. correlation heatmap (pairwise Pearson of daily returns over the window)
+    #   4. per-asset drill-down (the original single-asset price + vol view, windowed)
+    # Headline "latest" values stay range-independent (the KPI row above); the over-the-window
+    # stats below are all derived from the windowed daily returns. BTC daily via Yahoo is the only
+    # crypto path; the BTC headline KPI above covers the live figure.
     adf = data.assets()
     syms = adf["symbol"].tolist() if not adf.empty else []
-    if syms:
+    long_df = data.all_assets_daily(rng_start)
+
+    if not syms or long_df.empty:
+        st.info("No asset data yet. Run `mmi ingest` or `make demo` to populate the markets tab.")
+    else:
+        # ---- 1. Cross-asset leaderboard — over-the-window return + annualised vol -------------
+        board = charts.cross_asset_leaderboard(long_df)
+        if not board.empty:
+            st.caption("📊 Over the selected range · sorted by return")
+            lb_cols = st.columns(min(len(board), 5))
+            for i, row in enumerate(board.itertuples(index=False)):
+                with lb_cols[i % len(lb_cols)]:
+                    dot = charts.asset_class_color(row.asset_class)
+                    ret_color = charts.leaderboard_return_color(row.period_return)
+                    st.markdown(
+                        f"<div style='line-height:1.35'>"
+                        f"<span style='color:{dot};font-size:1.2em'>●</span> "
+                        f"<b>{row.symbol}</b><br>"
+                        f"<span style='color:{ret_color};font-size:1.15em;font-weight:600'>"
+                        f"{row.period_return * 100:+.1f}%</span><br>"
+                        f"<span style='color:{charts.PALETTE['muted']};font-size:0.85em'>"
+                        f"vol {row.ann_vol * 100:.0f}%</span></div>",
+                        unsafe_allow_html=True,
+                    )
+            st.divider()
+
+        # ---- 2. Cross-asset performance, rebased to 0% at the window start --------------------
+        perf = charts.rebased_performance(long_df)
+        if not perf.empty:
+            st.plotly_chart(charts.rebased_performance_chart(perf), use_container_width=True)
+
+        # ---- 3. Correlation heatmap (with the <30-obs guard) ---------------------------------
+        corr = charts.correlation_matrix(long_df)
+        if corr is None:
+            st.caption(charts.CORR_TOO_SHORT)
+        else:
+            st.plotly_chart(charts.correlation_heatmap(corr), use_container_width=True)
+            takeaway = charts.correlation_takeaway(corr)
+            if takeaway:
+                st.caption(takeaway)
+
+        # ---- 4. Per-asset drill-down — the original single-asset price + vol view ------------
+        st.divider()
+        st.caption("🔎 Per-asset detail")
         sym = st.selectbox("Asset", syms, index=syms.index("SPY") if "SPY" in syms else 0)
+        # vol_20d / ma_50 are precomputed over FULL history in the mart — slice them for display
+        # (so a short window still shows a correct MA at its left edge), never recomputed here.
         d = data.asset_daily(sym, rng_start)
         if not d.empty:
             mc1, mc2 = st.columns(2)
@@ -234,8 +285,6 @@ with tab_mkt:
             st.info(
                 f"No daily price data for {sym} yet. Run `mmi ingest` (or `make demo`) to populate."
             )
-    else:
-        st.info("No asset data yet. Run `mmi ingest` or `make demo` to populate the markets tab.")
 
 with tab_macro:
     # Macro monitor: a headline snapshot (latest, range-independent), then a category selector that
@@ -408,6 +457,22 @@ with tab_ml:
                 if not trained_at.empty:
                     st.caption(f"Model trained {trained_at.iloc[0]}")
 
+        # ---- Locked holdout (vol) — an honest extra OOS readout, NOT the gate ----------------
+        # Absent on small-data (the holdout is skipped) and pre-re-run snapshots; render only when
+        # the holdout_* rows are present. Never feeds skill_verdict() / the go-live gate.
+        vol_holdout = charts.holdout_readout(metrics, model="rv_har", symbol="SPY")
+        if vol_holdout is not None:
+            st.caption(charts.HOLDOUT_CAPTION)
+            hv1, hv2, hv3 = st.columns(3)
+            if "holdout_oos_r2" in vol_holdout:
+                hv1.metric("Holdout OOS R²", f"{vol_holdout['holdout_oos_r2']:.3f}")
+            if "holdout_qlike_skill_ratio" in vol_holdout:
+                hv2.metric(
+                    "Holdout QLIKE skill ratio", f"{vol_holdout['holdout_qlike_skill_ratio']:.3f}"
+                )
+            if "holdout_n_obs" in vol_holdout:
+                hv3.metric("Holdout obs", f"{vol_holdout['holdout_n_obs']:.0f}")
+
         reg_view = data.regimes("SPY", rng_start)
         if not reg_view.empty:
             st.plotly_chart(charts.regime_chart(reg_view, "SPY"), use_container_width=True)
@@ -425,6 +490,23 @@ with tab_ml:
         st.plotly_chart(
             charts.direction_skill_chart(metrics, symbol="SPY"), use_container_width=True
         )
+
+        # ---- Locked holdout (direction) — honest extra OOS readout, NOT gated ----------------
+        # Mirrors direction_skill_chart's "not the vol model" filter so a future direction-model
+        # rename can't drop it. Absent on small-data / pre-re-run snapshots → render nothing.
+        dir_holdout = charts.holdout_readout(metrics, symbol="SPY", exclude_model="rv_har")
+        if dir_holdout is not None:
+            st.caption(charts.HOLDOUT_CAPTION)
+            hd1, hd2, hd3 = st.columns(3)
+            if "holdout_dir_acc" in dir_holdout:
+                hd1.metric("Holdout dir. accuracy", f"{dir_holdout['holdout_dir_acc'] * 100:.1f}%")
+            if "holdout_baseline_dir_acc" in dir_holdout:
+                hd2.metric(
+                    "Holdout baseline accuracy",
+                    f"{dir_holdout['holdout_baseline_dir_acc'] * 100:.1f}%",
+                )
+            if "holdout_n_obs" in dir_holdout:
+                hd3.metric("Holdout obs", f"{dir_holdout['holdout_n_obs']:.0f}")
 
 with tab_ai:
     brief = data.latest_brief()

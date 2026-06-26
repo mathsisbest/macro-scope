@@ -198,6 +198,35 @@ def test_asset_daily_start_filters_rows(monkeypatch, tmp_path):
     assert len(recent) == 1 and str(recent["date"].iloc[0]).startswith("2026")
 
 
+def test_all_assets_daily_returns_long_frame_for_every_asset_windowed(monkeypatch, tmp_path):
+    """all_assets_daily(start) returns [symbol, asset_class, date, close, daily_return] for every
+    asset, ordered by symbol,date and filtered by the `date >= start` floor when given."""
+    db = tmp_path / "m.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema marts")
+    con.execute(
+        "create table marts.fct_asset_daily as select * from (values "
+        "('SPY', 'equities', DATE '2020-01-01', 10.0, 0.0, 1.0, 9.0), "
+        "('SPY', 'equities', DATE '2026-06-25', 20.0, 0.10, 2.0, 19.0), "
+        "('TLT', 'bonds',    DATE '2026-06-25', 99.0, -0.01, 3.0, 98.0)) "
+        "as t(symbol, asset_class, date, close, daily_return, vol_20d, ma_50)"
+    )
+    con.close()
+    monkeypatch.setattr(settings_mod.settings, "snapshot_mode", False)
+    monkeypatch.setattr(settings_mod.settings, "duckdb_path", db)
+
+    data.query.clear()
+    full = data.all_assets_daily()
+    assert set(full.columns) == {"symbol", "asset_class", "date", "close", "daily_return"}
+    assert len(full) == 3  # every asset's every row, no floor
+    assert list(full["symbol"]) == ["SPY", "SPY", "TLT"]  # ordered by symbol, then date
+
+    data.query.clear()
+    windowed = data.all_assets_daily("2026-01-01")  # floor drops the 2020 SPY row
+    assert len(windowed) == 2
+    assert set(windowed["symbol"]) == {"SPY", "TLT"}
+
+
 def test_macro_catalog_exposes_label_category_units():
     """macro_catalog() surfaces the config metadata the Macro tab groups + labels by."""
     cat = data.macro_catalog()

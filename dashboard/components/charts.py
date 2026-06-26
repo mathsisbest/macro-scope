@@ -17,6 +17,7 @@ from dashboard.theme import (
     SERIES_RETURN,
     SERIES_VOL,
     SERIES_YIELD,
+    asset_class_color,
     style_fig,
 )
 
@@ -110,6 +111,178 @@ def vol_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
     if not df.empty and "vol_20d" in df.columns:
         _guard_yrange(fig, df["vol_20d"])
     return style_fig(fig, height=HEIGHT_SHORT)
+
+
+# ---------------------------------------------------------------------------
+# Markets tab — cross-asset view (leaderboard · rebased performance · correlation)
+# ---------------------------------------------------------------------------
+
+#: Annualisation factor for daily-return volatility (trading days per year).
+_TRADING_DAYS: int = 252
+#: Minimum overlapping observations before a correlation matrix is considered stable.
+_CORR_MIN_OBS: int = 30
+#: Shown instead of a misleading matrix when the window holds too few observations.
+CORR_TOO_SHORT: str = "Range too short for a stable correlation — widen the date range."
+
+
+def cross_asset_leaderboard(long_df: pd.DataFrame) -> pd.DataFrame:
+    """Per-asset period stats over the supplied (already windowed) long frame.
+
+    Input is the ``[symbol, asset_class, date, close, daily_return]`` long frame from
+    ``data.all_assets_daily(start)``. For each symbol, over the window:
+      * ``period_return`` = ``close.iloc[-1] / close.iloc[0] - 1`` (close-to-close over the window)
+      * ``ann_vol``       = ``daily_return.std() * sqrt(252)`` (annualised daily-return vol)
+    Returns ``[symbol, asset_class, period_return, ann_vol]`` sorted by ``period_return`` desc.
+    Pure + unit-tested — the leaderboard cards read straight off this frame.
+    """
+    cols = ["symbol", "asset_class", "period_return", "ann_vol"]
+    if long_df.empty:
+        return pd.DataFrame(columns=cols)
+    rows: list[dict] = []
+    for symbol, grp in long_df.groupby("symbol", sort=False):
+        g = grp.sort_values("date")
+        closes = g["close"].dropna()
+        if len(closes) < 2 or closes.iloc[0] == 0:
+            continue  # need at least two prices for a period return
+        period_return = float(closes.iloc[-1] / closes.iloc[0] - 1)
+        ann_vol = float(g["daily_return"].std(ddof=1) * math.sqrt(_TRADING_DAYS))
+        asset_class = str(g["asset_class"].iloc[0])
+        rows.append(
+            {
+                "symbol": str(symbol),
+                "asset_class": asset_class,
+                "period_return": period_return,
+                "ann_vol": ann_vol,
+            }
+        )
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    out = pd.DataFrame(rows, columns=cols)
+    return out.sort_values("period_return", ascending=False).reset_index(drop=True)
+
+
+def rebased_performance(long_df: pd.DataFrame) -> pd.DataFrame:
+    """Cumulative-return path per symbol, rebased to 0% at the window start.
+
+    For each symbol: ``perf = (1 + daily_return).cumprod() - 1`` over the (already windowed) rows,
+    with the window's FIRST daily_return treated as 0 so every line starts at exactly 0% on the
+    range's first date. Returns the long frame ``[symbol, asset_class, date, perf]`` ordered by
+    ``symbol, date``. Pure + unit-tested.
+    """
+    cols = ["symbol", "asset_class", "date", "perf"]
+    if long_df.empty:
+        return pd.DataFrame(columns=cols)
+    out_parts: list[pd.DataFrame] = []
+    for _symbol, grp in long_df.groupby("symbol", sort=False):
+        g = grp.sort_values("date").copy()
+        # The window's first row has no in-window return — pin it to 0 so the line starts at 0%.
+        r = g["daily_return"].fillna(0.0).to_numpy(dtype=float).copy()
+        if len(r):
+            r[0] = 0.0
+        g["perf"] = (1.0 + r).cumprod() - 1.0
+        out_parts.append(g[cols])
+    return pd.concat(out_parts, ignore_index=True)
+
+
+def correlation_matrix(long_df: pd.DataFrame) -> pd.DataFrame | None:
+    """Pairwise Pearson correlation of daily returns over the window, or ``None`` if too short.
+
+    Pivots the long frame to ``date × symbol`` of ``daily_return`` and returns ``.corr()``. The
+    **min-obs guard**: if fewer than ``_CORR_MIN_OBS`` (~30) rows have at least two non-null
+    symbol returns to correlate, returns ``None`` (the caller shows ``CORR_TOO_SHORT``) rather
+    than a misleading matrix from a handful of points. Pure + unit-tested.
+    """
+    if long_df.empty:
+        return None
+    wide = long_df.pivot_table(index="date", columns="symbol", values="daily_return")
+    # Overlapping observations = rows where at least two symbols have a (non-null) return to pair.
+    overlap = int((wide.notna().sum(axis=1) >= 2).sum())
+    if overlap < _CORR_MIN_OBS or wide.shape[1] < 2:
+        return None
+    return wide.corr()
+
+
+def correlation_takeaway(corr: pd.DataFrame) -> str:
+    """One-line, data-honest takeaway under the heatmap (highest + lowest off-diagonal pair)."""
+    if corr is None or corr.empty or corr.shape[0] < 2:
+        return ""
+    pairs: list[tuple[str, str, float]] = []
+    cols = list(corr.columns)
+    for i in range(len(cols)):
+        for j in range(i + 1, len(cols)):
+            v = corr.iloc[i, j]
+            if pd.notna(v):
+                pairs.append((str(cols[i]), str(cols[j]), float(v)))
+    if not pairs:
+        return ""
+    hi = max(pairs, key=lambda p: p[2])
+    lo = min(pairs, key=lambda p: p[2])
+    return (
+        f"Most correlated: {hi[0]}–{hi[1]} ({hi[2]:+.2f}); "
+        f"best diversifier: {lo[0]}–{lo[1]} ({lo[2]:+.2f}). "
+        "Equities tend to cluster; bonds and gold/BTC usually diversify."
+    )
+
+
+def leaderboard_return_color(period_return: float) -> str:
+    """Green for a positive period return, red for negative (for assets, up = good)."""
+    return PALETTE["up"] if period_return >= 0 else PALETTE["down"]
+
+
+def rebased_performance_chart(perf_long: pd.DataFrame) -> go.Figure:
+    """One class-coloured line per symbol over the window, each rebased to 0% at the start.
+
+    The legend shows each symbol with its final % so the chart reads without hovering. Line
+    colour comes from the asset-class colour map (``theme.asset_class_color``)."""
+    fig = go.Figure()
+    if not perf_long.empty:
+        for symbol, grp in perf_long.groupby("symbol", sort=False):
+            g = grp.sort_values("date")
+            asset_class = str(g["asset_class"].iloc[0]) if "asset_class" in g else ""
+            final = float(g["perf"].iloc[-1]) if not g["perf"].empty else 0.0
+            fig.add_scatter(
+                x=g["date"],
+                y=g["perf"],
+                name=f"{symbol}  {final * 100:+.1f}%",
+                line=dict(color=asset_class_color(asset_class)),
+            )
+    fig.add_hline(y=0, line_color=PALETTE["muted"], line_dash="dot")
+    fig.update_yaxes(tickformat=".0%")
+    fig.update_layout(
+        title=dict(text="Cross-asset performance — rebased to 0% at window start", font=_TITLE_FONT)
+    )
+    _apply_axis_fonts(fig)
+    n = perf_long["symbol"].nunique() if not perf_long.empty else 0
+    _overflow_legend(fig, n)
+    return style_fig(fig, height=HEIGHT_TALL)
+
+
+def correlation_heatmap(corr: pd.DataFrame) -> go.Figure:
+    """Annotated Pearson-correlation heatmap on a diverging RdBu scale fixed to −1..1."""
+    symbols = list(corr.columns)
+    z = corr.to_numpy()
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=z,
+            x=symbols,
+            y=symbols,
+            zmin=-1,
+            zmax=1,
+            colorscale="RdBu",
+            reversescale=True,  # red = positive correlation, blue = negative (diversifying)
+            colorbar=dict(title="ρ", tickfont=_AXIS_FONT),
+            text=[[f"{v:+.2f}" if pd.notna(v) else "" for v in row] for row in z],
+            texttemplate="%{text}",
+            textfont=dict(size=11, color=PALETTE["text"]),
+            hovertemplate="%{y} · %{x}: %{z:+.2f}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=dict(text="Cross-asset correlation — daily returns over the window", font=_TITLE_FONT)
+    )
+    fig.update_yaxes(autorange="reversed")  # diagonal runs top-left → bottom-right
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=HEIGHT_TALL)
 
 
 # ---------------------------------------------------------------------------
@@ -480,6 +653,56 @@ def vol_skill_verdict_text(metrics: pd.DataFrame, symbol: str = "SPY") -> str:
         f"baseline-only. {reasons}. "
         "Forecast universe: SPY (single-asset baseline)."
     )
+
+
+#: Honest framing for the locked-holdout readout — an extra OOS look, never a gate.
+HOLDOUT_CAPTION: str = (
+    "Locked holdout (last ~1yr, never used in CV — an extra out-of-sample readout, not gated)"
+)
+
+
+def holdout_readout(
+    metrics: pd.DataFrame,
+    model: str | None = None,
+    symbol: str = "SPY",
+    *,
+    exclude_model: str | None = None,
+) -> dict | None:
+    """The locked-holdout metrics for a model/``symbol``, or ``None`` when none are present.
+
+    Reads the ``holdout_*`` rows PR #17 added to ``model_metrics``:
+      * vol (``rv_har``):  ``holdout_oos_r2``, ``holdout_qlike_skill_ratio``, ``holdout_n_obs``
+      * direction:  ``holdout_dir_acc``, ``holdout_baseline_dir_acc``, ``holdout_n_obs``
+    Pass ``model`` to match a model exactly (the vol headline → ``model="rv_har"``), OR
+    ``exclude_model`` to take the OTHER model (the direction secondary → ``exclude_model="rv_har"``,
+    mirroring ``direction_skill_chart``'s robust "not the vol model" filter).
+    Returns ``None`` (render nothing / "pending") when the frame is empty, lacks the expected
+    columns, or carries no ``holdout_*`` row for this model/symbol — the holdout is SKIPPED on
+    small-data (CI/sample) and absent from pre-re-run snapshots, so absence must degrade
+    gracefully. Otherwise returns a dict of the present ``holdout_*`` metric → float value
+    (only finite values are kept). Pure + unit-tested."""
+    needed = {"model", "symbol", "metric", "value"}
+    if metrics.empty or not needed <= set(metrics.columns):
+        return None
+    rows = metrics[metrics["symbol"] == symbol]
+    if model is not None:
+        rows = rows[rows["model"] == model]
+    if exclude_model is not None:
+        rows = rows[rows["model"] != exclude_model]
+    if rows.empty:
+        return None
+    s = rows.set_index("metric")["value"]
+    out: dict[str, float] = {}
+    for key in s.index:
+        if not str(key).startswith("holdout_"):
+            continue
+        val = s[key]
+        if val is None or pd.isna(val):
+            continue
+        fval = float(val)
+        if math.isfinite(fval):
+            out[str(key)] = fval
+    return out or None
 
 
 def vol_forecast_value(fc: pd.DataFrame, symbol: str = "SPY") -> float | None:
