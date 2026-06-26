@@ -831,8 +831,24 @@ def _by_strategy(df: pd.DataFrame, column: str) -> go.Figure:
     return fig
 
 
+def rebase_cumulative(df: pd.DataFrame) -> pd.DataFrame:
+    """Rebase each strategy's ``cumulative_return`` to 0% at its first (visible) row, so the chart
+    reads as 'return since the start of the selected range' (Google-Finance style).
+
+    Exact: for a windowed slice ``(1 + cum_t) / (1 + cum_first) - 1`` equals the compounded return
+    over the visible rows (the mart's ``cumulative_return`` is inception-based, so a sub-range would
+    otherwise start mid-history at e.g. +150%). Shape-unchanged at 'Max' (first row ~ inception).
+    Pure + unit-tested."""
+    if df.empty or "cumulative_return" not in df.columns:
+        return df
+    out = df.sort_values(["strategy", "date"]).copy()
+    base = out.groupby("strategy")["cumulative_return"].transform("first")
+    out["cumulative_return"] = (1 + out["cumulative_return"]) / (1 + base) - 1
+    return out
+
+
 def portfolio_cumulative_chart(df: pd.DataFrame) -> go.Figure:
-    fig = _by_strategy(df, "cumulative_return")
+    fig = _by_strategy(rebase_cumulative(df), "cumulative_return")
     fig.update_layout(
         title=dict(
             text="Cumulative return by strategy (vs 60/40 benchmark)",
