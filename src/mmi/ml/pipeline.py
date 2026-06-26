@@ -74,6 +74,20 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
                 }
             )
 
+        # Locked-holdout rows (honest extra OOS readout; reported, not gated).  Only present
+        # when the holdout was carved (enough dev rows); persist whatever keys were emitted.
+        for name in ("holdout_dir_acc", "holdout_baseline_dir_acc", "holdout_n_obs"):
+            if name in metrics:
+                metric_rows.append(
+                    {
+                        "model": "random_forest",
+                        "symbol": sym,
+                        "metric": name,
+                        "value": float(metrics[name]),
+                        "trained_at": now,
+                    }
+                )
+
     # 3. HAR realized-vol model (rv_har) per requested symbol.
     for sym in symbols:
         try:
@@ -86,8 +100,11 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
             # Small-sample skip — train_and_backtest_vol already logged
             continue
 
-        # Persist vol metric rows (Contract D: new rows only, never new columns)
-        for name in (
+        # Persist vol metric rows (Contract D: new rows only, never new columns).
+        # The holdout_* rows are an honest extra OOS readout (reported, not gated); they are
+        # only present when the locked holdout was carved (enough dev rows), so persist any
+        # holdout_* key that the model actually emitted.
+        vol_metric_names = [
             "oos_r2",
             "qlike",
             "baseline_qlike",
@@ -95,7 +112,17 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
             "n_folds",
             "folds_passed",
             "n_obs",
+        ]
+        for name in (
+            "holdout_oos_r2",
+            "holdout_qlike",
+            "holdout_qlike_skill_ratio",
+            "holdout_n_obs",
         ):
+            if name in vol_metrics:
+                vol_metric_names.append(name)
+
+        for name in vol_metric_names:
             metric_rows.append(
                 {
                     "model": VOL_MODEL_TAG,

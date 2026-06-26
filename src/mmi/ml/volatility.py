@@ -19,6 +19,22 @@ Small-sample safety
 If the DB has fewer than ``_MIN_OBS`` rows with valid features + target, the function logs a
 warning and returns ``({}, None)`` — **no crash** — mirroring the ValueError-caught pattern
 already in ``pipeline.py``.
+
+Locked holdout (honest extra OOS readout)
+-----------------------------------------
+After feature construction we carve off the LAST ``holdout_size`` time-ordered rows as a
+locked holdout (see :mod:`mmi.ml.holdout`).  The holdout is **never** passed to the
+walk-forward CV or any training fold — the gate metrics (``oos_r2``, ``qlike_skill_ratio``,
+``folds_passed`` …) are computed on the DEV portion exactly as before.  We then final-fit one
+model on ALL of dev, predict the untouched holdout, and emit ``holdout_*`` metric rows
+(``holdout_oos_r2``, ``holdout_qlike``, ``holdout_qlike_skill_ratio``, ``holdout_n_obs``).
+The holdout is **reported, not gated** — :func:`mmi.ml.skill_gate.skill_verdict` is unchanged
+and never sees these rows.  It is an honest extra out-of-sample readout and is NEVER used to
+tune the model, the features, or the gate thresholds.
+
+If carving the holdout would leave fewer than ``_MIN_OBS`` dev rows, the holdout is SKIPPED:
+no ``holdout_*`` rows are emitted, the CV runs on the full valid series as before, and the
+skip is logged at INFO.  This keeps the small CI/sample data working.
 """
 
 from __future__ import annotations
@@ -29,6 +45,7 @@ from sklearn.model_selection import TimeSeriesSplit
 
 from mmi.ml.features import feature_columns, make_features
 from mmi.ml.forecast import make_regressor
+from mmi.ml.holdout import split_indices
 from mmi.utils.logging import get_logger
 
 log = get_logger("ml.volatility")
@@ -149,17 +166,32 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
     # is derived from this per fold, never from the full series (see below).
     gk_valid = valid["gk_vol"].to_numpy()
 
-    # --- walk-forward evaluation ---
+    # --- carve the locked holdout (honest extra OOS readout; reported, not gated) ---
+    # The holdout is the LAST `hold` time-ordered rows; everything before is DEV.  The
+    # walk-forward CV (and therefore the skill gate) runs on DEV ONLY — the holdout is never
+    # in a training/test fold.  If carving would leave < _MIN_OBS dev rows we skip it.
+    dev_end, hold = split_indices(n, min_dev=_MIN_OBS)
+    if hold == 0:
+        log.info(
+            "vol holdout skipped for %s: %d valid rows too few to carve a holdout "
+            "and keep >= %d dev rows — CV runs on the full series",
+            symbol,
+            n,
+            _MIN_OBS,
+        )
+    x_dev, y_dev, gk_dev = x[:dev_end], y[:dev_end], gk_valid[:dev_end]
+
+    # --- walk-forward evaluation (DEV portion only) ---
     tscv = TimeSeriesSplit(n_splits=5)
     preds, actuals, base_preds = [], [], []
-    for train_idx, test_idx in tscv.split(x):
+    for train_idx, test_idx in tscv.split(x_dev):
         model = make_regressor(n_estimators=100)
-        model.fit(x[train_idx], y[train_idx])
-        preds.append(model.predict(x[test_idx]))
-        actuals.append(y[test_idx])
+        model.fit(x_dev[train_idx], y_dev[train_idx])
+        preds.append(model.predict(x_dev[test_idx]))
+        actuals.append(y_dev[test_idx])
         # EWMA baseline computed walk-forward: only gk vol up to each fold's last test
         # point feeds the recursion — no look-ahead (honest-OOS contract).
-        base_preds.append(_walk_forward_ewma_baseline(gk_valid, test_idx))
+        base_preds.append(_walk_forward_ewma_baseline(gk_dev, test_idx))
 
     preds_arr = np.concatenate(preds)
     actuals_arr = np.concatenate(actuals)
@@ -184,7 +216,9 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
 
     metrics = {
         "symbol": symbol,
-        "n_obs": n,
+        # n_obs is the DEV count the CV actually ran on (== n when the holdout is skipped),
+        # so the gate's n_obs check reflects the data behind oos_r2/qlike — not rows held out.
+        "n_obs": dev_end,
         "oos_r2": oos_r2,
         "qlike": qlike,
         "baseline_qlike": baseline_qlike,
@@ -193,7 +227,48 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
         "folds_passed": folds_passed,
     }
 
+    # --- locked holdout: final-fit on ALL of dev, score the untouched tail ---
+    # Reported, NOT gated — these holdout_* rows never enter skill_verdict() and are NEVER
+    # used to tune anything.  When the holdout was skipped (hold == 0) we emit no rows.
+    if hold > 0:
+        x_hold, y_hold = x[dev_end:], y[dev_end:]
+        hold_model = make_regressor(n_estimators=200)
+        hold_model.fit(x_dev, y_dev)
+        hold_preds = hold_model.predict(x_hold)
+
+        ss_res_h = float(np.sum((y_hold - hold_preds) ** 2))
+        ss_tot_h = float(np.sum((y_hold - y_hold.mean()) ** 2))
+        holdout_oos_r2 = 1.0 - ss_res_h / ss_tot_h if ss_tot_h > 1e-20 else 0.0
+
+        # Same persistence/EWMA baseline as the CV, evaluated on the holdout tail.  The EWMA
+        # recursion is seeded from all rows up to and including each holdout point (causal,
+        # no look-ahead), exactly as the walk-forward baseline does per fold.
+        hold_idx = np.arange(dev_end, n)
+        holdout_base = _walk_forward_ewma_baseline(gk_valid, hold_idx)
+        holdout_qlike = _qlike(y_hold, hold_preds)
+        holdout_baseline_qlike = _qlike(y_hold, holdout_base)
+        holdout_qlike_skill_ratio = (
+            holdout_qlike / holdout_baseline_qlike
+            if holdout_baseline_qlike > 1e-20
+            else float("nan")
+        )
+
+        metrics["holdout_oos_r2"] = holdout_oos_r2
+        metrics["holdout_qlike"] = holdout_qlike
+        metrics["holdout_qlike_skill_ratio"] = holdout_qlike_skill_ratio
+        metrics["holdout_n_obs"] = hold
+
+        log.info(
+            "vol holdout %s: holdout_oos_r2=%.3f holdout_qlike_ratio=%.3f n=%d",
+            symbol,
+            holdout_oos_r2,
+            holdout_qlike_skill_ratio if not np.isnan(holdout_qlike_skill_ratio) else -1,
+            hold,
+        )
+
     # --- final model on all data -> forecast next week ---
+    # The live forecast legitimately uses ALL valid rows (the holdout is an evaluation device,
+    # not a data quarantine for the production prediction).
     final = make_regressor(n_estimators=200)
     final.fit(x, y)
     next_vol = float(final.predict(x[[-1]])[0])

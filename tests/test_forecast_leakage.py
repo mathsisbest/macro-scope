@@ -305,3 +305,85 @@ def test_oos_coverage_spans_multiple_folds():
         f"OOS coverage ({total_oos}/{n_obs} = {total_oos / n_obs:.1%}) is too low — "
         "TimeSeriesSplit may not be providing meaningful walk-forward evaluation."
     )
+
+
+# ---------------------------------------------------------------------------
+# (d) LOCKED HOLDOUT — an honest extra OOS readout (reported, NOT gated).
+#
+# The direction model carves the LAST holdout_size rows as a locked holdout; the
+# walk-forward CV (which drives the reported dir_acc/mae) sees DEV only.  These tests
+# prove the holdout rows are produced, that the holdout is disjoint from the dev CV
+# folds (no leakage), and that it is cleanly skipped on small data.
+# ---------------------------------------------------------------------------
+
+
+def _con_with_asset(df: pd.DataFrame):
+    """In-memory DuckDB whose marts.fct_asset_daily holds the given SPY frame."""
+    import duckdb
+
+    from mmi.utils.db import init_schemas
+
+    con = duckdb.connect(":memory:")
+    init_schemas(con)
+    out = df.assign(symbol="SPY")[["symbol", "date", "close", "daily_return"]]
+    con.register("_d", out)
+    con.execute("CREATE OR REPLACE TABLE marts.fct_asset_daily AS SELECT * FROM _d")
+    con.unregister("_d")
+    return con
+
+
+def test_direction_holdout_rows_produced():
+    """train_and_backtest emits holdout_* metrics when there's enough data to carve them."""
+    from mmi.ml.forecast import train_and_backtest
+
+    df = _make_df(n=400, seed=2)  # large -> dev stays well above _MIN_OBS
+    con = _con_with_asset(df)
+    metrics, _fc = train_and_backtest(con, "SPY")
+
+    for key in ("holdout_dir_acc", "holdout_baseline_dir_acc", "holdout_n_obs"):
+        assert key in metrics, f"missing direction holdout metric {key}"
+    assert metrics["holdout_n_obs"] > 0
+    assert 0.0 <= metrics["holdout_dir_acc"] <= 1.0
+    # n_obs (the CV count) is the DEV portion, strictly less than the full valid count.
+    feats = make_features(df).dropna(subset=feature_columns() + ["target_next_ret"])
+    assert metrics["n_obs"] < len(feats), "CV n_obs must reflect dev only, not the full series"
+
+
+def test_direction_holdout_disjoint_from_cv_dev():
+    """The holdout tail must not appear in any dev CV train/test fold (no leakage)."""
+    from mmi.ml.forecast import _MIN_OBS
+    from mmi.ml.holdout import split_indices
+
+    df = _make_df(n=400, seed=4)
+    feats = make_features(df).dropna(subset=feature_columns() + ["target_next_ret"])
+    n = len(feats)
+
+    dev_end, hold = split_indices(n, min_dev=_MIN_OBS)
+    assert hold > 0, "400-row frame should carve a holdout"
+
+    holdout_idx = set(range(dev_end, n))
+    assert holdout_idx == set(range(n - hold, n)), "holdout must be exactly the tail rows"
+
+    dev_idx_seen: set[int] = set()
+    for train_idx, test_idx in TimeSeriesSplit(n_splits=5).split(range(dev_end)):
+        dev_idx_seen.update(train_idx.tolist())
+        dev_idx_seen.update(test_idx.tolist())
+
+    assert dev_idx_seen.isdisjoint(holdout_idx), "leakage: a dev CV fold touched a holdout row"
+    assert max(dev_idx_seen) < dev_end, "dev CV must never index into the holdout tail"
+
+
+def test_direction_holdout_skipped_on_small_data():
+    """When dev would fall below _MIN_OBS, no holdout_* keys are emitted (and no crash)."""
+    from mmi.ml.forecast import train_and_backtest
+
+    # 90 raw rows -> 70 valid after feature/target warmup: enough for the CV (>= _MIN_OBS=60)
+    # but too few to also carve a holdout and keep >= 60 dev rows (holdout=14 -> dev=56 < 60).
+    df = _make_df(n=90, seed=6)
+    con = _con_with_asset(df)
+    metrics, fc = train_and_backtest(con, "SPY")
+
+    assert metrics, "CV should still run on a >= _MIN_OBS series"
+    assert fc is not None
+    holdout_keys = [k for k in metrics if k.startswith("holdout_")]
+    assert holdout_keys == [], f"expected NO holdout keys on small data, got {holdout_keys}"
