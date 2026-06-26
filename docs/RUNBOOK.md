@@ -16,8 +16,8 @@ For the automated deployment notes see [`.github/workflows/deploy-note.md`](../.
 
 ## Step A — Add GitHub Actions secrets
 
-The daily cron is keyless-safe (it exits 0 if keys are absent), but real macro and crypto data
-require the optional keys. Add them once; the Action picks them up automatically on every run.
+The daily cron is keyless-safe (it exits 0 if keys are absent), but real macro data and the AI
+brief require the optional keys. Add them once; the Action picks them up automatically on every run.
 
 1. Open the repo on GitHub: https://github.com/mathsisbest/macro-scope
 2. Go to **Settings → Secrets and variables → Actions**.
@@ -26,18 +26,16 @@ require the optional keys. Add them once; the Action picks them up automatically
    | Secret name | Where to get it | Required? |
    |---|---|---|
    | `FRED_API_KEY` | https://fred.stlouisfed.org/docs/api/api_key.html (free) | Recommended |
-   | `COINGECKO_API_KEY` | https://www.coingecko.com/en/api (free demo key) | Optional |
    | `GEMINI_API_KEY` | https://aistudio.google.com/app/apikey (free tier) | Optional |
 
    Do **not** paste key values into chat, PR bodies, or commit messages — the secrets UI is the
    only safe path. Alternatively from a local terminal (never from a shared machine):
    ```bash
    gh secret set FRED_API_KEY
-   gh secret set COINGECKO_API_KEY   # optional
    gh secret set GEMINI_API_KEY      # optional
    ```
 
-4. Confirm: the Secrets list shows the three names (values are always hidden).
+4. Confirm: the Secrets list shows the two names (values are always hidden).
 
 ---
 
@@ -50,7 +48,6 @@ The portfolio backtest (24 years × 3 windows × MVO + 2 000 bootstrap draws) ex
 1. Make sure your `.env` holds real API keys:
    ```
    FRED_API_KEY=...
-   COINGECKO_API_KEY=...   # optional
    GEMINI_API_KEY=...      # optional
    ```
 2. From the repo root, run the full refresh (this may take 20–60 minutes):
@@ -153,7 +150,7 @@ After Steps A–D are complete, verify the automation end-to-end:
 
 ## Checklist summary
 
-- [ ] A: FRED_API_KEY secret added (+ optional COINGECKO / GEMINI)
+- [ ] A: FRED_API_KEY secret added (+ optional GEMINI)
 - [ ] B: `make refresh-full` completed locally; `data/public/` committed and pushed
 - [ ] C: Streamlit app deployed with `MMI_SNAPSHOT_MODE=1`; live URL captured and added to README
 - [ ] D: Branch-protection exception granted (if applicable)
