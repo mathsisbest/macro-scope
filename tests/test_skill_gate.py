@@ -486,3 +486,52 @@ def test_in_range_boundary_values_still_clear():
     df = _make_df(oos_r2=1.0, qlike_skill_ratio=0.0, folds_passed=5, n_folds=5, n_obs=500)
     v = skill_verdict(df)
     assert v["cleared"] is True, v["reasons"]
+
+
+# ---------------------------------------------------------------------------
+# Locked holdout is REPORTED, NOT GATED: skill_verdict() must ignore holdout_* rows.
+# ---------------------------------------------------------------------------
+
+
+def _holdout_rows(model: str = "rv_har", symbol: str = "SPY") -> pd.DataFrame:
+    """Same-model long rows for the locked-holdout readout (prefixed holdout_)."""
+    rows = [
+        {"model": model, "symbol": symbol, "metric": m, "value": v, "trained_at": _BASE_TRAINED_AT}
+        for m, v in (
+            # Deliberately CONTRADICT the gate: a holdout that "fails" must NOT flip a clearing
+            # verdict, and a holdout that "passes" must NOT rescue a failing one.
+            ("holdout_oos_r2", -5.0),
+            ("holdout_qlike", 9.9),
+            ("holdout_qlike_skill_ratio", 3.0),
+            ("holdout_n_obs", 1.0),
+        )
+    ]
+    return pd.DataFrame(rows)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        # A clearing case and a failing case — the holdout must not move EITHER verdict.
+        {"oos_r2": 0.35, "qlike_skill_ratio": 0.95, "folds_passed": 4, "n_folds": 5, "n_obs": 500},
+        {"oos_r2": -0.2, "qlike_skill_ratio": 1.02, "folds_passed": 2, "n_folds": 5, "n_obs": 300},
+    ],
+)
+def test_skill_verdict_ignores_holdout_rows(kwargs):
+    """skill_verdict() output is byte-identical with vs without the holdout_* rows.
+
+    The locked holdout is an honest extra OOS readout that is REPORTED, NOT GATED.  The gate
+    filters on the five CV metric NAMES only; holdout_* rows share the model tag but are never
+    among those names, so adding them — even with values that contradict the gate — must not
+    change the verdict at all.  (The PR body claimed this; this is the explicit, DB-free test.)
+    """
+    base = _make_df(**kwargs)
+    with_holdout = pd.concat([base, _holdout_rows()], ignore_index=True)
+
+    verdict_base = skill_verdict(base)
+    verdict_with_holdout = skill_verdict(with_holdout)
+
+    assert verdict_with_holdout == verdict_base, (
+        "skill_verdict changed when holdout_* rows were added — the gate is NOT supposed to "
+        "see the holdout (it is reported, not gated)"
+    )

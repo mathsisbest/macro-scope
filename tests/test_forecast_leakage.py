@@ -350,19 +350,20 @@ def test_direction_holdout_rows_produced():
 
 
 def test_direction_holdout_disjoint_from_cv_dev():
-    """The holdout tail must not appear in any dev CV train/test fold (no leakage)."""
+    """The holdout tail must not appear in any dev CV train/test fold (row-level, no leakage)."""
     from mmi.ml.forecast import _MIN_OBS
     from mmi.ml.holdout import split_indices
 
     df = _make_df(n=400, seed=4)
-    feats = make_features(df).dropna(subset=feature_columns() + ["target_next_ret"])
-    n = len(feats)
+    # Carve on FEATURE-valid rows (the model builds the target per-slice, so we split first).
+    feat_valid = make_features(df).dropna(subset=feature_columns()).reset_index(drop=True)
+    n_feat = len(feat_valid)
 
-    dev_end, hold = split_indices(n, min_dev=_MIN_OBS)
+    dev_end, hold = split_indices(n_feat, min_dev=_MIN_OBS)
     assert hold > 0, "400-row frame should carve a holdout"
 
-    holdout_idx = set(range(dev_end, n))
-    assert holdout_idx == set(range(n - hold, n)), "holdout must be exactly the tail rows"
+    holdout_idx = set(range(dev_end, n_feat))
+    assert holdout_idx == set(range(n_feat - hold, n_feat)), "holdout must be exactly the tail"
 
     dev_idx_seen: set[int] = set()
     for train_idx, test_idx in TimeSeriesSplit(n_splits=5).split(range(dev_end)):
@@ -371,6 +372,62 @@ def test_direction_holdout_disjoint_from_cv_dev():
 
     assert dev_idx_seen.isdisjoint(holdout_idx), "leakage: a dev CV fold touched a holdout row"
     assert max(dev_idx_seen) < dev_end, "dev CV must never index into the holdout tail"
+
+
+def test_direction_dev_cv_inputs_ignore_holdout_period():
+    """P1-A LABEL-leak guard: NO dev CV input (feature OR label) may depend on a holdout value.
+
+    The next-day target is ret.shift(-1), built PER-SLICE — dev's last row has a NaN target
+    (forward window outside the dev slice) and drops out, so no dev label reads the first
+    holdout-period return.  We prove it directly on the arrays the CV consumes: replicate the
+    feature-carve + per-slice target build, mutate every holdout-period return, and assert the
+    dev (x, y) arrays are BYTE-IDENTICAL.  Under the old full-series target, dev's last label
+    (= the first holdout return) would shift, so y would differ — making the fix self-enforcing.
+
+    Asserting on dev INPUTS (not fitted metrics) avoids the forest's n_jobs=-1 ~1e-16 jitter;
+    byte-identical inputs is the exact statement of label-disjointness.  Non-vacuity: mutating
+    a DEV-period return instead DOES change the dev inputs.
+    """
+    from mmi.ml.forecast import _MIN_OBS
+    from mmi.ml.holdout import split_indices
+
+    cols = feature_columns()
+    df = _make_df(n=400, seed=8)
+
+    def _dev_inputs(frame: pd.DataFrame) -> tuple:
+        """Replicate train_and_backtest's dev-slice prep: carve features, then per-slice target."""
+        feat_valid = make_features(frame).dropna(subset=cols).reset_index(drop=True)
+        dev_end, hold = split_indices(len(feat_valid), min_dev=_MIN_OBS)
+        assert hold > 0, "400-row frame should carve a holdout"
+        f = feat_valid.iloc[:dev_end].copy()
+        f["target_next_ret"] = f["ret"].shift(-1)
+        f = f.dropna(subset=["target_next_ret"])
+        return f[cols].to_numpy(), f["target_next_ret"].to_numpy(), dev_end
+
+    x0, y0, dev_end = _dev_inputs(df)
+    holdout_first_date = (
+        make_features(df).dropna(subset=cols)["date"].reset_index(drop=True).iloc[dev_end]
+    )
+    raw_holdout_start = int((df["date"] >= holdout_first_date).idxmax())
+
+    # (1) Poison the HOLDOUT period: overwrite every return at/after the holdout start.
+    poisoned = df.copy()
+    poisoned.loc[poisoned.index[raw_holdout_start:], "daily_return"] = -0.5
+    xp, yp, _ = _dev_inputs(poisoned)
+    assert np.array_equal(x0, xp), "LABEL LEAK: a dev FEATURE changed when only holdout rows moved"
+    assert np.array_equal(y0, yp), (
+        "LABEL LEAK: a dev TARGET changed when only HOLDOUT-period returns were mutated — dev's "
+        "last label is reading the first holdout-period return (the P1-A bug)."
+    )
+
+    # (2) Non-vacuity: mutating a DEV-period return DOES change the dev inputs.
+    dev_poisoned = df.copy()
+    dev_row = max(0, raw_holdout_start - 30)
+    dev_poisoned.loc[dev_poisoned.index[dev_row], "daily_return"] = -0.5
+    xd, _, _ = _dev_inputs(dev_poisoned)
+    assert not np.array_equal(x0, xd), (
+        "mutating a DEV-period return left the dev features unchanged — test is vacuous"
+    )
 
 
 def test_direction_holdout_skipped_on_small_data():

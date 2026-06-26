@@ -408,23 +408,25 @@ def test_vol_holdout_rows_persisted(con) -> None:  # noqa: ANN001
     assert expected.issubset(metric_map.keys()), (
         f"missing holdout rv_har rows: {expected - metric_map.keys()}"
     )
-    # On 375 valid vol rows the holdout is 20% = 75.
-    assert metric_map["holdout_n_obs"] == 75.0
+    # On 375 feature-valid vol rows the holdout slice is 20% = 75 rows, minus the last
+    # (_HORIZON - 1) = 4 rows whose forward window falls outside the slice -> 71 scored rows.
+    assert metric_map["holdout_n_obs"] == 71.0
     assert metric_map["holdout_qlike"] >= 0.0
 
 
 def test_vol_holdout_disjoint_from_cv_dev(con) -> None:  # noqa: ANN001
-    """The holdout is the TAIL and is disjoint from every dev CV train/test fold.
+    """The holdout is the TAIL and is disjoint from every dev CV train/test fold (row-level).
 
-    This replicates the exact data-prep + split path of train_and_backtest_vol and proves no
-    leakage: the holdout indices are the last `hold` rows, and NONE of them appear in any
-    train or test fold of the dev-only TimeSeriesSplit.
+    This replicates the feature-carve + split path of train_and_backtest_vol: the holdout
+    rows are the last `hold` feature-valid rows, and NONE of their indices appear in any
+    train or test fold of the dev-only TimeSeriesSplit.  (The stronger LABEL-disjointness is
+    proven in test_vol_dev_cv_metrics_ignore_holdout_period.)
     """
     from sklearn.model_selection import TimeSeriesSplit
 
     from mmi.ml.features import feature_columns, make_features
     from mmi.ml.holdout import split_indices
-    from mmi.ml.volatility import _HORIZON, _MIN_OBS, _make_targets
+    from mmi.ml.volatility import _MIN_OBS
 
     _seed_con(con)
     df = con.execute(
@@ -433,15 +435,15 @@ def test_vol_holdout_disjoint_from_cv_dev(con) -> None:  # noqa: ANN001
     ).df()
     feats = make_features(df, feature_set="vol")
     vol_cols = feature_columns(feature_set="vol")
-    feats["target_rv"] = _make_targets(feats["gk_vol"], horizon=_HORIZON)
-    valid = feats.dropna(subset=vol_cols + ["target_rv"])
-    n = len(valid)
+    # Carve on FEATURE-valid rows (the model builds the target per-slice, so we split first).
+    feat_valid = feats.dropna(subset=vol_cols).reset_index(drop=True)
+    n_feat = len(feat_valid)
 
-    dev_end, hold = split_indices(n, min_dev=_MIN_OBS)
+    dev_end, hold = split_indices(n_feat, min_dev=_MIN_OBS)
     assert hold > 0, "sample data should be large enough to carve a holdout"
 
-    holdout_idx = set(range(dev_end, n))
-    assert holdout_idx == set(range(n - hold, n)), "holdout must be exactly the tail rows"
+    holdout_idx = set(range(dev_end, n_feat))
+    assert holdout_idx == set(range(n_feat - hold, n_feat)), "holdout must be exactly the tail"
 
     # The CV runs on dev only — collect every index it touches and assert disjointness.
     dev_idx_seen: set[int] = set()
@@ -453,18 +455,103 @@ def test_vol_holdout_disjoint_from_cv_dev(con) -> None:  # noqa: ANN001
     assert max(dev_idx_seen) < dev_end, "dev CV must never index into the holdout tail"
 
 
+def test_vol_dev_cv_inputs_ignore_holdout_period(con) -> None:  # noqa: ANN001
+    """P1-A LABEL-leak guard: NO dev CV input (feature OR label) may depend on a holdout value.
+
+    The forward target mean(gk[t+1..t+horizon]) is built PER-SLICE, so dev's last `horizon`
+    rows have incomplete forward windows and drop out before the CV — no dev label reads a
+    holdout-period gk.  We prove it directly on the data the CV consumes: replicate the model's
+    feature-carve + per-slice target build, then mutate every holdout-period OHLC row and
+    assert the dev (x, y, gk) arrays are BYTE-IDENTICAL.  Under the old full-series target the
+    dev tail labels would shift, so y would differ — this test would fail, making the fix
+    self-enforcing.
+
+    We assert on the dev INPUT arrays rather than the fitted metrics on purpose: the forest
+    runs with n_jobs=-1, whose parallel tree aggregation is not bit-reproducible, so the
+    derived oos_r2/qlike jitter at ~1e-16 even when the inputs are identical.  Byte-identical
+    inputs is the exact, confound-free statement of label-disjointness.
+
+    Non-vacuity: mutating a DEV row instead DOES change the dev inputs.
+    """
+    from mmi.ml.features import feature_columns, make_features
+    from mmi.ml.holdout import split_indices
+    from mmi.ml.volatility import _HORIZON, _MIN_OBS, _make_targets
+
+    _seed_con(con)
+    base = con.execute(
+        "select symbol, date, open, high, low, close, daily_return "
+        "from marts.fct_asset_daily where symbol = 'SPY' order by date"
+    ).df()
+
+    vol_cols = feature_columns(feature_set="vol")
+
+    def _dev_inputs(frame) -> tuple:  # noqa: ANN001
+        """Replicate the model's dev-slice prep: carve features, then build the target per slice."""
+        feats = make_features(frame, feature_set="vol")
+        feat_valid = feats.dropna(subset=vol_cols).reset_index(drop=True)
+        dev_end, hold = split_indices(len(feat_valid), min_dev=_MIN_OBS)
+        assert hold > 0, "sample data should carve a holdout"
+        f = feat_valid.iloc[:dev_end].copy()
+        f["target_rv"] = _make_targets(f["gk_vol"], horizon=_HORIZON)
+        f = f.dropna(subset=["target_rv"])
+        return (
+            f[vol_cols].to_numpy(),
+            f["target_rv"].to_numpy(),
+            f["gk_vol"].to_numpy(),
+            dev_end,
+        )
+
+    x0, y0, g0, dev_end = _dev_inputs(base)
+    # Map the holdout's first feature-valid date back to a raw-row position.
+    holdout_first_date = (
+        make_features(base, feature_set="vol")
+        .dropna(subset=vol_cols)["date"]
+        .reset_index(drop=True)
+        .iloc[dev_end]
+    )
+    raw_holdout_start = int((base["date"] >= holdout_first_date).idxmax())
+
+    # Helper: widen the daily high/low RANGE at the given rows so Garman-Klass vol genuinely
+    # changes (scaling all of OHLC by a constant leaves the high/low ratio — and thus gk — fixed,
+    # which would make the poison a no-op).
+    def _widen_range(frame, row_slice):  # noqa: ANN001, ANN202
+        f = frame.copy()
+        idx = f.index[row_slice]
+        f.loc[idx, "high"] = f.loc[idx, "high"] * 1.5
+        f.loc[idx, "low"] = f.loc[idx, "low"] * 0.5
+        return f
+
+    # (1) Poison the HOLDOUT period: widen the range for every raw row at/after the holdout start.
+    poisoned = _widen_range(base, slice(raw_holdout_start, None))
+    xp, yp, gp, _ = _dev_inputs(poisoned)
+    assert np.array_equal(x0, xp), "LABEL LEAK: a dev FEATURE changed when only holdout rows moved"
+    assert np.array_equal(y0, yp), (
+        "LABEL LEAK: a dev TARGET changed when only HOLDOUT-period rows were mutated — a dev "
+        "label is reading a holdout-period gk value (the P1-A bug)."
+    )
+    assert np.array_equal(g0, gp), "LABEL LEAK: a dev gk value changed when only holdout rows moved"
+
+    # (2) Non-vacuity: mutating a DEV row DOES change the dev inputs.
+    dev_row = max(0, raw_holdout_start - 30)  # safely inside the dev period
+    dev_poisoned = _widen_range(base, slice(dev_row, dev_row + 1))
+    xd, _, _, _ = _dev_inputs(dev_poisoned)
+    assert not np.array_equal(x0, xd), (
+        "mutating a DEV row left the dev features unchanged — the leak test is vacuous"
+    )
+
+
 def test_vol_holdout_skipped_on_small_data() -> None:
     """When the dev portion would fall below _MIN_OBS, the holdout is skipped (no keys, no crash).
 
-    We use ~70 valid vol rows: holdout_size=14 -> dev=56 < _MIN_OBS=60 -> skip.  The CV still
-    runs (>= _MIN_OBS valid rows overall), so we get the normal metrics but NO holdout_* keys.
+    We use 90 OHLC rows -> 71 feature-valid rows: holdout_size=floor(0.2*71)=14 -> dev would be
+    57 < _MIN_OBS=60 -> SKIP.  With the holdout skipped, the CV runs on all 71 feature-valid
+    rows (minus the last _HORIZON dropped to the forward window, ~66 trainable >= 60), so we
+    get the normal metrics but NO holdout_* keys.
     """
     con = duckdb.connect(":memory:")
     init_schemas(con)
 
-    # ~95 OHLC rows -> after vol-feature + 5-day-forward-target warmup, ~70 valid rows: enough
-    # for the CV (>= 60) but too few to also carve a holdout and keep >= 60 dev rows.
-    n = 95
+    n = 90
     df = _make_ohlc_df(n=n).assign(symbol="SPY")
     cols = [
         "symbol",

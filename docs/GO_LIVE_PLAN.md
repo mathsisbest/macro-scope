@@ -101,6 +101,21 @@ the same wave.
   gate, the dashboard badge, and the brief): `cleared` = `oos_r2 ≥ 0.10` AND `qlike_skill_ratio < 0.99`
   AND `folds_passed ≥ ceil(0.6·n_folds)` AND `n_obs ≥ 250`. Fixed module constants, **never re-tuned to
   pass**. Kept **out** of `make ci` (sample data has no real edge).
+  - **`n_obs` semantics (locked-holdout change):** since the locked-holdout work, `n_obs` is the **CV-sample
+    (dev) count** — the rows the walk-forward CV actually trained/scored on — **not** the full valid count.
+    The dev portion is everything before the carved holdout, minus the last `horizon` rows whose forward
+    target window falls outside dev (they get a NaN label and drop, exactly as at the series end). The gate's
+    `n_obs ≥ 250` check is therefore evaluated on the dev count; on real data (≫ 250 obs) this is unaffected,
+    and the check can only flip versus the old full-count behaviour in the narrow **~250–311-row band**
+    (where carving ~20% drops the count below 250). Real-data runs are far above this band.
+- **Locked holdout = honest extra OOS readout, REPORTED not GATED.** Both the vol (`rv_har`) and direction
+  (`random_forest`) models carve the **last** `min(252, ⌊0.2·n⌋)` time-ordered rows as a locked holdout,
+  final-fit on dev only, and score it once — emitting `holdout_*` long rows (vol: `holdout_oos_r2`,
+  `holdout_qlike`, `holdout_qlike_skill_ratio`, `holdout_n_obs`; direction: `holdout_dir_acc`,
+  `holdout_baseline_dir_acc`, `holdout_n_obs`). The forward **target is built per-slice** (dev and holdout
+  separately) so no dev label reads a holdout-period value — the gated CV metrics stay leakage-free at the
+  label level. `skill_verdict()` is **unchanged** and never reads `holdout_*`; the holdout is never used to
+  tune the model, features, or thresholds. Skipped (no rows) when carving would leave `< 60` dev rows.
 - **Escape hatch (honest):** if not cleared, do not overfit — commit with the
   "no demonstrated out-of-sample edge — baseline-only" UI/brief state; no beats/outperforms phrasing.
 - **Next-day direction model** (`model='random_forest'`) is **retained, demoted** to an honestly-labelled

@@ -21,6 +21,10 @@ import math
 _MAX_HOLDOUT: int = 252
 # Fraction of the (time-ordered) observations to reserve as the holdout.
 _HOLDOUT_FRAC: float = 0.2
+# Canonical minimum trainable observations required to attempt training.  Lives here (the
+# leaf module both vol + direction models import) so the two models share ONE floor instead
+# of duplicating the literal.
+MIN_OBS: int = 60
 
 
 def holdout_size(n_obs: int) -> int:
