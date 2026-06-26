@@ -117,17 +117,25 @@ def vol_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
 # ---------------------------------------------------------------------------
 
 
-def macro_chart(df: pd.DataFrame, label: str) -> go.Figure:
+def macro_chart(
+    df: pd.DataFrame, label: str, units: str = "", height: int | None = None
+) -> go.Figure:
     fig = go.Figure()
+    # A sparse series — quarterly data, or any series viewed over a short date range — reads as a
+    # flat/near-empty line, so show markers when there are few points to keep the observations
+    # visible. Frequent (daily/monthly) series stay clean lines.
+    mode = "lines+markers" if len(df) <= 40 else "lines"
     fig.add_scatter(
         x=df["date"],
         y=df["value"],
         name=label,
+        mode=mode,
         line=dict(color=PALETTE["accent"]),
     )
-    fig.update_layout(title=dict(text=label, font=_TITLE_FONT))
+    title = f"{label} · {units}" if units else label
+    fig.update_layout(title=dict(text=title, font=_TITLE_FONT))
     _apply_axis_fonts(fig)
-    return style_fig(fig, height=HEIGHT_DEFAULT)
+    return style_fig(fig, height=height or HEIGHT_DEFAULT)
 
 
 def yield_curve_chart(df: pd.DataFrame) -> go.Figure:

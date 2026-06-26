@@ -238,29 +238,98 @@ with tab_mkt:
         st.info("No asset data yet. Run `mmi ingest` or `make demo` to populate the markets tab.")
 
 with tab_macro:
-    ids = data.macro_ids()
-    if ids:
-        mid = st.selectbox("Series", ids)
-        md = data.macro(mid, rng_start)
-        if not md.empty:
-            st.plotly_chart(charts.macro_chart(md, mid), use_container_width=True)
-        else:
-            st.info(f"No data for series {mid} yet.")
-    else:
+    # Macro monitor: a headline snapshot (latest, range-independent), then a category selector that
+    # swaps in a small-multiples grid of that theme's indicators (windowed by the range), then
+    # always-on cross-series context (yield curve + recession risk). Reads the configured catalogue
+    # for friendly labels + grouping (the mart only stores the raw FRED series_id).
+    catalog = data.macro_catalog()
+    present = set(data.macro_ids())
+    cat = [c for c in catalog if c["id"] in present]
+    by_id = {c["id"]: c for c in cat}
+    mm_view = data.market_macro(rng_start)
+
+    if not cat and mm_view.empty:
         st.info(
-            "No macro series yet. "
-            "Run `mmi ingest` (or `make demo`) to pull FRED / World Bank indicators. "
+            "No macro series yet. Run `mmi ingest` (or `make demo`) to pull the FRED indicators. "
             "In the daily-cron partial state this tab populates once the first full ingest runs."
         )
-    mm_view = data.market_macro(rng_start)
-    if not mm_view.empty:
-        st.plotly_chart(charts.yield_curve_chart(mm_view), use_container_width=True)
-    # Source line for the macro charts. Live FRED data (every series here — CPIAUCSL, UNRATE, DGS10,
-    # DGS2, FEDFUNDS — and the 10Y−2Y curve are FRED) earns the FRED attribution; sample data must
-    # NOT be attributed to FRED (it's synthetic). Decision lives in a pure, tested helper.
-    macro_caption = data.macro_source_caption(is_sample)
-    if (ids or not mm.empty) and macro_caption:
-        st.caption(macro_caption)
+    else:
+
+        def _fmt_macro(v: float, u: str) -> str:
+            if "%" in u:
+                return f"{v:,.1f}%"
+            if u == "pp":
+                return f"{v:+,.2f}"
+            if abs(v) >= 1000:
+                return f"{v:,.0f}"
+            return f"{v:,.1f}"
+
+        # ---- Snapshot strip: headline gauges, LATEST value (NOT filtered by the range). Deltas are
+        # neutral (delta_color='off') — for macro, up/down isn't inherently good or bad. ----
+        _MACRO_HEADLINE = [
+            "A191RL1Q225SBEA",
+            "UNRATE",
+            "VIXCLS",
+            "T10Y2Y",
+            "FEDFUNDS",
+            "GFDEGDQ188S",
+        ]
+        snap = [by_id[i] for i in _MACRO_HEADLINE if i in by_id]
+        if snap:
+            for col, c in zip(st.columns(len(snap)), snap, strict=True):
+                s = data.macro(c["id"])  # full series → latest headline value, range-independent
+                if s.empty:
+                    continue
+                chg = s["change"].dropna()
+                with col:
+                    st.metric(
+                        c["label"],
+                        _fmt_macro(float(s["value"].iloc[-1]), c["units"]),
+                        delta=(f"{float(chg.iloc[-1]):+,.2f}" if not chg.empty else None),
+                        delta_color="off",
+                    )
+            st.divider()
+
+        # ---- Category selector → small-multiples grid (each chart windowed by the range) ----
+        _CAT_ORDER = [
+            "Growth & activity",
+            "Inflation",
+            "Labor",
+            "Rates & curve",
+            "Fiscal",
+            "Money & liquidity",
+            "Risk & conditions",
+            "Commodities & FX",
+            "Other",
+        ]
+        cats_present = [k for k in _CAT_ORDER if any(c["category"] == k for c in cat)]
+        if cats_present:
+            sel_cat = (
+                st.segmented_control(
+                    "Category", cats_present, default=cats_present[0], key="macro_cat"
+                )
+                or cats_present[0]
+            )
+            gcols = st.columns(2)
+            for i, c in enumerate(c for c in cat if c["category"] == sel_cat):
+                with gcols[i % 2]:
+                    df = data.macro(c["id"], rng_start)
+                    if df.empty:
+                        st.caption(f"{c['label']} — no data in this range")
+                    else:
+                        st.plotly_chart(
+                            charts.macro_chart(df, c["label"], c["units"], height=240),
+                            use_container_width=True,
+                        )
+        macro_caption = data.macro_source_caption(is_sample)
+        if macro_caption:
+            st.caption(macro_caption)
+
+        # ---- Always-on context: the yield-curve spread (cross-series composite) ----
+        if not mm_view.empty:
+            st.divider()
+            st.caption("📌 Always-on context")
+            st.plotly_chart(charts.yield_curve_chart(mm_view), use_container_width=True)
 
     # ---- Recession-risk panel -----------------------------------------------
     # Macro CONTEXT only — not a return/price forecast (Contract E, §8).

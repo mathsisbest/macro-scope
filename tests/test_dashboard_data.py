@@ -196,3 +196,22 @@ def test_asset_daily_start_filters_rows(monkeypatch, tmp_path):
     data.query.clear()
     recent = data.asset_daily("SPY", "2026-01-01")  # floor drops the 2020 row
     assert len(recent) == 1 and str(recent["date"].iloc[0]).startswith("2026")
+
+
+def test_macro_catalog_exposes_label_category_units():
+    """macro_catalog() surfaces the config metadata the Macro tab groups + labels by."""
+    cat = data.macro_catalog()
+    assert cat, "macro catalogue should be non-empty"
+    ids = {c["id"] for c in cat}
+    assert {"CPIAUCSL", "VIXCLS", "GFDEGDQ188S"} <= ids  # existing + newly-added series
+    for c in cat:
+        assert c["id"] and c["label"] and c["category"]  # metadata present for every entry
+
+
+def test_macro_config_entries_all_carry_metadata():
+    """Every macro series in config must declare id + category + units, so the monitor can group
+    and caption it. Guards future additions from dropping the metadata."""
+    from mmi.settings import load_assets
+
+    for entry in load_assets()["macro"]:
+        assert {"id", "category", "units"} <= set(entry), f"macro entry missing metadata: {entry}"

@@ -10,7 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from mmi.portfolio import windows
-from mmi.settings import settings
+from mmi.settings import load_assets, settings
 from mmi.utils.db import connect
 
 
@@ -188,6 +188,29 @@ def portfolio_btc_effect() -> pd.DataFrame:
 def macro_ids() -> list[str]:
     df = query("select distinct series_id from marts.fct_macro_indicator order by series_id")
     return df["series_id"].tolist() if not df.empty else []
+
+
+def macro_catalog() -> list[dict]:
+    """The configured macro series with display metadata — ``[{id, label, category, units}, ...]``
+    in config order. Drives the Macro tab's category grouping + friendly labels (the mart only
+    stores the raw ``series_id``). Tolerates legacy entries missing category/units."""
+    try:
+        items = load_assets().get("macro", []) or []
+    except Exception:  # noqa: BLE001 — a malformed/absent config must not crash the dashboard
+        return []
+    out: list[dict] = []
+    for it in items:
+        if not isinstance(it, dict) or "id" not in it:
+            continue
+        out.append(
+            {
+                "id": it["id"],
+                "label": it.get("label", it["id"]),
+                "category": it.get("category", "Other"),
+                "units": it.get("units", ""),
+            }
+        )
+    return out
 
 
 def macro(series_id: str, start: str | None = None) -> pd.DataFrame:

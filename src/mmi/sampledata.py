@@ -93,8 +93,33 @@ def _assets() -> pd.DataFrame:
 def _macro() -> pd.DataFrame:
     series = load_assets()["macro"]
     months = pd.date_range(end=pd.Timestamp.now(tz="UTC").normalize(), periods=60, freq="MS")
-    base = {"CPIAUCSL": 300.0, "UNRATE": 4.0, "DGS10": 4.3, "DGS2": 4.7, "FEDFUNDS": 5.3}
-    drift = {"CPIAUCSL": 0.4, "UNRATE": 0.01, "DGS10": 0.0, "DGS2": 0.0, "FEDFUNDS": 0.0}
+    # Plausible starting levels so the synthetic Macro tab looks sensible in demo/CI (the badge
+    # still says "sample" — real values arrive on a live ingest). Any id absent here starts at 1.0.
+    base = {
+        "CPIAUCSL": 300.0,
+        "PCEPILFE": 122.0,
+        "UNRATE": 4.0,
+        "DGS10": 4.3,
+        "DGS2": 4.7,
+        "DGS3MO": 5.3,
+        "T10Y2Y": -0.2,
+        "FEDFUNDS": 5.3,
+        "A191RL1Q225SBEA": 2.2,
+        "INDPRO": 103.0,
+        "RSAFS": 700000.0,
+        "UMCSENT": 70.0,
+        "PAYEMS": 158000.0,
+        "ICSA": 220000.0,
+        "GFDEGDQ188S": 120.0,
+        "M2SL": 21000.0,
+        "WALCL": 7000000.0,
+        "VIXCLS": 17.0,
+        "NFCI": -0.2,
+        "SAHMREALTIME": 0.2,
+        "DCOILWTICO": 78.0,
+        "DTWEXBGS": 120.0,
+    }
+    drift = {"CPIAUCSL": 0.4, "PCEPILFE": 0.2, "UNRATE": 0.01, "M2SL": 40.0, "PAYEMS": 120.0}
     rows = []
     for s in series:
         sid = s["id"]
