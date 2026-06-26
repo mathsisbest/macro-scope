@@ -217,3 +217,30 @@ def test_holdout_readout_skips_nan_and_inf_values():
     )
     out = charts.holdout_readout(metrics, model="rv_har", symbol="SPY")
     assert out == {"holdout_n_obs": 200.0}  # the NaN / inf rows are dropped, a finite one survives
+
+
+def test_rebase_cumulative_starts_each_strategy_at_zero():
+    """rebase_cumulative pins each strategy's curve to 0% at its first visible row and preserves
+    the compounded shape (return since the window start), so a sub-range no longer starts at e.g.
+    +150%. The mart's cumulative_return is inception-based."""
+    df = pd.DataFrame(
+        {
+            "strategy": ["a", "a", "a", "b", "b"],
+            "date": pd.to_datetime(
+                ["2020-01-01", "2020-01-02", "2020-01-03", "2020-01-01", "2020-01-02"]
+            ),
+            "cumulative_return": [
+                0.50,
+                0.65,
+                0.80,
+                0.20,
+                0.32,
+            ],  # inception-based, start mid-history
+        }
+    )
+    out = charts.rebase_cumulative(df)
+    first = out.groupby("strategy")["cumulative_return"].first()
+    assert abs(first["a"]) < 1e-12 and abs(first["b"]) < 1e-12  # each starts at exactly 0%
+    a_last = out[out["strategy"] == "a"]["cumulative_return"].iloc[-1]
+    assert abs(a_last - ((1 + 0.80) / (1 + 0.50) - 1)) < 1e-12  # 0.20 = windowed compounded return
+    assert charts.rebase_cumulative(pd.DataFrame()).empty  # empty-safe

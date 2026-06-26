@@ -571,6 +571,8 @@ with tab_portfolio:
         if not pairs.empty:
             st.info("📊 " + charts.distinguishability_verdict(pairs))
         st.plotly_chart(charts.portfolio_cumulative_chart(pf), use_container_width=True)
+        if rng_start:
+            st.caption("Cumulative return is rebased to 0% at the start of the selected range.")
 
         # ---- secondary sections (collapsible) --------------------------------
         with st.expander("📉 Drawdown & rolling Sharpe", expanded=False):
