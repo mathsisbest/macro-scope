@@ -22,13 +22,38 @@ fx:                # Yahoo FX pairs (fetched as e.g. EURUSD=X)
 crypto_daily:      # Yahoo daily crypto — the ONLY crypto path; long history for the portfolio
   - BTC-USD        # backtest. BTC-USD lands as symbol 'BTC', asset_class 'crypto'.
 
-macro:             # FRED series ids
-  - { id: CPIAUCSL, label: "US CPI (all items)" }
-  - { id: UNRATE,   label: "US Unemployment Rate" }
-  - { id: DGS10,    label: "US 10Y Treasury Yield" }
-  - { id: DGS2,     label: "US 2Y Treasury Yield" }
-  - { id: DGS3MO,   label: "US 3-Month Treasury Yield" }
-  - { id: FEDFUNDS, label: "Effective Fed Funds Rate" }
+macro:             # FRED series — { id, label, category, units }. Adding a line is all it takes:
+                   # the FRED extractor reads only `id`; the dashboard groups the Macro tab by `category`.
+  # Growth & activity
+  - { id: A191RL1Q225SBEA, label: "Real GDP growth",       category: "Growth & activity", units: "% annualised" }
+  - { id: INDPRO,          label: "Industrial production",  category: "Growth & activity", units: "index" }
+  - { id: RSAFS,           label: "Retail sales",           category: "Growth & activity", units: "$ millions" }
+  - { id: UMCSENT,         label: "Consumer sentiment",     category: "Growth & activity", units: "index" }
+  # Inflation
+  - { id: CPIAUCSL,        label: "US CPI (all items)",     category: "Inflation",         units: "index" }
+  - { id: PCEPILFE,        label: "Core PCE price index",   category: "Inflation",         units: "index" }
+  # Labor
+  - { id: UNRATE,          label: "Unemployment rate",      category: "Labor",             units: "%" }
+  - { id: PAYEMS,          label: "Nonfarm payrolls",       category: "Labor",             units: "thousands" }
+  - { id: ICSA,            label: "Initial jobless claims", category: "Labor",             units: "claims" }
+  # Rates & curve
+  - { id: DGS10,           label: "10Y Treasury yield",     category: "Rates & curve",     units: "%" }
+  - { id: DGS2,            label: "2Y Treasury yield",      category: "Rates & curve",     units: "%" }
+  - { id: DGS3MO,          label: "3M Treasury yield",      category: "Rates & curve",     units: "%" }
+  - { id: T10Y2Y,          label: "10Y-2Y spread",          category: "Rates & curve",     units: "pp" }
+  - { id: FEDFUNDS,        label: "Fed funds rate",         category: "Rates & curve",     units: "%" }
+  # Fiscal
+  - { id: GFDEGDQ188S,     label: "Federal debt / GDP",     category: "Fiscal",            units: "% of GDP" }
+  # Money & liquidity
+  - { id: M2SL,            label: "M2 money supply",        category: "Money & liquidity", units: "$ billions" }
+  - { id: WALCL,           label: "Fed balance sheet",      category: "Money & liquidity", units: "$ millions" }
+  # Risk & conditions
+  - { id: VIXCLS,          label: "VIX (equity volatility)", category: "Risk & conditions", units: "index" }
+  - { id: NFCI,            label: "Financial conditions (NFCI)", category: "Risk & conditions", units: "index" }
+  - { id: SAHMREALTIME,    label: "Sahm rule",              category: "Risk & conditions", units: "pp" }
+  # Commodities & FX
+  - { id: DCOILWTICO,      label: "WTI crude oil",          category: "Commodities & FX",  units: "$/barrel" }
+  - { id: DTWEXBGS,        label: "Broad dollar index",     category: "Commodities & FX",  units: "index" }
 
 worldbank:         # World Bank indicator codes (global context)
   - { id: "NY.GDP.MKTP.KD.ZG", label: "GDP growth (annual %)" }
