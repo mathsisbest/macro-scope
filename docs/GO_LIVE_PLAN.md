@@ -198,7 +198,7 @@ G=#50 hygiene · H=snapshot/bootstrap · O=owner go-live.
 | GC | C | code | Brief deterministic ordering + distinct engine tags + facts TypedDict | `src/mmi/ai/narrative.py`, `src/mmi/ai/llm.py`, `tests/...` | GB |
 | B8 | B | owner | Production-scale render check: ML + AI tabs against the real local DB in **both** cleared/not-cleared states (honesty, single-source agreement) | — | B6, B7, C7 |
 | D6 | D | code | Whole-schema snapshot + fail-loud size cap `MMI_SNAPSHOT_MAX_BYTES` | `src/mmi/cli.py`(*serialize*), `tests/test_cli_snapshot.py` | D1 |
-| O1 | O | owner | Add free Actions secrets (`FRED_API_KEY`, `COINGECKO_API_KEY`, optional `GEMINI_API_KEY`) | — | DOC1 |
+| O1 | O | owner | Add free Actions secrets (`FRED_API_KEY`, optional `GEMINI_API_KEY`) | — | DOC1 |
 
 ### Wave 5 — owner visual sign-off (sample)
 | id | ws | kind | task | deps |

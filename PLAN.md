@@ -8,7 +8,7 @@
 **Author:** mathsisbest · **Status:** Plan + working scaffold · **Cost target:** £0 / $0 forever
 
 > **Implementation status (P0 hygiene pass).** The scaffold is real and CI-gated: ingestion
-> (CoinGecko/Yahoo/FRED/World Bank), a complete dbt project (staging→intermediate→marts + tests),
+> (Yahoo/FRED/World Bank), a complete dbt project (staging→intermediate→marts + tests),
 > an ML forecast + regime layer, a provider-agnostic GenAI brief, and the Streamlit dashboard all
 > run on seeded data in CI. **Roadmap (described below but not yet built):** the DBnomics
 > sources, per-source incremental watermarks + `make backfill`, full Pydantic payload models, dbt
@@ -46,12 +46,12 @@ comparison that drove the decision:
 | Domain | Best free source(s) | Free limit | History | "Streaming" fit | Verdict |
 |---|---|---|---|---|---|
 | **Macro** | FRED, World Bank, DBnomics | Effectively unlimited, stable | Decades | Low (monthly/quarterly data) | ✅ Core — rock-solid free backbone |
-| **Investing / markets** | Yahoo (no key), CoinGecko | CoinGecko 100 calls/min, 10k/mo | Years–decades | **High** (crypto updates per-minute) | ✅ Core — best streaming + ML data |
+| **Investing / markets** | Yahoo (no key) | Unofficial endpoint; no hard cap | Years–decades | Daily bars (equities + BTC) | ✅ Core — deep ML-ready history |
 | **Sports betting / odds** | The Odds API | ~500 credits/month (~16/day) | Scarce when free | Medium but quota-limited | ⚠️ Optional Phase-2 module |
 
-**Decision: anchor on "Markets & Macro."** Crypto gives a *real* high-frequency streaming
-narrative for free; equities/FX give deep ML-ready history; macro gives analytical depth and
-great BI storytelling. Sports betting is included as a **fully-specified optional module**
+**Decision: anchor on "Markets & Macro."** Equities, FX, and daily BTC give deep, ML-ready
+price history for free; macro gives analytical depth and great BI storytelling. Sports betting
+is included as a **fully-specified optional module**
 (see §13) so it can be switched on later — but its free quota is too thin to carry the
 "streaming" story, so it isn't the core.
 
@@ -66,7 +66,6 @@ Markets and macro combine into one narrative:
 
 | Source | Data | Auth | Cadence we pull | Free limits (verified Jun 2026) |
 |---|---|---|---|---|
-| **CoinGecko** (Demo API) | Crypto prices, market caps, volume | Free demo key | Every 15–30 min | 100 calls/min, 10k calls/month |
 | **Yahoo** (v8 chart) | Daily *adjusted* close for equities/ETFs/bonds/commodities/FX + daily BTC | None | Daily | Unofficial endpoint (browser UA); the working price source |
 | **Stooq** *(dormant)* | Daily OHLC — replaced by Yahoo; free CSV now returns a JS challenge | None | — | Out of `EXTRACTORS`, untested |
 | **FRED** (St. Louis Fed) | US macro: CPI, rates, unemployment, yield curve, M2 | Free API key | Daily check (data is monthly) | Generous; no hard public cap |
@@ -74,7 +73,7 @@ Markets and macro combine into one narrative:
 | **DBnomics** | Aggregator over ECB/Eurostat/IMF/OECD | None | Weekly | None |
 | *(optional)* **The Odds API** | Sports odds & line movement | Free key | 2–3×/day | 500 credits/month |
 
-> **Implemented today:** CoinGecko, **Yahoo** (price history incl. daily BTC), FRED, World Bank.
+> **Implemented today:** **Yahoo** (price history incl. daily BTC), FRED, World Bank.
 > **Dormant:** Stooq (free CSV endpoint now returns a JS challenge — out of `EXTRACTORS`).
 > **Roadmap:** DBnomics is part of the design but not yet implemented.
 
@@ -86,8 +85,7 @@ incremental, idempotent loads — which is how most real analytics platforms act
 
 - **Scheduler:** GitHub Actions `schedule:` cron. Private repos get **2,000 free Linux
   minutes/month** — the shipped default is a ~60-second job every 6h (~120 min/month), well
-  inside the quota. (A 30-min crypto refresh is an aspirational upper bound, not the shipped
-  cadence.)
+  inside the quota.
 - **Idempotency:** each extractor upserts on a natural key (`symbol + timestamp`) so re-runs
   never duplicate. *(Implemented.)* True per-source incremental watermarks are **roadmap** —
   today's loads are a full scheduled refresh (see the source-specific policy in §7.1).
@@ -107,7 +105,6 @@ incremental, idempotent loads — which is how most real analytics platforms act
 ```mermaid
 flowchart LR
     subgraph Sources["External free APIs"]
-        A1[CoinGecko]:::src
         A2[Yahoo]:::src
         A3[FRED]:::src
         A4[World Bank / DBnomics]:::src
@@ -197,7 +194,7 @@ markets-macro-intelligence/
 ├── src/mmi/                       # installable package (good SWE: no loose scripts)
 │   ├── ingestion/                 # ── DATA ENGINEERING ──
 │   │   ├── base.py                # Extractor ABC: fetch→validate→load, idempotent
-│   │   ├── coingecko.py
+│   │   ├── yahoo.py
 │   │   ├── stooq.py
 │   │   ├── fred.py
 │   │   ├── worldbank.py
@@ -248,13 +245,13 @@ markets-macro-intelligence/
   writes a row to `raw.pipeline_runs` (source, rows, duration, status) for observability.
   *(Implemented.)*
 - A **watermark** helper exists, but **per-source incremental pulls are roadmap.** Planned policy:
-  CoinGecko snapshot upsert (symbol + provider timestamp); Yahoo/FRED use last-loaded-date bounds;
-  World Bank stays a full refresh (slow-changing reference data). Today: full scheduled refresh.
+  Yahoo/FRED use last-loaded-date bounds; World Bank stays a full refresh (slow-changing
+  reference data). Today: full scheduled refresh.
 
 ### 7.2 Analytics Engineering (`transform/` — dbt)
 - **staging**: typed, renamed, de-duplicated views (one per source table).
 - **intermediate**: returns, log-returns, rolling vol, moving averages, macro joins.
-- **marts**: `fct_asset_daily`, `fct_crypto_intraday`, `dim_asset`, `fct_macro_indicator`,
+- **marts**: `fct_asset_daily`, `dim_asset`, `fct_macro_indicator`,
   `fct_market_macro` (the joined "markets in macro context" table the dashboard centres on).
 - **Tests**: `not_null`, `unique`, `accepted_range`, relationship tests, plus a custom test
   that returns are within sane bounds. **Source freshness** flags stale data.
@@ -320,7 +317,7 @@ markets-macro-intelligence/
 
 | Item | Service | Cost |
 |---|---|---|
-| Source data | CoinGecko / Yahoo / FRED / World Bank | £0 |
+| Source data | Yahoo / FRED / World Bank | £0 |
 | Compute / scheduling | GitHub Actions (2,000 min/mo private) | £0 |
 | Storage | DuckDB (local) + MotherDuck free tier (deployed) | £0 |
 | Transform | dbt-core (OSS) | £0 |
@@ -382,6 +379,6 @@ quota can't sustain frequent "streaming."
 ## 14. What to do next
 
 1. Review this plan; tweak the asset list in `config/assets.yml`.
-2. Get free API keys: **FRED** (api.stlouisfed.org), **CoinGecko Demo**, **Gemini** (ai.google.dev).
+2. Get free API keys: **FRED** (api.stlouisfed.org), **Gemini** (ai.google.dev).
 3. Create the private GitHub repo and push the scaffold (commands provided on delivery).
 4. Work the roadmap phase by phase — each phase is a clean, self-contained set of PRs.

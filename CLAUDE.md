@@ -41,7 +41,7 @@ as **separate sessions** with a repo-only handoff (no chat relay) — the anti-r
   default **free Gemini/Groq**, deterministic-template fallback if no key.
   ⚠️ **The Claude API is metered/not free — the owner's subscription does NOT cover it.**
   Keep the free default; Claude is opt-in.
-- Domain & data-source choices (CoinGecko / Yahoo v8 / FRED / World Bank), the micro-batch
+- Domain & data-source choices (Yahoo v8 / FRED / World Bank), the micro-batch
   "streaming" model (ADR-0003), and Sports-betting Phase-2 → **see PLAN.md + docs/adr/**.
 
 ## Current status — read the live sources, not this file
