@@ -103,6 +103,23 @@ def asset_daily(symbol: str, start: str | None = None) -> pd.DataFrame:
     return query(sql + " order by date", params)
 
 
+def all_assets_daily(start: str | None = None) -> pd.DataFrame:
+    """Long frame ``[symbol, asset_class, date, close, daily_return]`` for EVERY asset, windowed by
+    ``start`` (``date >= start``) when given. One query, ordered by ``symbol, date`` — the
+    cross-asset leaderboard, rebased-performance and correlation panels all derive from this.
+
+    Unlike :func:`asset_daily` this omits the precomputed rolling features (``vol_20d``/``ma_50``):
+    the cross-asset stats are computed FROM the windowed ``daily_return`` (period return,
+    annualised vol, correlation), so the rolling features aren't needed here (the per-asset
+    drill-down still uses :func:`asset_daily` for its sliced ``ma_50``/``vol_20d``)."""
+    sql = "select symbol, asset_class, date, close, daily_return from marts.fct_asset_daily"
+    params: tuple[str, ...] = ()
+    if start:
+        sql += " where date >= ?"
+        params += (start,)
+    return query(sql + " order by symbol, date", params)
+
+
 def portfolio_windows() -> list[str]:
     """The backtest windows actually present in the marts, in canonical enum order.
 

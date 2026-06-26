@@ -52,6 +52,28 @@ SERIES_YIELD: str = PALETTE["series"][3]  # #c678dd — yield-curve / macro / pu
 SERIES_RISK: str = PALETTE["series"][4]  # #ff5d6c — risk / drawdown / danger
 SERIES_ALT: str = PALETTE["series"][5]  # #56b6c2 — alternative / teal
 
+# Asset-class colour map — one stable colour per asset class, used for the cross-asset Markets
+# view (leaderboard dots + rebased-performance lines). Keyed by the `asset_class` value stored in
+# fct_asset_daily ("equities"/"bonds"/"commodities"/"crypto"/"fx"). Distinct from PALETTE["series"]
+# (which is the categorical line cycle) so a class reads the same colour everywhere it appears.
+# These are decorative dot/line tokens (not body text), so they are exempt from the WCAG-AA
+# text-contrast minimums the PALETTE text tokens carry.
+ASSET_CLASS_COLORS: dict[str, str] = {
+    "equities": "#378ADD",
+    "bonds": "#1D9E75",
+    "commodities": "#BA7517",
+    "crypto": "#7F77DD",
+    "fx": "#888780",
+}
+#: Fallback colour for an asset class not in the map (keeps a new class from rendering colourless).
+ASSET_CLASS_FALLBACK: str = PALETTE["muted"]
+
+
+def asset_class_color(asset_class: str | None) -> str:
+    """Stable colour for an ``asset_class`` value, with a muted fallback for unknown classes."""
+    return ASSET_CLASS_COLORS.get(str(asset_class or ""), ASSET_CLASS_FALLBACK)
+
+
 # Chart height scale — consistent height buckets for all figures.
 HEIGHT_TALL: int = 400  # full-width hero charts
 HEIGHT_DEFAULT: int = 360  # standard figure (matches style_fig default)
