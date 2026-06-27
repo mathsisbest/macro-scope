@@ -79,3 +79,34 @@ make ingest && make dbt-build && make ml && make ai && make dashboard
 
 ## Review focus
 Project-specific watch-items live in **docs/REVIEW_GUIDE.md** (§7), loaded by `/review-pr`.
+
+## Boundaries (agent quick-reference)
+**Always (do without asking):**
+- Read any file, run `make ci`, run tests, search the codebase.
+- Make the smallest single-concern change that satisfies the task.
+- Fix a failing gate by addressing the root cause.
+
+**Ask first (stop and check):**
+- A data **schema** / **dbt contract** / mart-shape change, a public-API change, or a migration.
+- Adding a dependency, or **anything that spends money** — this project is £0 (no paid APIs/hosting/DBs).
+- Deleting or rewriting a file you didn't create; touching auth or secrets.
+
+**Never:**
+- Merge your own work, or push to `main` directly.
+- Commit secrets, tokens, or the **MotherDuck token** / `.env` contents — keys live in env / GH Actions /
+  Streamlit secrets, never in code, logs, or the dashboard UI.
+- Author commits as anyone but **mathsisbest** (`33107428+mathsisbest@users.noreply.github.com`).
+- Flip the LLM default to **Claude** (metered, not free — the default stays Gemini/Groq).
+- Enable the scheduled `ingest.yml` cron without the owner's say-so.
+- Suppress/skip a failing test, or weaken the gate, to push a change through.
+
+## When you compact this session
+Compaction summarizes the conversation to free up context. When it happens, preserve verbatim:
+- Every file path you've modified.
+- The gate command (`make ci`) and any one-off commands for the current task.
+- Any task still in progress and its next step (e.g. an open PR awaiting review/merge).
+
+Drop exploratory reasoning and tool output you no longer need. If you're near the context limit mid-task,
+finish or checkpoint the current step before letting a summary eat the details you need to resume.
+
+> Tip: `/compact preserve modified files and test commands` forces a focused compaction mid-session.
