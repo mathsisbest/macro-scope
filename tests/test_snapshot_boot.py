@@ -91,3 +91,15 @@ def test_configure_respects_explicit_mode(tmp_path):
     env = {"MMI_SNAPSHOT_MODE": "0"}
     configure_dashboard_env(env, tmp_path)
     assert env["MMI_SNAPSHOT_MODE"] == "0"  # explicit choice preserved
+
+
+def test_configure_pins_assets_path_to_repo(tmp_path):
+    """MMI_ASSETS_PATH is pinned to <repo>/config/assets.yml so load_assets() (the Macro tab's
+    catalogue) finds the config on a non-editable Cloud install — else the macro monitor renders
+    empty. Operator override preserved."""
+    env: dict[str, str] = {}
+    configure_dashboard_env(env, tmp_path)
+    assert env["MMI_ASSETS_PATH"] == str(tmp_path / "config" / "assets.yml")
+    env2 = {"MMI_ASSETS_PATH": "/custom/a.yml"}
+    configure_dashboard_env(env2, tmp_path)
+    assert env2["MMI_ASSETS_PATH"] == "/custom/a.yml"

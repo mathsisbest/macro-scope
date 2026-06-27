@@ -21,15 +21,18 @@ def configure_dashboard_env(environ: MutableMapping[str, str], repo_root: Path) 
     ``mmi.settings``. Two fixes for the public Streamlit Cloud deploy, both no-ops when the
     operator has set the value explicitly:
 
-    1. **Pin ``MMI_SNAPSHOT_DIR``** to ``<repo>/data/public``. Cloud installs the package
-       non-editably (``requirements.txt`` is ``.[dashboard]``), so ``settings``' default
-       ``snapshot_dir`` is rooted at the *package* install location (site-packages), not the repo
-       — ``db_exists()`` would then look for ``data/public`` in the wrong place. ``app.py`` always
-       lives in the real checkout, so it can point settings at the right directory.
+    1. **Pin ``MMI_SNAPSHOT_DIR``** to ``<repo>/data/public`` and **``MMI_ASSETS_PATH``** to
+       ``<repo>/config/assets.yml``. Cloud installs the package non-editably
+       (``requirements.txt`` is ``.[dashboard]``), so ``settings``' defaults are rooted at the
+       *package* install location (site-packages), not the repo — ``db_exists()`` would look for
+       ``data/public`` in the wrong place, and ``load_assets()`` (the Macro tab's catalogue) would
+       fail to find ``config/assets.yml`` so the macro monitor renders empty. ``app.py`` always
+       lives in the real checkout, so it can point settings at the right paths.
     2. **Default ``MMI_SNAPSHOT_MODE`` on** when there's no live DB to read but the snapshot
        exists (see ``resolve_snapshot_mode``).
     """
     environ.setdefault("MMI_SNAPSHOT_DIR", str(repo_root / "data" / "public"))
+    environ.setdefault("MMI_ASSETS_PATH", str(repo_root / "config" / "assets.yml"))
     mode = resolve_snapshot_mode(environ, repo_root)
     if mode is not None:
         environ["MMI_SNAPSHOT_MODE"] = mode
