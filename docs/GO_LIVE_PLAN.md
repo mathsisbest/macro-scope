@@ -97,6 +97,10 @@ the same wave.
 - **Metrics** (appended as long rows, `model='rv_har'`): `oos_r2` (Mincer-Zarnowitz vs realized), `qlike`,
   `baseline_qlike`, `qlike_skill_ratio`, `n_folds`, `folds_passed`. Honest baseline = **persistence /
   EWMA (RiskMetrics λ=0.94)**.
+  - **QLIKE vol floor:** QLIKE floors realised vol at `_VOL_FLOOR` (= 0.002 daily ≈ 3.2% annualised)
+    before squaring, applied **identically to the model and the baseline**, so a near-flat
+    Garman-Klass day can't send the predicted/realised variance ratio to ~1e6 and dominate the loss.
+    Economically motivated and **fixed — never tuned to clear the gate**.
 - **Go-live skill gate** (one pure helper `skill_verdict()` in `src/mmi/ml/skill_gate.py`, read by the CLI
   gate, the dashboard badge, and the brief): `cleared` = `oos_r2 ≥ 0.10` AND `qlike_skill_ratio < 0.99`
   AND `folds_passed ≥ ceil(0.6·n_folds)` AND `n_obs ≥ 250`. Fixed module constants, **never re-tuned to

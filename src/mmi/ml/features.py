@@ -47,10 +47,20 @@ def feature_columns(feature_set: str = "default") -> list[str]:
     return cols
 
 
+def har_feature_names() -> list[str]:
+    """Ordered HAR-cascade feature column names (``har_vol_<w>d`` for each cascade window).
+
+    Single source of truth for the HAR column names, derived from ``_VOL_HAR_WINDOWS``.
+    Consumers (e.g. the ``rv_har`` model's ``_HAR_COLS``) MUST derive their column list from
+    this helper rather than hardcoding a parallel literal, so the two can never silently drift
+    if the cascade windows change.
+    """
+    return [f"har_vol_{w}d" for w in _VOL_HAR_WINDOWS]
+
+
 def _vol_feature_names() -> list[str]:
     names = ["gk_vol"]
-    for w in _VOL_HAR_WINDOWS:
-        names.append(f"har_vol_{w}d")
+    names += har_feature_names()
     for w in _VOL_EXTRA_WINDOWS:
         names.append(f"rv_trail_{w}d")
     return names

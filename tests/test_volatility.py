@@ -645,3 +645,76 @@ def test_vol_holdout_not_in_gate_metrics(con) -> None:  # noqa: ANN001
         "skill_verdict changed when holdout rows were removed — the gate is NOT supposed to "
         "see the holdout (it is reported, not gated)"
     )
+
+
+def test_holdout_ewma_baseline_is_warm_started() -> None:
+    """The holdout EWMA baseline must inherit the dev EWMA state (warm), not restart cold.
+
+    A cold start re-seeds the λ=0.94 (~16-day memory) recursion from the holdout's first GK value
+    with no prior history; the fix carries the dev observations forward by concatenating gk_dev
+    ahead of gk_hold and reading the EWMA at the holdout offsets.  With the dev period at a
+    different vol level the two disagree on the early holdout predictions — and the cold version
+    biases the *reported* holdout baseline (hence ``holdout_qlike_skill_ratio``).  This guards the
+    exact mechanism ``train_and_backtest_vol`` uses.
+    """
+    gk_dev = np.full(200, 0.02)  # long, warm dev history at a HIGH vol level
+    gk_hold = np.full(40, 0.01)  # holdout slice at a LOW vol level
+
+    # WARM (the fix): concatenate dev ahead of the holdout, read at the holdout offsets.
+    gk_warm = np.concatenate([gk_dev, gk_hold])
+    hold_idx = np.arange(len(gk_dev), len(gk_warm))
+    warm = _walk_forward_ewma_baseline(gk_warm, hold_idx)
+
+    # COLD (the previous behaviour): recurse over the holdout slice alone.
+    cold = _walk_forward_ewma_baseline(gk_hold, np.arange(len(gk_hold)))
+
+    # adjust=False EWMA seeds from the first input, so a cold start == the holdout's first value.
+    assert cold[0] == pytest.approx(gk_hold[0]), "cold start seeds from the holdout's first value"
+    # The warm first prediction must reflect the dev memory, not restart from gk_hold[0].
+    assert warm[0] != pytest.approx(cold[0]), "warm start must differ from a cold recompute"
+    assert warm[0] > cold[0], "warm start should carry the high-vol dev level into the holdout"
+
+    # The warm series must equal a single full-history EWMA recompute read at the holdout offsets.
+    full_history = _ewma_vol(pd.Series(gk_warm)).to_numpy()[hold_idx]
+    np.testing.assert_allclose(warm, full_history)
+
+
+def test_train_and_backtest_vol_uses_warm_holdout_baseline(con, monkeypatch) -> None:  # noqa: ANN001
+    """Call-site guard: the holdout baseline must be handed dev history + holdout (warm), not the
+    holdout slice alone (cold).
+
+    Spying on ``_walk_forward_ewma_baseline``, the CV folds pass ``gk_dev`` (length ``n_obs``) and
+    the holdout call passes ``gk_dev`` concatenated with ``gk_hold`` (strictly longer).  A
+    cold-start regression would hand the holdout call a series exactly ``holdout_n_obs`` long, so
+    no call would exceed ``n_obs`` and this assertion would fail.
+    """
+    import mmi.ml.volatility as vol
+
+    captured: list[tuple[int, np.ndarray]] = []
+    orig = vol._walk_forward_ewma_baseline
+
+    def _spy(gk, test_idx, lam=vol._EWMA_LAMBDA):  # noqa: ANN001, ANN202
+        captured.append((len(gk), np.asarray(test_idx).copy()))
+        return orig(gk, test_idx, lam=lam)
+
+    monkeypatch.setattr(vol, "_walk_forward_ewma_baseline", _spy)
+
+    _seed_con(con)
+    metrics, _ = vol.train_and_backtest_vol(con, "SPY")
+
+    assert "holdout_n_obs" in metrics, "sample data should carve a holdout"
+    n_dev = int(metrics["n_obs"])
+    n_hold = int(metrics["holdout_n_obs"])
+
+    # CV calls pass gk_dev (length n_obs); the holdout call passes gk_dev + gk_hold (longer).
+    holdout_calls = [(gk_len, idx) for gk_len, idx in captured if gk_len > n_dev]
+    assert len(holdout_calls) == 1, (
+        f"expected exactly one warm (dev+holdout) baseline call longer than n_obs={n_dev}, got "
+        f"{len(holdout_calls)} — a cold-start regression would size the holdout gk at "
+        f"holdout_n_obs={n_hold}"
+    )
+    gk_len, test_idx = holdout_calls[0]
+    assert gk_len == n_dev + n_hold, "holdout baseline gk must be dev history + holdout slice"
+    # The holdout is read at offsets PAST the dev history (warm seed), scoring n_hold rows.
+    assert test_idx[0] == n_dev, "holdout baseline must read past the dev history (warm offset)"
+    assert len(test_idx) == n_hold

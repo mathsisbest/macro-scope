@@ -50,7 +50,7 @@ import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import TimeSeriesSplit
 
-from mmi.ml.features import feature_columns, make_features
+from mmi.ml.features import feature_columns, har_feature_names, make_features
 from mmi.ml.holdout import MIN_OBS as _MIN_OBS
 from mmi.ml.holdout import split_indices
 from mmi.utils.logging import get_logger
@@ -72,7 +72,10 @@ _EWMA_LAMBDA: float = 0.94
 # Economically motivated and FIXED — never tuned to make a run clear the gate.
 _VOL_FLOOR: float = 0.002
 # HAR cascade columns (Corsi 2009): trailing daily / weekly / monthly realised-vol averages.
-_HAR_COLS: list[str] = ["har_vol_1d", "har_vol_5d", "har_vol_22d"]
+# Derived from features.har_feature_names() (the single source of truth, built from
+# features._VOL_HAR_WINDOWS) so this list can never silently drift from the columns
+# make_features actually produces.
+_HAR_COLS: list[str] = har_feature_names()
 # Model tag — used as the 'model' column value in marts.model_metrics + marts.ml_forecast.
 MODEL_TAG: str = "rv_har"
 
@@ -306,10 +309,20 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
             ss_tot_h = float(np.sum((y_hold - y_hold.mean()) ** 2))
             holdout_oos_r2 = 1.0 - ss_res_h / ss_tot_h if ss_tot_h > 1e-20 else 0.0
 
-            # Same persistence/EWMA baseline as the CV, evaluated within the holdout slice.
-            # The EWMA recursion is seeded from the holdout slice's own gk vol (causal, no
-            # look-ahead) — the readout is self-contained to the holdout period.
-            holdout_base = _walk_forward_ewma_baseline(gk_hold, np.arange(len(gk_hold)))
+            # Same persistence/EWMA baseline as the CV, WARM-started over the full dev history
+            # then continued into the holdout slice — seeded exactly like the CV folds (which
+            # recurse over gk_dev), NOT cold-started from the holdout's first row.  A cold start
+            # would re-seed the λ=0.94 (~16-day memory) recursion from gk_hold[0] with no prior
+            # history, biasing roughly the first ~20–30 holdout predictions and making the
+            # reported holdout baseline (and therefore holdout_qlike_skill_ratio) unfairly
+            # favourable to the model.  EWMA (adjust=False) is strictly causal, so each holdout
+            # prediction still depends only on gk up to and including that point — concatenating
+            # gk_dev ahead of gk_hold adds prior history without any look-ahead into later
+            # holdout values.
+            gk_warm = np.concatenate([gk_dev, gk_hold])
+            holdout_base = _walk_forward_ewma_baseline(
+                gk_warm, np.arange(len(gk_dev), len(gk_warm))
+            )
             holdout_qlike = _qlike(y_hold, hold_preds)
             holdout_baseline_qlike = _qlike(y_hold, holdout_base)
             holdout_qlike_skill_ratio = (
