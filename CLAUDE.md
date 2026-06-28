@@ -23,9 +23,10 @@ datasets, and roadmap in **PLAN.md**.
   (needs `brew install python@3.11`).
 - **GitHub Actions runs the same gate on every PR** (`ci.yml` on `pull_request` to main; also
   `workflow_dispatch`). Public repo → unlimited free Actions minutes.
-- `ingest.yml` ("Refresh public snapshot") runs on a schedule — **daily 06:00 UTC** (cheap refresh)
-  and **weekly Mon 04:00 UTC** (full, incl. portfolio backtest + brief) — and commits the refreshed
-  `data/public/*.parquet` back to the repo. See `Never` before changing its cadence.
+- `ingest.yml` ("Refresh public snapshot") runs on a schedule — **weekdays 06:00 UTC** (refresh
+  prices/macro/crypto/ML + regenerate the macro-&-markets brief) and **weekly Mon 04:00 UTC**
+  (full, adds the portfolio backtest) — and commits the refreshed `data/public/*.parquet` back to
+  the repo. See `Never` before changing its cadence.
 
 ## Roles & session kickoff
 Generic roles (Planner / Builder / Reviewer — see `~/.claude/velocity-playbook.md`), run as

@@ -1,242 +1,260 @@
-"""The market brief is numerically grounded: portfolio stats + CIs come from the marts, and the
-brief hedges (says "not distinguishable") when the bootstrap says so — never invented.
+"""The market brief is a numerically-grounded macro & markets NARRATIVE.
 
-Also covers:
-- post-generation LLM output validation (empty / too-long / key-shaped → llm-rejected tag)
-- body redaction: redact() runs on EVERY persisted body before .md write + mart insert
-- GC: deterministic ordering → byte-identical offline brief regardless of row order
-- GC: HTTP 429 transport error → 'offline-template (llm-failed)', not a crash; tags distinct
-- GC: gather_facts() TypedDict key-set contract — unexpected/missing key raises ValueError
+Covers:
+- gather_facts(): curated macro panel (+ YoY inflation), per-asset momentum/MA signals, recent
+  cross-asset correlations — and NO portfolio / ML / vol-model facts (those moved off the brief).
+- the LLM prompt presents pre-formatted figures (%, $, pp) and forbids strategy/ML content.
+- post-generation LLM output validation (empty / too-long / key-shaped → llm-rejected tag).
+- body redaction: redact() runs on EVERY persisted body before .md write + mart insert.
+- HTTP 429 / API error → 'offline-template (llm-failed)', not a crash; engine tags distinct.
+- gather_facts() TypedDict key-set contract — an unexpected key raises ValueError.
 """
 
 import logging
+import re
 
 import duckdb
 import httpx
+import numpy as np
 import pandas as pd
 
 from mmi.ai import narrative
 
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
-def _con_with_portfolio() -> duckdb.DuckDBPyConnection:
+
+def _make_minimal_con() -> duckdb.DuckDBPyConnection:
+    """Marts schema only (no tables) — gather_facts must degrade, not crash."""
     con = duckdb.connect()
     con.execute("create schema if not exists marts")
-    # Every portfolio mart carries window_id; a second window (inc_btc_2015) with DELIBERATELY
-    # different numbers proves gather_facts scopes to the brief's default window (ex_btc_2002).
-    returns = pd.DataFrame(
-        {
-            "window_id": ["ex_btc_2002"] * 4 + ["inc_btc_2015"] * 2,
-            "strategy": ["risk_parity", "risk_parity", "sixty_forty", "sixty_forty"]
-            + ["sixty_forty", "sixty_forty"],
-            "date": pd.to_datetime(
-                ["2020-01-01", "2020-01-02", "2020-01-01", "2020-01-02", "2020-01-01", "2020-01-02"]
-            ),
-            "daily_return": [0.0, 0.02, 0.0, 0.01, 0.0, 0.5],
-            "cumulative_return": [0.0, 0.05, 0.0, 0.08, 0.0, 0.99],
-            "drawdown": [0.0, -0.03, 0.0, -0.01, 0.0, -0.40],
-            "rolling_sharpe_252": [None, 1.40, None, 1.90, None, 9.0],
-        }
-    )
-    stats = pd.DataFrame(
-        {
-            "window_id": ["ex_btc_2002", "ex_btc_2002", "inc_btc_2015"],
-            "strategy": ["risk_parity", "sixty_forty", "sixty_forty"],
-            "sharpe": [0.30, 1.10, 9.99],
-            "sharpe_lo": [-0.50, 0.20, 9.0],
-            "sharpe_hi": [1.10, 2.00, 11.0],
-            "n_obs": [2, 2, 2],
-            "n_boot": [100, 100, 100],
-            "ci_pct": [0.9, 0.9, 0.9],
-        }
-    )
-    pairs = pd.DataFrame(
-        {
-            "window_id": ["ex_btc_2002"],
-            "strategy_a": ["risk_parity"],
-            "strategy_b": ["sixty_forty"],
-            "sharpe_a": [0.30],
-            "sharpe_b": [1.10],
-            "sharpe_diff": [-0.80],
-            "diff_lo": [-1.5],
-            "diff_hi": [0.1],
-            "distinguishable": [False],
-        }
-    )
-    gate = pd.DataFrame(
-        {
-            "window_id": ["ex_btc_2002", "ex_btc_2002", "inc_btc_2015"],
-            "date": pd.to_datetime(["2020-01-01", "2020-01-02", "2020-01-02"]),
-            "forecast_skill": [0.0, 0.04, 0.8],
-            "forecast_weight": [0.0, 0.02, 0.40],  # ex_btc_2002 mean = 0.01; inc = 0.40
-        }
-    )
-    for name, df in [
-        ("fct_portfolio_returns", returns),
-        ("fct_portfolio_strategy_stats", stats),
-        ("fct_portfolio_strategy_pairs", pairs),
-        ("fct_portfolio_ml_gate", gate),
-    ]:
-        con.register("_t", df)
-        con.execute(f"create table marts.{name} as select * from _t")
-        con.unregister("_t")
     return con
 
 
-def test_gather_facts_scopes_to_one_window_and_joins_ci_pairs_gate():
-    con = _con_with_portfolio()
+def _rich_con() -> duckdb.DuckDBPyConnection:
+    """In-memory DB with realistic fct_asset_daily + fct_macro_indicator marts.
+
+    60 business days × 4 assets (enough for 20d returns + the 60d correlation window), and 15
+    monthly rows per macro series (enough for a YoY inflation read).
+    """
+    con = duckdb.connect()
+    con.execute("create schema if not exists marts")
+    rng = np.random.default_rng(7)
+
+    # --- assets ---
+    dates = pd.bdate_range("2024-01-01", periods=60)
+    classes = {"SPY": "equities", "QQQ": "equities", "TLT": "bonds", "GLD": "commodities"}
+    frames = []
+    for sym, cls in classes.items():
+        rets = rng.normal(0.0004, 0.01, len(dates))
+        close = 100.0 * np.cumprod(1 + rets)
+        frames.append(
+            pd.DataFrame(
+                {
+                    "symbol": sym,
+                    "asset_class": cls,
+                    "date": dates,
+                    "close": close,
+                    "daily_return": np.concatenate([[0.0], np.diff(close) / close[:-1]]),
+                    "ma_50": close * 0.98,  # price ~+2% vs its 50d average
+                    "vol_20d": np.abs(rng.normal(0.01, 0.002, len(dates))),
+                }
+            )
+        )
+    assets = pd.concat(frames, ignore_index=True)
+    con.register("_a", assets)
+    con.execute("create table marts.fct_asset_daily as select * from _a")
+    con.unregister("_a")
+
+    # --- macro (15 monthly rows per curated series so latest + YoY both resolve) ---
+    months = pd.date_range("2024-06-01", periods=15, freq="MS")
+    base = {
+        "VIXCLS": 18.0,
+        "DGS3MO": 3.8,
+        "DGS2": 4.1,
+        "DGS10": 4.4,
+        "T10Y2Y": 0.3,
+        "FEDFUNDS": 3.6,
+        "CPIAUCSL": 300.0,
+        "PCEPILFE": 120.0,
+        "UNRATE": 4.3,
+        "A191RL1Q225SBEA": 2.1,
+        "DCOILWTICO": 78.0,
+        "DTWEXBGS": 120.0,
+        "NFCI": -0.5,
+    }
+    macro_rows = []
+    for sid, b in base.items():
+        vals = b * (1 + 0.003) ** np.arange(len(months))  # gentle upward drift
+        macro_rows.append(
+            pd.DataFrame(
+                {
+                    "series_id": sid,
+                    "date": months,
+                    "value": vals,
+                    "change": np.concatenate([[0.0], np.diff(vals)]),
+                }
+            )
+        )
+    macro = pd.concat(macro_rows, ignore_index=True)
+    con.register("_m", macro)
+    con.execute("create table marts.fct_macro_indicator as select * from _m")
+    con.unregister("_m")
+    return con
+
+
+# ---------------------------------------------------------------------------
+# gather_facts — macro / assets / correlations
+# ---------------------------------------------------------------------------
+
+
+def test_gather_facts_builds_macro_assets_correlations():
+    con = _rich_con()
     try:
         facts = narrative.gather_facts(con)
     finally:
         con.close()
-    by = {p["strategy"]: p for p in facts["portfolio"]}
-    assert set(by) == {"risk_parity", "sixty_forty"}
-    # the inc_btc_2015 rows (total_return 0.99, sharpe 9.99) must NOT leak in
-    assert by["sixty_forty"]["total_return"] == 0.08  # ex_btc_2002 last cumulative, not 0.99
-    assert by["sixty_forty"]["max_drawdown"] == -0.01  # not the inc_btc_2015 -0.40
-    assert by["sixty_forty"]["sharpe"] == 1.10  # ex_btc_2002 bootstrap Sharpe, not 9.99
-    assert by["sixty_forty"]["sharpe_lo"] == 0.20
-    assert not facts["portfolio_pairs"][0]["distinguishable"]
-    assert abs(facts["ml_gate"]["mean_weight"] - 0.01) < 1e-9  # ex_btc_2002 mean, not 0.40
+    assert {"as_of", "data_date", "macro", "assets", "correlations"} <= set(facts)
+    macro_ids = {m["series_id"] for m in facts["macro"]}
+    assert {"VIXCLS", "DGS10", "CPIAUCSL"} <= macro_ids
+    # CPI is rendered as a YoY change, and there's enough history to compute it here.
+    cpi = next(m for m in facts["macro"] if m["series_id"] == "CPIAUCSL")
+    assert cpi["units"] == "yoy" and cpi["yoy"] is not None
+    # Per-asset signals carry the momentum / MA fields.
+    spy = next(a for a in facts["assets"] if a["symbol"] == "SPY")
+    for k in ("ret_1d", "ret_5d", "ret_20d", "vs_ma50", "vol_20d", "asset_class"):
+        assert k in spy
+    # 60 days of returns across 4 assets → a real correlation read.
+    assert facts["correlations"], "expected correlation notes from a 60-day window"
 
 
-def test_offline_brief_renders_sharpe_ci_and_hedges():
+def test_gather_facts_has_no_portfolio_or_ml_facts():
+    """The redesigned brief must NOT gather portfolio / ML / vol-skill facts."""
+    con = _rich_con()
+    try:
+        facts = narrative.gather_facts(con)
+    finally:
+        con.close()
+    for forbidden in ("portfolio", "portfolio_pairs", "ml_gate", "vol_skill"):
+        assert forbidden not in facts
+
+
+def test_gather_facts_degrades_on_empty_marts():
+    """No tables → only as_of/data_date, no crash, contract still satisfied."""
+    con = _make_minimal_con()
+    try:
+        facts = narrative.gather_facts(con)
+    finally:
+        con.close()
+    assert set(facts) <= narrative._FACTS_REQUIRED_KEYS
+    assert "macro" not in facts and "assets" not in facts
+
+
+# ---------------------------------------------------------------------------
+# Prompt — pre-formatted figures, narrative scope (no strategy/ML language)
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_is_preformatted_and_scoped_to_macro_markets():
+    con = _rich_con()
+    try:
+        facts = narrative.gather_facts(con)
+    finally:
+        con.close()
+    block = narrative._fmt_facts_for_prompt(facts)
+    assert "Macro backdrop" in block
+    assert "Cross-asset moves" in block
+    assert "co-movement" in block
+    assert "%" in block  # returns/yields rendered as percentages
+    # No raw long-float artifacts (5+ decimal places) leaked into the prompt.
+    assert not re.search(r"\d\.\d{5,}", block), f"raw float leaked:\n{block}"
+    # The prompt must not drag in portfolio / ML language.
+    low = block.lower()
+    for banned in ("sharpe", "portfolio", "strategy", "mvo", "out-of-sample", "backtest"):
+        assert banned not in low, f"{banned!r} should not appear in the macro/markets prompt"
+
+
+def test_system_prompt_forbids_strategy_and_ml_content():
+    s = narrative._SYSTEM.lower()
+    assert "do not mention portfolio" in s
+    assert "sharpe" in s  # it is named in the prohibition
+    assert "momentum" in s and "mean-reversion" in s and "rotation" in s
+
+
+def test_prompt_handles_missing_and_nan_macro_values():
+    """A YoY series without enough history is skipped; a NaN value never emits 'nan'."""
     facts = {
-        "as_of": "2020-01-02 00:00 UTC",
-        "portfolio": [
+        "data_date": "2026-06-26",
+        "macro": [
+            {"series_id": "CPIAUCSL", "label": "CPI inflation", "units": "yoy", "yoy": None},
+            {"series_id": "DGS10", "label": "10Y", "units": "%", "value": 4.40, "change": -0.01},
             {
-                "strategy": "sixty_forty",
-                "total_return": 0.08,
-                "max_drawdown": -0.01,
-                "sharpe": 1.10,
-                "sharpe_lo": 0.20,
-                "sharpe_hi": 2.00,
+                "series_id": "X",
+                "label": "Broken",
+                "units": "index",
+                "value": float("nan"),
+                "change": None,
             },
         ],
-        "portfolio_pairs": [
-            {"strategy_a": "risk_parity", "strategy_b": "sixty_forty", "distinguishable": False},
+        "assets": [
+            {
+                "symbol": "SPY",
+                "label": "S&P 500 (SPY)",
+                "asset_class": "equities",
+                "ret_1d": float("nan"),
+                "ret_5d": 0.012,
+                "ret_20d": None,
+                "vs_ma50": 0.02,
+                "vol_20d": 0.01,
+            },
         ],
     }
+    block = narrative._fmt_facts_for_prompt(facts)
+    assert "nan" not in block.lower()
+    assert "4.40%" in block  # the renderable macro line survives
+    assert "CPI inflation" not in block  # YoY with no data is dropped
+    assert "+1.2% 5d" in block or "5d +1.2%" in block
+
+
+# ---------------------------------------------------------------------------
+# Offline template — deterministic macro/markets report, no strategy/ML
+# ---------------------------------------------------------------------------
+
+
+def test_offline_brief_reports_sections_and_states_reason():
+    con = _rich_con()
+    try:
+        facts = narrative.gather_facts(con)
+    finally:
+        con.close()
     brief = narrative._offline_brief(facts)
-    assert "+8.0% total return" in brief
-    assert "Sharpe 1.10 [0.20, 2.00]" in brief  # CI rendered from facts, not invented
-    assert "no pair of strategies is distinguishable" in brief  # honest hedge
+    assert "Macro backdrop" in brief
+    assert "Cross-asset moves" in brief
+    assert "_(deterministic template — no LLM key set)_" in brief
+    low = brief.lower()
+    for banned in ("sharpe", "portfolio", "strategy", "mvo"):
+        assert banned not in low
 
 
-def test_offline_brief_header_states_the_reason_honestly():
-    """The header note must reflect WHY the template was used — defaulting to 'no LLM key set',
-    but stating the real reason when a key was present and the call failed (it used to always say
-    'set an LLM key', which lied when a key was configured but the provider 503'd)."""
+def test_offline_brief_header_states_failure_reason():
     facts = {"data_date": "2026-06-25"}
-    default = narrative._offline_brief(facts)
-    assert "data as of 2026-06-25" in default
-    assert "(deterministic template — no LLM key set)" in default
-    assert "set an LLM key" not in default  # the old misleading phrasing is gone
+    assert "data as of 2026-06-25" in narrative._offline_brief(facts)
     failed = narrative._offline_brief(facts, note="LLM temporarily unavailable")
     assert "(deterministic template — LLM temporarily unavailable)" in failed
 
 
-def test_offline_brief_lists_distinguishable_pairs_when_present():
-    facts = {
-        "as_of": "x",
-        "portfolio": [
-            {
-                "strategy": "equal_weight",
-                "total_return": 0.0,
-                "max_drawdown": 0.0,
-                "sharpe": 0.1,
-                "sharpe_lo": -0.1,
-                "sharpe_hi": 0.3,
-            }
-        ],
-        "portfolio_pairs": [
-            {"strategy_a": "equal_weight", "strategy_b": "sixty_forty", "distinguishable": True},
-        ],
-    }
-    brief = narrative._offline_brief(facts)
-    assert "Equal weight vs 60/40 benchmark differ beyond bootstrap noise" in brief
-
-
-def test_offline_brief_handles_no_portfolio_and_missing_sharpe():
-    assert "Strategy comparison" not in narrative._offline_brief({"as_of": "x"})
-    facts = {
-        "as_of": "x",
-        "portfolio": [
-            {"strategy": "equal_weight", "total_return": 0.0, "max_drawdown": 0.0, "sharpe": None}
-        ],
-    }
-    assert "Sharpe n/a" in narrative._offline_brief(facts)
-
-
-def test_offline_brief_grounds_the_ml_gate_when_present():
-    facts = {
-        "as_of": "x",
-        "portfolio": [
-            {
-                "strategy": "mvo_ml",
-                "total_return": 0.0,
-                "max_drawdown": 0.0,
-                "sharpe": 0.1,
-                "sharpe_lo": -0.1,
-                "sharpe_hi": 0.3,
-            }
-        ],
-        "ml_gate": {"mean_weight": 0.01, "max_weight": 0.02},
-    }
-    brief = narrative._offline_brief(facts)
-    assert "earned a mean weight of 1%" in brief
-    assert "no reliable out-of-sample edge" in brief  # honest: ~0 weight -> matched the baseline
-
-
-def test_offline_brief_omits_ml_gate_when_absent():
-    facts = {
-        "as_of": "x",
-        "portfolio": [
-            {"strategy": "mvo_ml", "total_return": 0.0, "max_drawdown": 0.0, "sharpe": 0.1}
-        ],
-    }
-    assert "ML gate" not in narrative._offline_brief(facts)
-
-
-def test_generate_brief_falls_back_to_offline_template_on_api_error(monkeypatch, tmp_path, caplog):
-    """A live LLM failure must not crash the brief: it falls back to the deterministic offline
-    template, persists the fallback engine tag, and the provider key (which rides in the httpx
-    error URL) is redacted from the warning — never leaked to logs/CI."""
-    con = _con_with_portfolio()
-    # Keep the brief file write hermetic (generate_brief writes to <duckdb parent>/briefs/).
-    monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
-    # Force the live path; the provider call then raises with a key-bearing URL in its message.
-    leaked = (
-        "503 Server Error for url "
-        "https://generativelanguage.googleapis.com/v1beta/models/x:generateContent?key=AIzaSECRET123"
-    )
-    monkeypatch.setattr(narrative.llm, "available", lambda: True)
-
-    def _boom(*_a, **_k):
-        raise RuntimeError(leaked)
-
-    monkeypatch.setattr(narrative.llm, "complete", _boom)
-
-    with caplog.at_level(logging.WARNING):
-        text = narrative.generate_brief(con)
-
+def test_offline_brief_deterministic_byte_identical():
+    con = _rich_con()
     try:
-        # Fell back to the deterministic template instead of raising.
-        assert "_(deterministic template —" in text  # fell back to the offline template
-        # Persisted, tagged distinctly from the no-key path so a failed live call is legible.
-        engine = con.execute(
-            "select engine from marts.market_brief order by created_at desc limit 1"
-        ).fetchone()[0]
-        assert engine == "offline-template (llm-failed)"
-        # The fallback was logged, but the API key was scrubbed before it reached the log.
-        assert "falling back to offline template" in caplog.text
-        assert "AIzaSECRET123" not in caplog.text
-        assert "key=***" in caplog.text
+        facts = narrative.gather_facts(con)
     finally:
         con.close()
+    assert narrative._offline_brief(facts) == narrative._offline_brief(facts)
 
 
 # ---------------------------------------------------------------------------
-# GB: LLM output validation tests
+# LLM output validation
 # ---------------------------------------------------------------------------
 
 
@@ -246,14 +264,11 @@ def test_validate_llm_output_rejects_empty():
 
 
 def test_validate_llm_output_rejects_too_long():
-    long_text = "a" * (narrative._MAX_BRIEF_CHARS + 1)
-    result = narrative._validate_llm_output(long_text)
-    assert result is not None
-    assert "too long" in result
+    result = narrative._validate_llm_output("a" * (narrative._MAX_BRIEF_CHARS + 1))
+    assert result is not None and "too long" in result
 
 
 def test_validate_llm_output_rejects_api_key_token():
-    # api_key=... style
     assert narrative._validate_llm_output("Here is your api_key=SECRETVALUE summary.") is not None
 
 
@@ -267,65 +282,60 @@ def test_validate_llm_output_rejects_google_api_key():
 
 
 def test_validate_llm_output_rejects_long_hex():
-    hex_secret = "a" * 32  # 32-char hex-alphabet string
-    assert narrative._validate_llm_output(f"secret: {hex_secret}") is not None
+    assert narrative._validate_llm_output(f"secret: {'a' * 32}") is not None
 
 
 def test_validate_llm_output_accepts_normal_brief():
     normal = (
-        "SPY closed at $450.23 (+0.3%). The 10Y-2Y spread is -0.15pp. "
-        "Risk parity returned +12.5% with Sharpe 1.10 [0.50, 1.70]. "
-        "Watch: upcoming CPI release."
+        "Equities and the dollar rose together while Treasuries slipped; the 10Y-2Y curve held at "
+        "+0.30pp. VIX eased to 18.0. Watch: incoming CPI."
     )
     assert narrative._validate_llm_output(normal) is None
 
 
 # ---------------------------------------------------------------------------
-# GB: generate_brief → llm-rejected tag when LLM output fails validation
+# generate_brief — fallback / rejection / redaction / engine tags
 # ---------------------------------------------------------------------------
 
 
-def _make_minimal_con() -> duckdb.DuckDBPyConnection:
-    """Minimal in-memory DB with just the marts schema (no portfolio tables)."""
-    con = duckdb.connect()
-    con.execute("create schema if not exists marts")
-    return con
-
-
-def test_generate_brief_rejects_empty_llm_output(monkeypatch, tmp_path, caplog):
-    """Empty LLM output → offline-template (llm-rejected) tag, not a crash."""
-    con = _make_minimal_con()
+def test_generate_brief_falls_back_on_api_error(monkeypatch, tmp_path, caplog):
+    """A live LLM failure falls back to the offline template, tags it, and redacts the key."""
+    con = _rich_con()
     monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
+    leaked = (
+        "503 Server Error for url "
+        "https://generativelanguage.googleapis.com/v1beta/models/x:generateContent?key=AIzaSECRET123"
+    )
     monkeypatch.setattr(narrative.llm, "available", lambda: True)
-    monkeypatch.setattr(narrative.llm, "complete", lambda *_a, **_k: "")
 
+    def _boom(*_a, **_k):
+        raise RuntimeError(leaked)
+
+    monkeypatch.setattr(narrative.llm, "complete", _boom)
     with caplog.at_level(logging.WARNING):
         text = narrative.generate_brief(con)
-
     try:
-        assert "_(deterministic template —" in text  # fell back to the offline template
+        assert "_(deterministic template —" in text
         engine = con.execute(
             "select engine from marts.market_brief order by created_at desc limit 1"
         ).fetchone()[0]
-        assert engine == "offline-template (llm-rejected)"
+        assert engine == "offline-template (llm-failed)"
         assert "falling back to offline template" in caplog.text
+        assert "AIzaSECRET123" not in caplog.text
+        assert "key=***" in caplog.text
     finally:
         con.close()
 
 
-def test_generate_brief_rejects_too_long_llm_output(monkeypatch, tmp_path, caplog):
-    """Over-length LLM output → offline-template (llm-rejected)."""
+def test_generate_brief_rejects_empty_llm_output(monkeypatch, tmp_path, caplog):
     con = _make_minimal_con()
     monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
     monkeypatch.setattr(narrative.llm, "available", lambda: True)
-    too_long = "x " * (narrative._MAX_BRIEF_CHARS + 1)
-    monkeypatch.setattr(narrative.llm, "complete", lambda *_a, **_k: too_long)
-
+    monkeypatch.setattr(narrative.llm, "complete", lambda *_a, **_k: "")
     with caplog.at_level(logging.WARNING):
         text = narrative.generate_brief(con)
-
     try:
-        assert "_(deterministic template —" in text  # fell back to the offline template
+        assert "_(deterministic template —" in text
         engine = con.execute(
             "select engine from marts.market_brief order by created_at desc limit 1"
         ).fetchone()[0]
@@ -335,386 +345,99 @@ def test_generate_brief_rejects_too_long_llm_output(monkeypatch, tmp_path, caplo
 
 
 def test_generate_brief_rejects_key_shaped_llm_output(monkeypatch, tmp_path, caplog):
-    """LLM output containing a key-shaped token → offline-template (llm-rejected)."""
     con = _make_minimal_con()
     monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
     monkeypatch.setattr(narrative.llm, "available", lambda: True)
-    # Simulate an LLM that accidentally echoes back a credential-like string.
-    key_bearing = "Here is the summary. api_key=SUPER_SECRET_VALUE_XYZ for reference."
-    monkeypatch.setattr(narrative.llm, "complete", lambda *_a, **_k: key_bearing)
-
+    monkeypatch.setattr(
+        narrative.llm, "complete", lambda *_a, **_k: "Summary. api_key=SUPER_SECRET_XYZ here."
+    )
     with caplog.at_level(logging.WARNING):
         text = narrative.generate_brief(con)
-
     try:
-        assert "_(deterministic template —" in text  # fell back to the offline template
+        assert "_(deterministic template —" in text
         engine = con.execute(
             "select engine from marts.market_brief order by created_at desc limit 1"
         ).fetchone()[0]
         assert engine == "offline-template (llm-rejected)"
-        assert "falling back to offline template" in caplog.text
     finally:
         con.close()
-
-
-# ---------------------------------------------------------------------------
-# C7: vol_skill escape-hatch — NOT cleared → no-edge sentence; cleared → positive allowed
-# ---------------------------------------------------------------------------
-
-
-def _make_model_metrics_df(cleared: bool) -> "pd.DataFrame":
-    """Return a minimal model_metrics long-format DataFrame.
-
-    cleared=False: oos_r2 below threshold (0.05 < 0.10).
-    cleared=True:  oos_r2 above threshold (0.50 >= 0.10) + qlike_skill_ratio < 0.99 + folds ok.
-    """
-    if cleared:
-        rows = [
-            {"model": "rv_har", "symbol": "SPY", "metric": "oos_r2", "value": 0.50},
-            {"model": "rv_har", "symbol": "SPY", "metric": "qlike_skill_ratio", "value": 0.90},
-            {"model": "rv_har", "symbol": "SPY", "metric": "folds_passed", "value": 3},
-            {"model": "rv_har", "symbol": "SPY", "metric": "n_folds", "value": 5},
-            {"model": "rv_har", "symbol": "SPY", "metric": "n_obs", "value": 300},
-        ]
-    else:
-        rows = [
-            {"model": "rv_har", "symbol": "SPY", "metric": "oos_r2", "value": 0.05},
-            {"model": "rv_har", "symbol": "SPY", "metric": "qlike_skill_ratio", "value": 1.10},
-            {"model": "rv_har", "symbol": "SPY", "metric": "folds_passed", "value": 1},
-            {"model": "rv_har", "symbol": "SPY", "metric": "n_folds", "value": 5},
-            {"model": "rv_har", "symbol": "SPY", "metric": "n_obs", "value": 300},
-        ]
-    return pd.DataFrame(rows)
-
-
-def test_offline_brief_not_cleared_no_edge_sentence_no_beats():
-    """When vol_skill is NOT cleared, the brief must contain the no-edge sentence
-    and must NOT contain 'beats' or 'outperforms'."""
-    facts = {
-        "as_of": "2024-01-02 00:00 UTC",
-        "vol_skill": {"cleared": False, "oos_r2": 0.05, "reasons": ["oos_r2=0.05 < R2_MIN=0.10"]},
-    }
-    brief = narrative._offline_brief(facts)
-    # Must state clearly there is no edge
-    no_edge = (
-        "no demonstrated out-of-sample skill" in brief or "no reliable out-of-sample edge" in brief
-    )
-    assert no_edge
-    # Must NOT use positive phrasing
-    assert "beats" not in brief.lower()
-    assert "outperforms" not in brief.lower()
-    assert "beat its" not in brief.lower()
-
-
-def test_offline_brief_cleared_allows_positive_phrasing():
-    """When vol_skill IS cleared, the brief may say the model beat its baseline."""
-    facts = {
-        "as_of": "2024-01-02 00:00 UTC",
-        "vol_skill": {"cleared": True, "oos_r2": 0.50, "reasons": []},
-    }
-    brief = narrative._offline_brief(facts)
-    assert "beat its persistence baseline" in brief
-
-
-def test_gather_facts_includes_vol_skill_not_cleared(tmp_path):
-    """gather_facts sources skill_verdict() and stores vol_skill['cleared']=False
-    when model_metrics has below-threshold metrics."""
-    con = duckdb.connect()
-    con.execute("create schema if not exists marts")
-    metrics_df = _make_model_metrics_df(cleared=False)
-    con.register("_m", metrics_df)
-    con.execute("create table marts.model_metrics as select * from _m")
-    con.unregister("_m")
-    try:
-        facts = narrative.gather_facts(con)
-    finally:
-        con.close()
-    assert "vol_skill" in facts
-    assert facts["vol_skill"]["cleared"] is False
-
-
-def test_gather_facts_includes_vol_skill_cleared(tmp_path):
-    """gather_facts sources skill_verdict() and stores vol_skill['cleared']=True
-    when model_metrics has above-threshold metrics."""
-    con = duckdb.connect()
-    con.execute("create schema if not exists marts")
-    metrics_df = _make_model_metrics_df(cleared=True)
-    con.register("_m", metrics_df)
-    con.execute("create table marts.model_metrics as select * from _m")
-    con.unregister("_m")
-    try:
-        facts = narrative.gather_facts(con)
-    finally:
-        con.close()
-    assert "vol_skill" in facts
-    assert facts["vol_skill"]["cleared"] is True
-
-
-def test_gather_facts_vol_skill_fails_closed_on_missing_mart():
-    """gather_facts must not crash when marts.model_metrics doesn't exist;
-    skill_verdict() fails closed (cleared=False)."""
-    con = duckdb.connect()
-    con.execute("create schema if not exists marts")
-    # No model_metrics table — skill_verdict will receive an empty DataFrame
-    try:
-        facts = narrative.gather_facts(con)
-    finally:
-        con.close()
-    # vol_skill must be present but cleared=False (fail-closed)
-    assert "vol_skill" in facts
-    assert facts["vol_skill"]["cleared"] is False
-
-
-# ---------------------------------------------------------------------------
-# GB: body redaction — redact() runs before BOTH the .md write and mart insert
-# ---------------------------------------------------------------------------
 
 
 def test_generate_brief_redacts_body_in_mart_and_md_file(monkeypatch, tmp_path):
-    """A brief body containing a fake key is redacted before it reaches the mart and .md."""
     con = _make_minimal_con()
     monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
-    # Force the offline path (no LLM key) but inject a body that contains a bearer token
-    # by monkeypatching _offline_brief to return tainted content.
-    tainted = "SPY analysis. bearer FAKETOKEN123 Watch macro."
+    tainted = "Macro analysis. bearer FAKETOKEN123 Watch macro."
     monkeypatch.setattr(narrative, "_offline_brief", lambda _facts: tainted)
     monkeypatch.setattr(narrative.llm, "available", lambda: False)
-
     text = narrative.generate_brief(con)
-
     try:
-        # The returned text must have the token scrubbed.
-        assert "FAKETOKEN123" not in text
-        assert "bearer ***" in text
-
-        # The mart body must be scrubbed.
+        assert "FAKETOKEN123" not in text and "bearer ***" in text
         mart_body = con.execute(
             "select brief from marts.market_brief order by created_at desc limit 1"
         ).fetchone()[0]
-        assert "FAKETOKEN123" not in mart_body
-        assert "bearer ***" in mart_body
-
-        # The .md file must be scrubbed.
-        briefs_dir = tmp_path / "briefs"
-        md_files = list(briefs_dir.glob("*.md"))
-        assert md_files, "expected at least one .md brief file"
-        md_content = md_files[0].read_text(encoding="utf-8")
-        assert "FAKETOKEN123" not in md_content
-        assert "bearer ***" in md_content
+        assert "FAKETOKEN123" not in mart_body and "bearer ***" in mart_body
+        md_files = list((tmp_path / "briefs").glob("*.md"))
+        assert md_files
+        md = md_files[0].read_text(encoding="utf-8")
+        assert "FAKETOKEN123" not in md and "bearer ***" in md
     finally:
         con.close()
 
 
-# ---------------------------------------------------------------------------
-# GC: Deterministic ordering — same facts, different row order → byte-identical brief
-# ---------------------------------------------------------------------------
-
-
-def _portfolio_facts_base() -> dict:
-    """Minimal facts dict with two portfolio strategies and two pairs."""
-    return {
-        "as_of": "2024-01-02 00:00 UTC",
-        "data_date": "2024-01-02",
-        "portfolio": [
-            {
-                "strategy": "sixty_forty",
-                "total_return": 0.08,
-                "max_drawdown": -0.01,
-                "sharpe": 1.10,
-                "sharpe_lo": 0.20,
-                "sharpe_hi": 2.00,
-            },
-            {
-                "strategy": "equal_weight",
-                "total_return": 0.05,
-                "max_drawdown": -0.02,
-                "sharpe": 0.80,
-                "sharpe_lo": 0.10,
-                "sharpe_hi": 1.50,
-            },
-        ],
-        "portfolio_pairs": [
-            {"strategy_a": "risk_parity", "strategy_b": "sixty_forty", "distinguishable": True},
-            {"strategy_a": "equal_weight", "strategy_b": "sixty_forty", "distinguishable": True},
-        ],
-    }
-
-
-def test_offline_brief_deterministic_same_row_order():
-    """Same facts in the same order → identical brief (sanity check)."""
-    facts = _portfolio_facts_base()
-    brief1 = narrative._offline_brief(facts)
-    brief2 = narrative._offline_brief(facts)
-    assert brief1 == brief2
-
-
-def test_offline_brief_byte_identical_regardless_of_portfolio_row_order():
-    """Same portfolio facts but rows in reversed order must produce a byte-identical brief."""
-    facts_a = _portfolio_facts_base()
-    facts_b = _portfolio_facts_base()
-    # Reverse the portfolio rows
-    facts_b["portfolio"] = list(reversed(facts_b["portfolio"]))
-
-    brief_a = narrative._offline_brief(facts_a)
-    brief_b = narrative._offline_brief(facts_b)
-    assert brief_a == brief_b, (
-        "Offline brief is NOT byte-identical when portfolio rows arrive in different order.\n"
-        f"--- facts_a brief ---\n{brief_a}\n--- facts_b brief ---\n{brief_b}"
-    )
-
-
-def test_offline_brief_byte_identical_regardless_of_pairs_row_order():
-    """Same pairs facts but rows in reversed order must produce a byte-identical brief."""
-    facts_a = _portfolio_facts_base()
-    facts_b = _portfolio_facts_base()
-    # Reverse the portfolio_pairs rows
-    facts_b["portfolio_pairs"] = list(reversed(facts_b["portfolio_pairs"]))
-
-    brief_a = narrative._offline_brief(facts_a)
-    brief_b = narrative._offline_brief(facts_b)
-    assert brief_a == brief_b, (
-        "Offline brief is NOT byte-identical when portfolio_pairs rows arrive in different order.\n"
-        f"--- facts_a brief ---\n{brief_a}\n--- facts_b brief ---\n{brief_b}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# GC: Engine tags — HTTP 429 → 'offline-template (llm-failed)', distinct tags
-# ---------------------------------------------------------------------------
-
-
-def test_generate_brief_http_429_degrades_to_llm_failed_not_crash(monkeypatch, tmp_path, caplog):
-    """An HTTP 429 from the LLM provider must degrade to 'offline-template (llm-failed)',
-    NOT crash, and the key must not appear in the logs."""
+def test_generate_brief_http_429_degrades_not_crash(monkeypatch, tmp_path, caplog):
     con = _make_minimal_con()
     monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
     monkeypatch.setattr(narrative.llm, "available", lambda: True)
 
     def _rate_limited(*_a, **_k):
-        # Simulate what httpx raises on a 429 response (HTTPStatusError is a subclass of HTTPError)
         request = httpx.Request("POST", "https://example.com/llm?key=SECRETKEY")
         response = httpx.Response(429, request=request)
         raise httpx.HTTPStatusError(
-            "429 Too Many Requests for url https://example.com/llm?key=SECRETKEY",
-            request=request,
-            response=response,
+            "429 for url ?key=SECRETKEY", request=request, response=response
         )
 
     monkeypatch.setattr(narrative.llm, "complete", _rate_limited)
-
     with caplog.at_level(logging.WARNING):
         text = narrative.generate_brief(con)
-
     try:
-        # Must not crash — fell back to the offline template.
-        assert "_(deterministic template —" in text  # fell back to the offline template
-        # Engine tag must be 'offline-template (llm-failed)', not the no-key variant.
+        assert "_(deterministic template —" in text
         engine = con.execute(
             "select engine from marts.market_brief order by created_at desc limit 1"
         ).fetchone()[0]
         assert engine == "offline-template (llm-failed)"
-        # The warning must be present and the key must be redacted.
-        assert "falling back to offline template" in caplog.text
         assert "SECRETKEY" not in caplog.text
     finally:
         con.close()
 
 
 def test_engine_tags_are_distinct():
-    """The three offline engine tags must all be distinct strings."""
-    tags = [
-        "offline-template",
-        "offline-template (llm-failed)",
-        "offline-template (llm-rejected)",
-    ]
-    assert len(set(tags)) == 3, "Engine tags are not distinct — a branch will be undiagnosable"
-    # The no-key tag must NOT contain a parenthetical suffix.
+    tags = ["offline-template", "offline-template (llm-failed)", "offline-template (llm-rejected)"]
+    assert len(set(tags)) == 3
     assert "(" not in "offline-template"
-    # The failed tag signals a transport error (429, 5xx, network).
-    assert "llm-failed" in "offline-template (llm-failed)"
-    # The rejected tag signals the LLM responded but the output failed validation.
-    assert "llm-rejected" in "offline-template (llm-rejected)"
 
 
 # ---------------------------------------------------------------------------
-# GC: gather_facts() TypedDict key-set contract
+# gather_facts() TypedDict key-set contract
 # ---------------------------------------------------------------------------
 
 
-def test_gather_facts_typeddict_key_set_no_extra_keys():
-    """gather_facts() must return ONLY keys defined in FactsDict — no undocumented extras."""
-    con = duckdb.connect()
-    con.execute("create schema if not exists marts")
+def test_gather_facts_no_extra_keys():
+    con = _make_minimal_con()
     try:
         facts = narrative.gather_facts(con)
     finally:
         con.close()
-    allowed = narrative._FACTS_REQUIRED_KEYS
-    extra = set(facts.keys()) - allowed
-    assert not extra, f"gather_facts() returned undocumented keys: {extra!r}"
+    assert not (set(facts.keys()) - narrative._FACTS_REQUIRED_KEYS)
 
 
 def test_validate_facts_keys_rejects_unexpected_key():
-    """_validate_facts_keys() must raise ValueError on an unknown key."""
-    bad_facts = {
-        "as_of": "2024-01-02",
-        "data_date": "2024-01-02",
-        "UNKNOWN_KEY": "should not be here",
-    }
     import pytest
 
     with pytest.raises(ValueError, match="unexpected keys"):
-        narrative._validate_facts_keys(bad_facts)
+        narrative._validate_facts_keys({"as_of": "x", "UNKNOWN_KEY": 1})
 
 
 def test_validate_facts_keys_accepts_all_valid_keys():
-    """_validate_facts_keys() must not raise when all keys are in the FactsDict contract."""
-    valid_facts = {
-        "as_of": "2024-01-02",
-        "data_date": "2024-01-02",
-        "crypto": [],
-        "spy": {},
-        "yields": {},
-        "portfolio": [],
-        "portfolio_pairs": [],
-        "ml_gate": {},
-        "vol_skill": {},
-    }
-    # Must not raise
-    narrative._validate_facts_keys(valid_facts)
-
-
-def test_validate_facts_keys_accepts_partial_keys():
-    """_validate_facts_keys() must not raise when only some optional keys are present."""
-    partial_facts = {"as_of": "2024-01-02", "data_date": "2024-01-02"}
-    narrative._validate_facts_keys(partial_facts)
-
-
-def test_prompt_facts_are_preformatted_not_raw_floats():
-    """The LLM prompt must present tidy figures ($ prices, % returns) so the model can't echo raw
-    floats like '59362.21875' / '-0.006018...' (the old `str(facts)` bug)."""
-    facts = {
-        "data_date": "2026-06-26",
-        "crypto": [{"symbol": "BTC", "last_price": 59362.21875, "chg_24h": -0.006018870477891958}],
-        "spy": {"close": 734.2999877, "daily_return": -0.0072, "vol_20d": 0.142},
-        "yields": {"us_10y": 4.5012, "us_2y": 4.1607, "yield_curve_10y_2y": 0.3405},
-    }
-    block = narrative._fmt_facts_for_prompt(facts)
-    assert "$59,362" in block  # price formatted, not 59362.21875
-    assert "-0.60%" in block  # return as a %, not the raw fraction
-    assert "$734.30" in block
-    assert "59362.21875" not in block and "-0.006018" not in block  # no raw-float artifacts
-    assert "$59,362" in narrative._build_prompt(facts)  # _build_prompt embeds the formatted block
-
-
-def test_fmt_facts_handles_missing_and_nan():
-    """Absent sections + NaN values must not crash or emit 'nan'."""
-    import math
-
-    facts = {
-        "data_date": "2026-06-26",
-        "spy": {"close": 100.0, "daily_return": math.nan, "vol_20d": None},
-    }
-    block = narrative._fmt_facts_for_prompt(facts)
-    assert "nan" not in block.lower()
-    assert "$100.00" in block and "+0.00%" in block  # NaN return → 0.00%, vol omitted
+    narrative._validate_facts_keys(
+        {"as_of": "x", "data_date": "x", "macro": [], "assets": [], "correlations": []}
+    )
