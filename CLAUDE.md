@@ -24,8 +24,10 @@ and serves it through a Streamlit dashboard — an end-to-end pipeline spanning
   (ruff, ruff format, mypy, seed, `dbt build`+tests, dashboard smoke, pytest) is your local
   pre-flight — paste the result in the PR body. One-time setup: `make setup` (needs `brew install python@3.11`).
 - **GitHub Actions runs the same gate on every PR** (`ci.yml` triggers on `pull_request` to main,
-  mirroring `make ci`; still `workflow_dispatch`-able). Stays within the free private-repo tier.
-  The scheduled MotherDuck **`ingest.yml` stays disabled** (cron commented) — enable only with the owner's say-so.
+  mirroring `make ci`; still `workflow_dispatch`-able). As a public repo it gets unlimited free
+  Actions minutes (6-hour job cap). The MotherDuck-free **`ingest.yml` runs on a schedule** (daily
+  06:00 UTC cheap refresh; weekly Mon 04:00 UTC full refresh) — it builds the snapshot in an
+  ephemeral local DuckDB and commits `data/public/*.parquet`. Change its cadence only with the owner's say-so.
 
 ## Roles & session kickoff
 Use the generic roles (Planner / Builder / Reviewer — see `~/.claude/velocity-playbook.md`). Run them
@@ -35,8 +37,10 @@ as **separate sessions** with a repo-only handoff (no chat relay) — the anti-r
 - **Plan / architect:** `Planner: <question>` → read-only strategy/Q&A, **no commits**; hands specs to the builder via the repo.
 
 ## Key decisions (full rationale in PLAN.md + docs/adr/)
-- **Stack:** Python 3.10+, **DuckDB** (local dev/CI) + **MotherDuck** free tier (deployed),
-  **dbt-duckdb** (medallion staging→marts), **scikit-learn**, **Streamlit + Plotly**.
+- **Stack:** Python 3.10+, **DuckDB** (local dev/CI), **dbt-duckdb** (medallion staging→marts),
+  **scikit-learn**, **Streamlit + Plotly**. The public Streamlit deploy reads the committed Parquet
+  snapshot in `data/public/` (snapshot mode — `dashboard/snapshot_boot.py`), not a live DB;
+  **MotherDuck** free tier is an optional private-dev store only.
 - **GenAI is provider-agnostic** (`src/mmi/ai/llm.py`): `LLM_PROVIDER` = gemini|groq|claude,
   default **free Gemini/Groq**, deterministic-template fallback if no key.
   ⚠️ **The Claude API is metered/not free — the owner's subscription does NOT cover it.**
@@ -75,7 +79,7 @@ make ingest && make dbt-build && make ml && make ai && make dashboard
 
 ## Repo map (see PLAN.md §6 for full tree)
 `src/mmi/{ingestion,ml,ai,utils}` · `transform/` (dbt) · `dashboard/` (Streamlit) ·
-`config/` · `tests/` · `.github/workflows/` (ci.yml — runs the gate on PRs + manual; ingest.yml — scheduled refresh, disabled by default) · `docs/` (+ ADRs).
+`config/` · `tests/` · `.github/workflows/` (ci.yml — runs the gate on PRs + manual; ingest.yml — scheduled Parquet-snapshot refresh, daily + weekly) · `docs/` (+ ADRs).
 
 ## Review focus
 Project-specific watch-items live in **docs/REVIEW_GUIDE.md** (§7), loaded by `/review-pr`.
@@ -97,7 +101,7 @@ Project-specific watch-items live in **docs/REVIEW_GUIDE.md** (§7), loaded by `
   Streamlit secrets, never in code, logs, or the dashboard UI.
 - Author commits as anyone but **mathsisbest** (`33107428+mathsisbest@users.noreply.github.com`).
 - Flip the LLM default to **Claude** (metered, not free — the default stays Gemini/Groq).
-- Enable the scheduled `ingest.yml` cron without the owner's say-so.
+- Change the scheduled `ingest.yml` cron (its cadence, or its commit-to-`main` behavior) without the owner's say-so.
 - Suppress/skip a failing test, or weaken the gate, to push a change through.
 
 ## When you compact this session
