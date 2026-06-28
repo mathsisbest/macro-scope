@@ -508,10 +508,10 @@ def test_vol_dev_cv_inputs_ignore_holdout_period(con) -> None:  # noqa: ANN001
     dev tail labels would shift, so y would differ — this test would fail, making the fix
     self-enforcing.
 
-    We assert on the dev INPUT arrays rather than the fitted metrics on purpose: the forest
-    runs with n_jobs=-1, whose parallel tree aggregation is not bit-reproducible, so the
-    derived oos_r2/qlike jitter at ~1e-16 even when the inputs are identical.  Byte-identical
-    inputs is the exact, confound-free statement of label-disjointness.
+    We assert on the dev INPUT arrays rather than the fitted metrics on purpose: byte-identical
+    inputs is the exact, confound-free statement of label-disjointness, independent of which
+    estimator consumes them (the model is now a deterministic log-OLS HAR; asserting on inputs
+    held even back when it was a non-bit-reproducible n_jobs=-1 forest).
 
     Non-vacuity: mutating a DEV row instead DOES change the dev inputs.
     """
