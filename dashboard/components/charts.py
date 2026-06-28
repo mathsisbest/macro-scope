@@ -328,6 +328,7 @@ def yield_curve_chart(df: pd.DataFrame) -> go.Figure:
         y=df[col],
         name=f"{label} spread",
         line=dict(color=SERIES_YIELD),
+        hovertemplate="%{x|%Y-%m-%d}: %{y:+.2f} pp<extra></extra>",
     )
     fig.add_hline(y=0, line_color=PALETTE["down"], line_dash="dot")
     fig.update_layout(

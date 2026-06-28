@@ -56,6 +56,7 @@ def test_yield_curve_chart_uses_10y_3m_when_present():
     assert "10Y − 3M" in fig.layout.title.text
     assert fig.data[0].name == "10Y − 3M spread"
     assert list(fig.data[0].y) == [0.55] * 10  # plotted the 3M-based spread, not the 2Y
+    assert "pp" in fig.data[0].hovertemplate  # hover shows the spread in pp, 2dp
 
 
 def test_yield_curve_chart_falls_back_to_10y_2y_without_3m():

@@ -180,7 +180,13 @@ if not reg.empty:
     kpis.append({"label": "SPY vol regime", "value": str(reg["regime"].iloc[-1])})
 
 mm = data.market_macro()
-if not mm.empty and mm["yield_curve_10y_2y"].notna().any():
+# Prefer the canonical 10Y−3M spread (NY Fed / Estrella-Mishkin — the inversion investors watch
+# for recession risk, and what the recession-risk panel uses); fall back to 10Y−2Y when the 3M
+# series is unavailable (e.g. a snapshot taken before the 10Y−3M column existed).
+if not mm.empty and "yield_curve_10y_3m" in mm.columns and mm["yield_curve_10y_3m"].notna().any():
+    spread = mm["yield_curve_10y_3m"].dropna().iloc[-1]
+    kpis.append({"label": "10Y−3M spread", "value": f"{spread:+.2f} pp"})
+elif not mm.empty and mm["yield_curve_10y_2y"].notna().any():
     spread = mm["yield_curve_10y_2y"].dropna().iloc[-1]
     kpis.append({"label": "10Y−2Y spread", "value": f"{spread:+.2f} pp"})
 
