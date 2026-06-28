@@ -38,6 +38,32 @@ def test_verdict_handles_empty():
     assert "Not enough" in charts.distinguishability_verdict(_pairs([]))
 
 
+# --- hover formatting: ticks AND hover read the same units ---------------------------------------
+
+
+def test_price_and_vol_charts_format_hover():
+    df = pd.DataFrame(
+        {
+            "date": pd.bdate_range("2020-01-01", periods=5),
+            "close": [100, 110, 120, 130, 140],
+            "ma_50": [100] * 5,
+            "vol_20d": [0.01, 0.02, 0.03, 0.04, 0.05],
+        }
+    )
+    assert charts.price_chart(df, "SPY").layout.yaxis.hoverformat == "$,.2f"
+    assert charts.vol_chart(df, "SPY").layout.yaxis.hoverformat == ".1%"
+
+
+def test_macro_chart_hover_appends_unit_without_percent_scaling():
+    # Percent series are stored already-in-percent (4.3, not 0.043), so hover must NOT use a
+    # Plotly "%" format (that would render 4.3 as 430%); it appends the unit as plain text instead.
+    df = pd.DataFrame(
+        {"date": pd.bdate_range("2020-01-01", periods=5), "value": [4.3, 4.4, 4.5, 4.6, 4.7]}
+    )
+    assert "%{y:,.2f} %" in charts.macro_chart(df, "10Y yield", "%").data[0].hovertemplate
+    assert "%{y:,.2f} index" in charts.macro_chart(df, "VIX", "index").data[0].hovertemplate
+
+
 def test_scorecard_shape_and_labels():
     stats = pd.DataFrame(
         {

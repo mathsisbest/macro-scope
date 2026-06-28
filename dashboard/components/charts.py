@@ -90,6 +90,10 @@ def price_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
         title=dict(text=f"{symbol} — price & 50d moving average", font=_TITLE_FONT),
     )
     _apply_axis_fonts(fig)
+    # All assets are USD-denominated (equities, GLD, BTC, and the USD-quoted FX pairs), so show the
+    # axis as $ with thousands separators; 2dp keeps low-priced assets (FX ≈ 1.2) readable.
+    # hoverformat matches so the hover tooltip reads the same as the ticks ($171.80, not 171.7959).
+    fig.update_yaxes(tickformat="$,.2f", hoverformat="$,.2f")
     if not df.empty and "close" in df.columns:
         _guard_yrange(fig, df["close"])
     return style_fig(fig, height=HEIGHT_DEFAULT)
@@ -108,6 +112,8 @@ def vol_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
         title=dict(text=f"{symbol} — rolling 20-day volatility", font=_TITLE_FONT),
     )
     _apply_axis_fonts(fig)
+    # vol_20d is a daily-scale fraction (~0.01 for SPY); render axis + hover as a percentage.
+    fig.update_yaxes(tickformat=".1%", hoverformat=".1%")
     if not df.empty and "vol_20d" in df.columns:
         _guard_yrange(fig, df["vol_20d"])
     return style_fig(fig, height=HEIGHT_SHORT)
@@ -298,12 +304,17 @@ def macro_chart(
     # flat/near-empty line, so show markers when there are few points to keep the observations
     # visible. Frequent (daily/monthly) series stay clean lines.
     mode = "lines+markers" if len(df) <= 40 else "lines"
+    # Macro values are stored in their native scale (percent series already ×100, e.g. 4.3; indices
+    # and $ series raw), so we do NOT use a Plotly "%" tickformat (it would render 4.3 as 430%).
+    # The hover shows the value at 2dp with the unit appended, so "4.30 %" / "120.40 index".
+    unit_suffix = f" {units}" if units else ""
     fig.add_scatter(
         x=df["date"],
         y=df["value"],
         name=label,
         mode=mode,
         line=dict(color=PALETTE["accent"]),
+        hovertemplate=f"%{{x|%Y-%m-%d}}: %{{y:,.2f}}{unit_suffix}<extra></extra>",
     )
     title = f"{label} · {units}" if units else label
     fig.update_layout(title=dict(text=title, font=_TITLE_FONT))
