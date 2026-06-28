@@ -17,8 +17,11 @@ import pytest
 
 from mmi import sampledata, transform_fallback
 from mmi.ml.volatility import (
+    _HAR_COLS,
+    _VOL_FLOOR,
     MODEL_TAG,
     _ewma_vol,
+    _fit_predict_har,
     _make_targets,
     _qlike,
     _walk_forward_ewma_baseline,
@@ -172,6 +175,45 @@ def test_qlike_zero_for_perfect_predictions() -> None:
     """QLIKE is approximately 0 when predictions equal actuals."""
     v = np.abs(np.random.default_rng(3).normal(0.01, 0.002, 50))
     assert pytest.approx(_qlike(v, v), abs=1e-10) == 0.0
+
+
+def test_qlike_bounded_when_realized_vol_near_zero() -> None:
+    """A near-zero realised-vol day must NOT blow QLIKE up — the under-specified-baseline bug.
+
+    QLIKE divides predicted by realised variance, so without the ``_VOL_FLOOR`` a single flat
+    Garman-Klass day (realised ≈ 0) sends pred²/realised² to ~1e10 and dominates the whole mean
+    (that is what made ``baseline_qlike`` ≈ 1121 and ``qlike_skill_ratio`` a free pass).  With the
+    floor the loss stays finite and modest.  The floored ratio at the bad point is
+    ``(0.01/_VOL_FLOOR)² = 25`` → contribution ``25 - ln 25 - 1 ≈ 20.8`` spread over 50 rows ≈ 0.42.
+    """
+    actuals = np.full(50, 0.01)
+    actuals[0] = 1e-8  # a degenerate near-flat day
+    preds = np.full(50, 0.01)
+
+    q = _qlike(actuals, preds)
+    assert np.isfinite(q)
+    assert q < 1.0, f"QLIKE should stay bounded with the vol floor, got {q}"
+
+
+def test_har_extrapolates_above_training_range() -> None:
+    """A linear log-HAR must extrapolate ABOVE the vol it saw in training.
+
+    This is the property a random forest lacks — and the reason calm-train/crisis-test folds
+    collapsed to a negative OOS R² under the old borrowed-forest estimator.  We fit on a calm
+    regime (~1% daily vol) where the target tracks the cascade level, then predict a crisis row
+    whose cascade sits well above anything in training; a forest would clip at its training max,
+    the HAR projects past it.
+    """
+    rng = np.random.default_rng(0)
+    x_train = rng.uniform(0.008, 0.012, size=(200, len(_HAR_COLS)))
+    x_train_log = np.log(np.clip(x_train, _VOL_FLOOR, None))
+    y_train = x_train.mean(axis=1)  # vol level ~0.01, linear in the cascade
+    x_crisis_log = np.log(np.clip(np.full((1, len(_HAR_COLS)), 0.05), _VOL_FLOOR, None))
+
+    pred = _fit_predict_har(x_train_log, y_train, x_crisis_log)[0]
+    assert pred > y_train.max(), (
+        f"log-HAR should extrapolate above the training max ({y_train.max():.4f}); got {pred:.4f}"
+    )
 
 
 # ---------------------------------------------------------------------------

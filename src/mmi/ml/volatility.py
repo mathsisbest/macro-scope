@@ -6,13 +6,19 @@ Architecture
 ------------
 - Target: mean Garman-Klass vol over the NEXT 5 trading days (annualised scale not applied;
   we forecast the daily-scale value so it's directly comparable to the persistence baseline).
-- Features: ``feature_set='vol'`` from ``mmi.ml.features`` (GK + HAR cascade + macro) using
-  only strictly-past data.  The target is ``shift(-5)`` forward from row t so row t's features
-  never see the label window.
-- Walk-forward ``TimeSeriesSplit(5)``; ``make_regressor()`` from the shared factory.
+- Estimator: a classic **log-space OLS HAR** (Corsi 2009) on the daily/weekly/monthly realised-
+  vol cascade (``_HAR_COLS``), with Duan smearing for the log→level retransformation bias (see
+  :func:`_fit_predict_har`).  This replaces the regularised random forest the model previously
+  borrowed from the direction task — a forest cannot extrapolate past its training vol range, so
+  calm-train/crisis-test folds structurally under-predicted (negative OOS R²); a linear HAR
+  extrapolates, which is the entire point of the HAR result.  OLS has no hyperparameters to tune.
+- Target is built ``shift(-5)`` forward from row t so row t's features never see the label window.
+- Walk-forward ``TimeSeriesSplit(5)``.
 - Honest baseline: persistence (yesterday's GK vol) and EWMA (RiskMetrics λ=0.94).
 - Metrics (long rows, ``model='rv_har'``): ``oos_r2``, ``qlike``, ``baseline_qlike``,
-  ``qlike_skill_ratio``, ``n_folds``, ``folds_passed``.
+  ``qlike_skill_ratio``, ``n_folds``, ``folds_passed``.  QLIKE floors realised vol at
+  ``_VOL_FLOOR`` (identically for model and baseline) so a near-flat day can't make the loss
+  explode — the fix for the under-specified-baseline red flag.
 
 Small-sample safety
 -------------------
@@ -41,10 +47,10 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import TimeSeriesSplit
 
 from mmi.ml.features import feature_columns, make_features
-from mmi.ml.forecast import make_regressor
 from mmi.ml.holdout import MIN_OBS as _MIN_OBS
 from mmi.ml.holdout import split_indices
 from mmi.utils.logging import get_logger
@@ -58,6 +64,15 @@ log = get_logger("ml.volatility")
 _HORIZON: int = 5
 # EWMA decay for the persistence/RiskMetrics baseline.
 _EWMA_LAMBDA: float = 0.94
+# Realised-vol floor (daily scale), used (a) before the log transform in the HAR estimator and
+# (b) inside QLIKE.  ~0.2%/day ≈ 3.2% annualised — comfortably below any sustained market vol, so
+# it only clips genuinely degenerate near-flat windows where Garman-Klass collapses toward 0.
+# QLIKE divides by realised variance, so a near-zero proxy makes the ratio explode; flooring it
+# (identically for model AND baseline) bounds the loss so a handful of flat days can't dominate.
+# Economically motivated and FIXED — never tuned to make a run clear the gate.
+_VOL_FLOOR: float = 0.002
+# HAR cascade columns (Corsi 2009): trailing daily / weekly / monthly realised-vol averages.
+_HAR_COLS: list[str] = ["har_vol_1d", "har_vol_5d", "har_vol_22d"]
 # Model tag — used as the 'model' column value in marts.model_metrics + marts.ml_forecast.
 MODEL_TAG: str = "rv_har"
 
@@ -100,12 +115,19 @@ def _walk_forward_ewma_baseline(
 def _qlike(actuals: np.ndarray, preds: np.ndarray) -> float:
     """QLIKE loss: mean(h/sigma² - log(h/sigma²) - 1).
 
-    h  = predicted variance (pred²)
-    sigma² = realised variance (actual²)
-    Robust to near-zero: clips to 1e-10.
+    h  = predicted variance (floored-pred²)
+    sigma² = realised variance (floored-actual²)
+
+    Both the prediction and the realised proxy are floored at ``_VOL_FLOOR`` (a vol-level floor)
+    BEFORE squaring.  QLIKE divides predicted by realised variance, so without a floor a
+    near-zero realised proxy (a flat Garman-Klass window) sends the ratio to ~1e6+ and a single
+    day dominates the mean — which is exactly what made ``baseline_qlike`` nonsensically large and
+    ``qlike_skill_ratio`` a free pass.  The floor is applied IDENTICALLY to model and baseline so
+    the comparison stays fair, and it bounds both tails of the ratio (a near-zero prediction blows
+    up ``-log(ratio)`` just as a near-zero realised value blows up ``ratio``).
     """
-    h = np.clip(preds**2, 1e-10, None)
-    sig2 = np.clip(actuals**2, 1e-10, None)
+    h = np.clip(preds, _VOL_FLOOR, None) ** 2
+    sig2 = np.clip(actuals, _VOL_FLOOR, None) ** 2
     ratio = h / sig2
     return float(np.mean(ratio - np.log(ratio) - 1.0))
 
@@ -117,6 +139,29 @@ def _make_targets(gk: pd.Series, horizon: int = _HORIZON) -> pd.Series:
     Rows where gk is shifted forward use only future data that's not yet in any feature.
     """
     return gk.shift(-1).rolling(horizon, min_periods=horizon).mean().shift(-(horizon - 1))
+
+
+def _fit_predict_har(
+    x_train_log: np.ndarray, y_train_vol: np.ndarray, x_pred_log: np.ndarray
+) -> np.ndarray:
+    """Fit a log-space OLS HAR and return vol-LEVEL predictions for ``x_pred_log``.
+
+    Classic HAR (Corsi 2009): forward realised vol is approximately linear in the daily / weekly
+    / monthly cascade of past realised vol.  We fit ordinary least squares in LOG space (realised
+    vol is right-skewed; logs keep the relationship linear and predictions strictly positive),
+    then exponentiate back to the vol level with Duan's (1983) smearing estimator —
+    ``mean(exp(train residuals))`` — to correct the log→level retransformation bias.
+
+    Inputs are the log HAR-cascade design (already floored + logged by :func:`_slice_xy`) and the
+    vol-LEVEL training target.  OLS has NO hyperparameters, and the smearing factor is derived
+    from the training residuals — so nothing in here can be tuned to chase the gate.  A forest
+    (the prior estimator) cannot extrapolate past its training vol range, which is why
+    calm-train/crisis-test folds collapsed to negative R²; the linear HAR extrapolates.
+    """
+    ylog = np.log(np.clip(y_train_vol, _VOL_FLOOR, None))
+    model = LinearRegression().fit(x_train_log, ylog)
+    smear = float(np.mean(np.exp(ylog - model.predict(x_train_log))))
+    return np.exp(model.predict(x_pred_log)) * smear
 
 
 # ---------------------------------------------------------------------------
@@ -171,15 +216,18 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
     def _slice_xy(frame: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Build the forward target WITHIN `frame` and drop rows with a NaN target.
 
-        Returns (x, y, gk) for the rows of `frame` whose forward window is fully inside
-        `frame`.  Building the target here (not on the full series) is what makes the
-        dev/holdout label sets disjoint — no dev label depends on a holdout-period value.
+        Returns ``(x_log, y, gk)`` for the rows of `frame` whose forward window is fully inside
+        `frame`: ``x_log`` is the log HAR-cascade design (floored at ``_VOL_FLOOR`` then logged),
+        ``y`` the vol-LEVEL forward target, ``gk`` the daily GK vol (for the EWMA baseline).
+        Building the target here (not on the full series) is what makes the dev/holdout label
+        sets disjoint — no dev label depends on a holdout-period value.
         """
         f = frame.copy()
         f["target_rv"] = _make_targets(f["gk_vol"], horizon=_HORIZON)
         f = f.dropna(subset=["target_rv"])
+        x_log = np.log(np.clip(f[_HAR_COLS].to_numpy(), _VOL_FLOOR, None))
         return (
-            f[vol_cols].to_numpy(),
+            x_log,
             f["target_rv"].to_numpy(),
             f["gk_vol"].to_numpy(),
         )
@@ -201,9 +249,8 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
     tscv = TimeSeriesSplit(n_splits=5)
     preds, actuals, base_preds = [], [], []
     for train_idx, test_idx in tscv.split(x_dev):
-        model = make_regressor(n_estimators=100)
-        model.fit(x_dev[train_idx], y_dev[train_idx])
-        preds.append(model.predict(x_dev[test_idx]))
+        # Log-OLS HAR (see _fit_predict_har): fit on the fold's train rows, predict its test rows.
+        preds.append(_fit_predict_har(x_dev[train_idx], y_dev[train_idx], x_dev[test_idx]))
         actuals.append(y_dev[test_idx])
         # EWMA baseline computed walk-forward: only gk vol up to each fold's last test
         # point feeds the recursion — no look-ahead (honest-OOS contract).
@@ -252,9 +299,8 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
     if hold > 0:
         x_hold, y_hold, gk_hold = _slice_xy(feat_valid.iloc[dev_end:])
         if len(y_hold) > 0:
-            hold_model = make_regressor(n_estimators=200)
-            hold_model.fit(x_dev, y_dev)
-            hold_preds = hold_model.predict(x_hold)
+            # Final-fit the SAME log-OLS HAR on ALL of dev, score the untouched holdout slice.
+            hold_preds = _fit_predict_har(x_dev, y_dev, x_hold)
 
             ss_res_h = float(np.sum((y_hold - hold_preds) ** 2))
             ss_tot_h = float(np.sum((y_hold - y_hold.mean()) ** 2))
@@ -290,11 +336,13 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
     # not a data quarantine for the production prediction).  Built on the full series here.
     full = feat_valid.copy()
     full["target_rv"] = _make_targets(full["gk_vol"], horizon=_HORIZON)
-    x_full_feat = full[vol_cols].to_numpy()
     full_trained = full.dropna(subset=["target_rv"])
-    final = make_regressor(n_estimators=200)
-    final.fit(full_trained[vol_cols].to_numpy(), full_trained["target_rv"].to_numpy())
-    next_vol = float(final.predict(x_full_feat[[-1]])[0])
+    x_full_log = np.log(np.clip(full_trained[_HAR_COLS].to_numpy(), _VOL_FLOOR, None))
+    y_full = full_trained["target_rv"].to_numpy()
+    # Predict the last feature-valid row: its forward target is NaN (so it's absent from
+    # full_trained) but its HAR features are valid — mirrors the previous final-model forecast.
+    x_last_log = np.log(np.clip(full[_HAR_COLS].iloc[[-1]].to_numpy(), _VOL_FLOOR, None))
+    next_vol = float(_fit_predict_har(x_full_log, y_full, x_last_log)[0])
 
     forecast = {
         "symbol": symbol,
