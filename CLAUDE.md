@@ -57,6 +57,18 @@ make demo          # seed sample data (+ build dbt marts) and launch the dashboa
 make ingest && make dbt-build && make ml && make ai && make dashboard
 ```
 
+## Viewing the dashboard — local-first
+View and verify the dashboard **locally**; the deployed app is for external sharing only.
+```bash
+make dashboard      # → http://localhost:8501  (add --server.headless to suppress the browser pop)
+```
+With no local `data/mmi.duckdb` and no MotherDuck token, `dashboard/snapshot_boot.py` auto-enables
+snapshot mode, so `make dashboard` serves the **committed real-data Parquet** in `data/public/` with
+**no keys required**. Use `make dashboard`, **not** `make demo` — `demo` seeds *synthetic* sample
+data into a local DuckDB and the dashboard would then read that instead of the real snapshot.
+**Don't open `macro-scope.streamlit.app` to view or verify changes** — that URL is the public share
+target, and opening it pops a browser on whichever machine the session runs on.
+
 ## Conventions
 - Package code under `src/mmi/` (installable, `mmi` CLI). No loose scripts.
 - Typed config via `pydantic-settings` (`src/mmi/settings.py`); secrets via `.env` (gitignored)
@@ -99,6 +111,8 @@ Project-specific watch-items live in **docs/REVIEW_GUIDE.md** (§7), loaded by `
 - Flip the LLM default to **Claude** (metered, not free — the default stays Gemini/Groq).
 - Enable the scheduled `ingest.yml` cron without the owner's say-so.
 - Suppress/skip a failing test, or weaken the gate, to push a change through.
+- Open **`macro-scope.streamlit.app`** to view or verify the dashboard — view locally via
+  `make dashboard` (`localhost:8501`); the deployed URL is share-only.
 
 ## When you compact this session
 Compaction summarizes the conversation to free up context. When it happens, preserve verbatim:
