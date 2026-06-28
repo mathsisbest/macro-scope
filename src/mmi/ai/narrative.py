@@ -126,9 +126,10 @@ def _validate_llm_output(text: str) -> str | None:
 _BRIEF_WINDOW = windows.DEFAULT_WINDOW
 
 _SYSTEM = (
-    "You are a concise markets analyst. Given structured facts (JSON-like), write a 4-6 sentence "
-    "daily brief for an informed reader. Use ONLY the numbers present in the facts — never invent, "
-    "estimate, or round away figures. Be specific, neutral in tone, no financial advice, no hype. "
+    "You are a concise markets analyst. Given pre-formatted market facts, write a 4-6 sentence "
+    "daily brief for an informed reader. Use ONLY the figures provided, quoting them exactly as "
+    "written — they are already formatted ($ prices, % returns/yields); do not add precision, "
+    "restate raw decimals, or invent/estimate numbers. Be specific, neutral, no advice, no hype. "
     "If portfolio strategy stats are present, compare the allocation strategies against the 60/40 "
     "benchmark in one sentence; when a Sharpe confidence interval is wide or a pair is not "
     "distinguishable (see portfolio_pairs), say so plainly rather than implying an edge. "
@@ -267,8 +268,77 @@ def gather_facts(con) -> FactsDict:
     return facts  # type: ignore[return-value]
 
 
+def _n(x: object, default: float = 0.0) -> float:
+    """Coerce a possibly-None/NaN numeric fact to a plain float (NaN is truthy, so guard it)."""
+    if x is None or (isinstance(x, float) and pd.isna(x)):
+        return default
+    return float(x)  # type: ignore[arg-type]
+
+
+def _fmt_facts_for_prompt(facts: FactsDict) -> str:
+    """Render the facts as a clean, pre-formatted block for the LLM — $ prices, % returns/yields,
+    2dp Sharpe — so the model quotes tidy figures instead of echoing raw floats (e.g.
+    ``59362.21875`` / ``-0.006018...``). The offline template formats independently from the raw
+    facts dict; this is the LLM-prompt view only."""
+    lines: list[str] = [f"Data as of {facts.get('data_date', facts.get('as_of', ''))}."]
+    for c in facts.get("crypto", []):
+        lines.append(
+            f"{str(c['symbol']).title()}: ${_n(c.get('last_price')):,.0f} "
+            f"({_n(c.get('chg_24h')):+.2%} on the day)."
+        )
+    if "spy" in facts:
+        s = facts["spy"]
+        line = (
+            f"SPY: close ${_n(s.get('close')):,.2f} ({_n(s.get('daily_return')):+.2%} on the day)"
+        )
+        if s.get("vol_20d") is not None and not pd.isna(s["vol_20d"]):
+            line += f", 20-day annualised vol {_n(s.get('vol_20d')):.1%}"
+        lines.append(line + ".")
+    if "yields" in facts:
+        y = facts["yields"]
+        parts = []
+        if y.get("us_10y") is not None:
+            parts.append(f"10Y {_n(y.get('us_10y')):.2f}%")
+        if y.get("us_2y") is not None:
+            parts.append(f"2Y {_n(y.get('us_2y')):.2f}%")
+        sp = y.get("yield_curve_10y_2y")
+        tail = f" -> 10Y-2Y spread {_n(sp):+.2f}pp" if sp is not None else ""
+        if parts:
+            lines.append("Treasuries: " + " / ".join(parts) + tail + ".")
+    if facts.get("portfolio"):
+        lines.append("Portfolio strategies (long-baseline window):")
+        for p in facts["portfolio"]:
+            lines.append(
+                f"  - {_STRATEGY_LABELS.get(p['strategy'], p['strategy'])}: "
+                f"total return {_n(p.get('total_return')):+.1%}, "
+                f"max drawdown {_n(p.get('max_drawdown')):.1%}, {_sharpe_phrase(p)}."
+            )
+    if facts.get("portfolio_pairs"):
+        pairs = facts["portfolio_pairs"]
+        n_distinct = sum(1 for p in pairs if p.get("distinguishable"))
+        lines.append(
+            f"Pairwise Sharpe distinguishability: {n_distinct} of {len(pairs)} pairs "
+            "distinguishable at the 90% level."
+        )
+    if "ml_gate" in facts:
+        mw = facts["ml_gate"].get("mean_weight")
+        if mw is not None and not pd.isna(mw):
+            lines.append(
+                f"ML forecast mean weight in mvo_ml: {_n(mw):.1%} (near zero = no OOS edge)."
+            )
+    if "vol_skill" in facts:
+        v = facts["vol_skill"]
+        r2 = v.get("oos_r2")
+        r2s = f"{r2:.3f}" if isinstance(r2, (int, float)) and not pd.isna(r2) else "n/a"
+        lines.append(f"Volatility model: cleared={v.get('cleared')}, out-of-sample R2={r2s}.")
+    return "\n".join(lines)
+
+
 def _build_prompt(facts: FactsDict) -> str:
-    return "Here are today's structured market facts (JSON-like). Write the brief.\n\n" + str(facts)
+    return (
+        "Here are today's market facts, already formatted for you. Write the brief, quoting these "
+        "figures exactly as written.\n\n" + _fmt_facts_for_prompt(facts)
+    )
 
 
 def _sharpe_phrase(p: dict) -> str:

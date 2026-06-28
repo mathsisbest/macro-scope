@@ -688,3 +688,33 @@ def test_validate_facts_keys_accepts_partial_keys():
     """_validate_facts_keys() must not raise when only some optional keys are present."""
     partial_facts = {"as_of": "2024-01-02", "data_date": "2024-01-02"}
     narrative._validate_facts_keys(partial_facts)
+
+
+def test_prompt_facts_are_preformatted_not_raw_floats():
+    """The LLM prompt must present tidy figures ($ prices, % returns) so the model can't echo raw
+    floats like '59362.21875' / '-0.006018...' (the old `str(facts)` bug)."""
+    facts = {
+        "data_date": "2026-06-26",
+        "crypto": [{"symbol": "BTC", "last_price": 59362.21875, "chg_24h": -0.006018870477891958}],
+        "spy": {"close": 734.2999877, "daily_return": -0.0072, "vol_20d": 0.142},
+        "yields": {"us_10y": 4.5012, "us_2y": 4.1607, "yield_curve_10y_2y": 0.3405},
+    }
+    block = narrative._fmt_facts_for_prompt(facts)
+    assert "$59,362" in block  # price formatted, not 59362.21875
+    assert "-0.60%" in block  # return as a %, not the raw fraction
+    assert "$734.30" in block
+    assert "59362.21875" not in block and "-0.006018" not in block  # no raw-float artifacts
+    assert "$59,362" in narrative._build_prompt(facts)  # _build_prompt embeds the formatted block
+
+
+def test_fmt_facts_handles_missing_and_nan():
+    """Absent sections + NaN values must not crash or emit 'nan'."""
+    import math
+
+    facts = {
+        "data_date": "2026-06-26",
+        "spy": {"close": 100.0, "daily_return": math.nan, "vol_20d": None},
+    }
+    block = narrative._fmt_facts_for_prompt(facts)
+    assert "nan" not in block.lower()
+    assert "$100.00" in block and "+0.00%" in block  # NaN return → 0.00%, vol omitted
