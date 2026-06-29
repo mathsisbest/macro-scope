@@ -30,7 +30,7 @@ models:
         tests: [not_null]
 
   - name: fct_market_macro
-    description: "SPY joined (ASOF) to 10Y/2Y yields and the 10Y-2Y curve."
+    description: "SPY joined (ASOF) to 10Y/2Y/3M yields and the 10Y-2Y + canonical 10Y-3M curves."
     columns:
       - name: date
         tests: [not_null, unique]
