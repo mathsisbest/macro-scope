@@ -133,18 +133,18 @@ if provenance:
 
 # --------------------------------------------------------------------------- sidebar
 with st.sidebar:
-    st.subheader("⚙️ Pipeline health")
-    runs = data.pipeline_runs()
-    if not runs.empty:
-        st.dataframe(runs, hide_index=True, use_container_width=True)
-    elif is_sample is True:
-        st.caption("Sample data seeded (synthetic; no live ingestion runs).")
-    elif is_sample is False:
-        st.caption("Live data from a committed snapshot (no in-app ingestion log).")
-    elif as_of:
-        st.caption("Mixed or unrecorded data provenance.")
-    else:
-        st.caption("No data yet — run `make demo` or `mmi ingest`.")
+    with st.expander("⚙️ Pipeline health", expanded=False):
+        runs = data.pipeline_runs()
+        if not runs.empty:
+            st.dataframe(runs, hide_index=True, use_container_width=True)
+        elif is_sample is True:
+            st.caption("Sample data seeded (synthetic; no live ingestion runs).")
+        elif is_sample is False:
+            st.caption("Live data from a committed snapshot (no in-app ingestion log).")
+        elif as_of:
+            st.caption("Mixed or unrecorded data provenance.")
+        else:
+            st.caption("No data yet — run `make demo` or `mmi ingest`.")
     st.divider()
     st.caption(f"`{settings.storage_label()}`")
     st.caption(f"LLM provider · `{settings.llm_provider}`")
@@ -196,7 +196,7 @@ st.divider()
 _range = st.segmented_control(
     "Date range",
     data.RANGE_PRESETS,
-    default="Max",
+    default="5Y",
     key="chart_range",
     help="Filters every time-series chart. Portfolio bootstrap stats stay full-window.",
 )
