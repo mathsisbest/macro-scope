@@ -449,7 +449,7 @@ def generate_brief(con) -> str:
     if llm.available():
         try:
             # 2048 (not the 800 default) so medium thinking has room before the answer.
-            raw_text = llm.complete(_build_prompt(facts), system=_SYSTEM, max_tokens=2048)
+            raw_text = llm.complete(_build_prompt(facts), system=_SYSTEM, max_tokens=4096)
             rejection = _validate_llm_output(raw_text)
             if rejection is not None:
                 # Log the rejection reason (no secret values in there — they matched by
