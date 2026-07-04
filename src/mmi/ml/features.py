@@ -114,6 +114,12 @@ _RICH_FEATURE_NAMES: list[str] = [
     # Cross-asset correlations
     "corr_spy_tlt_20d",
     "corr_spy_gld_20d",
+    # Cross-asset regime signals
+    "corr_spy_tlt_zscore_60d",
+    "corr_spy_gld_zscore_60d",
+    "dollar_zscore_60d",
+    "cross_asset_dispersion_20d",
+    "equity_bond_spread_20d",
     # Calendar
     "day_of_week",
     "month_of_year",
@@ -364,6 +370,39 @@ def _add_rich_features(
                         .rolling(20, min_periods=10)
                         .corr(combined[f"{label}_ret"])
                     )
+
+    # --- Cross-asset regime signals ---
+    # Correlation Z-scores: are correlations unusually high/low?
+    for label in ["gld", "tlt"]:
+        corr_col = f"corr_spy_{label}_20d"
+        zscore_col = f"corr_spy_{label}_zscore_60d"
+        if corr_col in out.columns:
+            c = out[corr_col]
+            c_mean = c.rolling(60, min_periods=20).mean()
+            c_std = c.rolling(60, min_periods=20).std()
+            out[zscore_col] = ((c - c_mean) / c_std.replace(0, np.nan)).shift(1)
+
+    # Dollar Z-score
+    if "DTWEXBGS" in out.columns:
+        dollar = out["DTWEXBGS"]
+        d_mean = dollar.rolling(60, min_periods=20).mean()
+        d_std = dollar.rolling(60, min_periods=20).std()
+        out["dollar_zscore_60d"] = ((dollar - d_mean) / d_std.replace(0, np.nan)).shift(1)
+
+    # Cross-asset dispersion: std of asset returns (measure of divergence)
+    if asset_dfs:
+        ret_cols = []
+        for _sym, label in [("GLD", "gld"), ("TLT", "tlt")]:
+            if f"{label}_ret" in out.columns:
+                ret_cols.append(f"{label}_ret")
+        if ret_cols:
+            disp_raw = out[ret_cols].std(axis=1).rolling(20, min_periods=10).mean()
+            out["cross_asset_dispersion_20d"] = disp_raw.shift(1)
+
+    # Equity-bond spread: SPY return minus TLT return (risk-on vs risk-off signal)
+    if "tlt_ret" in out.columns:
+        spread_raw = (ret - out["tlt_ret"]).rolling(20, min_periods=10).mean()
+        out["equity_bond_spread_20d"] = spread_raw.shift(1)
 
     # --- Macro regime: yield curve slope change (now in _add_macro_features) ---
 
