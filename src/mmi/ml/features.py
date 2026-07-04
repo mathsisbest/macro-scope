@@ -67,6 +67,9 @@ def har_feature_names() -> list[str]:
 
 
 # Macro / cross-asset feature names (added by feature_set='vol_macro').
+# Daily/weekly features only — monthly/quarterly series (CPI, GDP, UNRATE etc.) are too
+# low-frequency and create noise when forward-filled to daily dates. The features below
+# have enough granularity to provide genuine predictive signal.
 _MACRO_FEATURE_NAMES: list[str] = [
     # Yield curve
     "yc_10y2y_lag1",
@@ -84,11 +87,11 @@ _MACRO_FEATURE_NAMES: list[str] = [
     "vix_level_lag1",
     "vix_change_5d",
     "vix_zscore_60d",
-    # Oil / inflation
+    # Oil
     "wti_change_20d",
     # Dollar
     "dollar_change_20d",
-    # Employment (leading)
+    # Employment (weekly)
     "claims_change_4w",
     # Financial conditions
     "nfci_lag1",
@@ -276,9 +279,8 @@ def _add_macro_features(
     if "DTWEXBGS" in out.columns:
         out["dollar_change_20d"] = out["DTWEXBGS"].pct_change(20).shift(1)
 
-    # --- Employment (leading indicator) ---
+    # --- Employment (weekly) ---
     if "ICSA" in out.columns:
-        # 4-week average change in initial claims
         claims_4w = out["ICSA"].rolling(4, min_periods=1).mean()
         out["claims_change_4w"] = claims_4w.diff(4).shift(1)
 
