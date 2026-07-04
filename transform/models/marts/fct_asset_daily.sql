@@ -4,9 +4,10 @@ with r as (
 )
 select
     *,
+    -- Annualised 20-day rolling volatility: daily std dev × √252.
     stddev_samp(daily_return) over (
         partition by symbol order by date rows between 20 preceding and current row
-    ) as vol_20d,
+    ) * sqrt(252) as vol_20d,
     avg(close) over (
         partition by symbol order by date rows between 49 preceding and current row
     ) as ma_50
