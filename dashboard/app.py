@@ -249,6 +249,7 @@ with tab_mkt:
         board = charts.cross_asset_leaderboard(long_df)
         if not board.empty:
             st.caption("📊 Over the selected range · sorted by return")
+            st.markdown('<div class="leaderboard">', unsafe_allow_html=True)
             lb_cols = st.columns(min(len(board), 3))
             for i, row in enumerate(board.itertuples(index=False)):
                 with lb_cols[i % len(lb_cols)]:
@@ -365,6 +366,7 @@ with tab_macro:
                             ),
                             delta_color="off",
                         )
+            st.markdown("</div>", unsafe_allow_html=True)
             st.divider()
 
         # ---- Category selector → small-multiples grid (each chart windowed by the range) ----

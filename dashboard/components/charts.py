@@ -9,7 +9,6 @@ import plotly.graph_objects as go
 from dashboard.theme import (
     HEIGHT_DEFAULT,
     HEIGHT_MEDIUM,
-    HEIGHT_SHORT,
     HEIGHT_TALL,
     PALETTE,
     SERIES_ALT,
@@ -112,11 +111,11 @@ def vol_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
         title=dict(text=f"{symbol} — rolling 20-day volatility", font=_TITLE_FONT),
     )
     _apply_axis_fonts(fig)
-    # vol_20d is a daily-scale fraction (~0.01 for SPY); render axis + hover as a percentage.
+    # vol_20d is annualised; render axis + hover as a percentage.
     fig.update_yaxes(tickformat=".1%", hoverformat=".1%")
     if not df.empty and "vol_20d" in df.columns:
         _guard_yrange(fig, df["vol_20d"])
-    return style_fig(fig, height=HEIGHT_SHORT)
+    return style_fig(fig, height=HEIGHT_DEFAULT)
 
 
 # ---------------------------------------------------------------------------
