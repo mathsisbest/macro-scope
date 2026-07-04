@@ -1,7 +1,13 @@
-"""Generate a plain-English daily market brief from the marts, via the LLM layer.
+"""Generate a plain-English daily macro & markets narrative from the marts, via the LLM layer.
 
-Falls back to a deterministic template when no LLM key is configured, so the feature
-always works (and CI/demo stay free).
+The brief is market commentary: it tells the story of the day's macro backdrop and cross-asset
+moves — what rose and fell together, what diverged, where there's momentum / mean-reversion /
+rotation, and the plausible *why* tied to rates, inflation, the dollar, oil and risk appetite.
+It deliberately does NOT discuss portfolio strategies, allocation, or the ML/volatility model —
+those live on their own dashboard tabs.
+
+Falls back to a deterministic template when no LLM key is configured (or the call fails / its
+output is rejected), so the feature always works and CI/demo stay free.
 """
 
 from __future__ import annotations
@@ -14,8 +20,6 @@ from typing import Any, TypedDict
 import pandas as pd
 
 from mmi.ai import llm
-from mmi.ml.skill_gate import skill_verdict
-from mmi.portfolio import windows
 from mmi.settings import settings
 from mmi.utils.logging import get_logger
 from mmi.utils.redact import redact
@@ -26,8 +30,8 @@ log = get_logger("ai.narrative")
 # Facts TypedDict — contract-frozen key set.
 #
 # gather_facts() must return a dict whose keys are EXACTLY this set (some values
-# are absent / None when the mart is missing, but no extra or missing keys).
-# A contract test (see tests/test_ai_narrative.py) enforces this.
+# are absent when the mart is missing, but no extra or missing keys). A contract
+# test (see tests/test_ai_narrative.py) enforces this.
 # ---------------------------------------------------------------------------
 
 
@@ -35,35 +39,22 @@ class FactsDict(TypedDict, total=False):
     """Typed contract for the facts dict produced by gather_facts().
 
     All keys are optional (total=False) because individual marts may be absent
-    when running against an empty DB (CI, seed, demo).  The REQUIRED set is
-    validated at runtime by _validate_facts_keys().
+    when running against an empty DB (CI, seed, demo). 'as_of'/'data_date' are
+    always produced; the rest are conditional on mart availability.
     """
 
     as_of: str
     data_date: str
-    crypto: list[dict[str, Any]]
-    spy: dict[str, Any]
-    yields: dict[str, Any]
-    portfolio: list[dict[str, Any]]
-    portfolio_pairs: list[dict[str, Any]]
-    ml_gate: dict[str, Any]
-    vol_skill: dict[str, Any]
+    macro: list[dict[str, Any]]
+    assets: list[dict[str, Any]]
+    correlations: list[dict[str, Any]]
 
 
-# The exact set of keys gather_facts() is allowed to produce.  An unexpected
-# key is a contract violation; callers (template, LLM prompt) must not receive
-# undocumented structure.
-# Derived from FactsDict at import time so the contract is always in sync with the TypedDict;
-# __annotations__ is the canonical runtime mapping for TypedDict (works on all CPython ≥3.10).
 _FACTS_REQUIRED_KEYS: frozenset[str] = frozenset(FactsDict.__annotations__)
 
 
 def _validate_facts_keys(facts: dict) -> None:
-    """Raise ValueError if facts contains unknown keys or is missing required ones.
-
-    'as_of' and 'data_date' are unconditionally produced; the rest are conditional
-    on mart availability.  The FORBIDDEN direction is extra (undocumented) keys.
-    """
+    """Raise ValueError if facts contains unknown keys (extra/undocumented structure)."""
     extra = set(facts.keys()) - _FACTS_REQUIRED_KEYS
     if extra:
         raise ValueError(
@@ -73,81 +64,97 @@ def _validate_facts_keys(facts: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# LLM output validation — reject outputs that are empty, too long, or contain
-# key-shaped tokens that a compromised/confused LLM might echo back.
+# Curated panels — the editorial selection of what the brief narrates.
+# ---------------------------------------------------------------------------
+
+# Macro series (FRED ids) the brief reports, in narrative order, with display label + units.
+# A deliberate, readable subset of the full config/assets.yml macro universe.
+_MACRO_BRIEF: list[tuple[str, str, str]] = [
+    ("VIXCLS", "VIX (equity volatility)", "index"),
+    ("DGS3MO", "3M Treasury yield", "%"),
+    ("DGS2", "2Y Treasury yield", "%"),
+    ("DGS10", "10Y Treasury yield", "%"),
+    ("T10Y2Y", "10Y-2Y curve", "pp"),
+    ("FEDFUNDS", "Fed funds rate", "%"),
+    ("CPIAUCSL", "CPI inflation", "yoy"),
+    ("PCEPILFE", "Core PCE inflation", "yoy"),
+    ("UNRATE", "Unemployment rate", "%"),
+    ("A191RL1Q225SBEA", "Real GDP growth (ann.)", "%"),
+    ("DCOILWTICO", "WTI crude oil", "$/bbl"),
+    ("DTWEXBGS", "US dollar (broad index)", "index"),
+    ("NFCI", "Financial conditions (NFCI)", "index"),
+]
+
+# Series rendered as a 12-month % change (year-over-year) rather than a raw index level — for
+# these an index value (e.g. CPI = 334) is meaningless to a reader; the YoY rate is the signal.
+_YOY_SERIES: frozenset[str] = frozenset({"CPIAUCSL", "PCEPILFE"})
+
+# Friendly labels for the tracked assets (asset_class comes from the mart).
+_ASSET_LABELS: dict[str, str] = {
+    "SPY": "S&P 500 (SPY)",
+    "QQQ": "Nasdaq 100 (QQQ)",
+    "VEA": "Developed ex-US equities (VEA)",
+    "TLT": "Long Treasuries (TLT)",
+    "TIP": "TIPS (TIP)",
+    "GLD": "Gold (GLD)",
+    "BTC": "Bitcoin",
+    "EURUSD": "EUR/USD",
+    "GBPUSD": "GBP/USD",
+}
+
+# Rolling window (trading days) for the "recent co-movement" correlation read.
+_CORR_WINDOW: int = 60
+_CORR_MIN_OBS: int = 30
+
+# ---------------------------------------------------------------------------
+# LLM output validation — reject empty / too-long / key-shaped responses.
 # ---------------------------------------------------------------------------
 _MAX_BRIEF_CHARS = 8000
 
-# Patterns that signal a secret leaked into the LLM response body.
-# Order matters: match the most-specific patterns first.
 _SECRET_PATTERNS: list[re.Pattern] = [
-    # URL query-param style: api_key=..., key=..., token=..., access_token=...
     re.compile(r"(?i)(?:api_?key|access_token|token|key)\s*=\s*\S+"),
-    # Authorization: Bearer <token>
     re.compile(r"(?i)bearer\s+\S+"),
-    # Google API key prefix (AIza...)
     re.compile(r"AIza[0-9A-Za-z_\-]{30,}"),
-    # Long hex strings (≥32 hex chars) that look like raw secret material.
     re.compile(r"\b[0-9a-fA-F]{32,}\b"),
-    # Long base64-ish tokens (≥32 chars, base64 alphabet including / and +).
     re.compile(r"[A-Za-z0-9+/]{32,}={0,2}"),
 ]
 
 
 def _validate_llm_output(text: str) -> str | None:
-    """Return a rejection reason string, or None if the output is acceptable.
-
-    Rejects:
-    * empty / whitespace-only responses
-    * responses longer than _MAX_BRIEF_CHARS
-    * responses containing key-shaped tokens (secret-leak guard)
-    """
+    """Return a rejection reason string, or None if the output is acceptable."""
     if not text or not text.strip():
         return "LLM returned an empty/whitespace-only brief"
-
     if len(text) > _MAX_BRIEF_CHARS:
         return f"LLM brief is too long ({len(text)} chars > {_MAX_BRIEF_CHARS} limit)"
-
     for pat in _SECRET_PATTERNS:
         m = pat.search(text)
         if m:
-            # Log the pattern name, never the matched value.
             return (
                 f"LLM brief contains a key-shaped token matching pattern "
                 f"{pat.pattern!r} — output rejected for safety"
             )
-
     return None
 
 
-# The brief narrates the long-history baseline window (the dashboard default), so its portfolio
-# facts are coherent now that the marts carry three windows. The BTC-effect (a cross-window
-# comparison) is grounded separately.
-_BRIEF_WINDOW = windows.DEFAULT_WINDOW
-
 _SYSTEM = (
-    "You are a concise markets analyst. Given pre-formatted market facts, write a 4-6 sentence "
-    "daily brief for an informed reader. Use ONLY the figures provided, quoting them exactly as "
-    "written — they are already formatted ($ prices, % returns/yields); do not add precision, "
-    "restate raw decimals, or invent/estimate numbers. Be specific, neutral, no advice, no hype. "
-    "If portfolio strategy stats are present, compare the allocation strategies against the 60/40 "
-    "benchmark in one sentence; when a Sharpe confidence interval is wide or a pair is not "
-    "distinguishable (see portfolio_pairs), say so plainly rather than implying an edge. "
-    "If ml_gate is present, state in one sentence the mean weight the ML forecast earned in the "
-    "mvo_ml blend and, when that weight is near zero, that the forecast showed no out-of-sample "
-    "edge so mvo_ml tracked the historical-mean baseline. "
-    "If vol_skill is present: when cleared=false, state plainly that the volatility model showed "
-    "no demonstrated out-of-sample skill — do NOT use 'beats', 'outperforms', or similar phrasing; "
-    "when cleared=true, you may state the model beat its persistence baseline out-of-sample. "
-    "End with one sentence on what to watch."
+    "You are a markets commentator writing a daily macro-and-markets narrative for an informed "
+    "reader. Tell a coherent story in 6-10 sentences: what moved and the plausible WHY, tying the "
+    "cross-asset moves to the macro backdrop (rates and the yield curve, inflation, the Fed, the "
+    "dollar, oil, and risk appetite via the VIX). "
+    "Use the cross-asset moves to describe co-movement — what rose and fell together and what "
+    "diverged — and use the correlations to support it (a high positive correlation means assets "
+    "move together; a low or negative one means they diverge — read the sign, do not assume). "
+    "Where an asset's 1d / 5d / 20d returns "
+    "point the same way, call it momentum; where a move snaps back toward the 50-day average, call "
+    "it mean-reversion; when money shifts between asset classes or regions (tech vs broad vs "
+    "international equities, or stocks vs bonds vs gold vs bitcoin), describe it as rotation. "
+    "Frame causation cautiously ('consistent with', 'amid'), never as certainty. Use ONLY the "
+    "figures provided and quote them as written — they are already formatted (%, $, pp); do not "
+    "invent, estimate, or add precision. "
+    "Do NOT mention portfolio strategies, asset allocation, Sharpe ratios, backtests, or any "
+    "machine-learning or volatility-model forecast — this is market commentary only. "
+    "Neutral tone, no advice, no hype. End with one sentence on what to watch next."
 )
-
-_STRATEGY_LABELS = {
-    "equal_weight": "Equal weight",
-    "inverse_vol": "Inverse vol",
-    "risk_parity": "Risk parity",
-    "sixty_forty": "60/40 benchmark",
-}
 
 
 def _q(con, sql: str) -> pd.DataFrame:
@@ -158,116 +165,6 @@ def _q(con, sql: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def gather_facts(con) -> FactsDict:
-    facts: dict = {"as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
-
-    # Pull the most-recent data date from the asset mart so the brief header is grounded in
-    # actual data, not wall-clock.  Falls back to as_of (wall-clock) when the mart is empty.
-    data_date_row = _q(
-        con,
-        "select max(date) as data_date from marts.fct_asset_daily",
-    )
-    if not data_date_row.empty and data_date_row.iloc[0]["data_date"] is not None:
-        raw = data_date_row.iloc[0]["data_date"]
-        facts["data_date"] = str(raw)[:10]  # YYYY-MM-DD slice, handles both str and date/Timestamp
-    else:
-        facts["data_date"] = facts["as_of"][:10]
-
-    # Crypto = BTC daily via Yahoo (marts.fct_asset_daily). The latest close + its daily return,
-    # shaped with the same record keys (symbol/last_price/chg_24h) the template expects.
-    crypto = _q(
-        con,
-        "select symbol, close as last_price, daily_return as chg_24h "
-        "from marts.fct_asset_daily "
-        "where asset_class = 'crypto' and symbol = 'BTC' order by date desc limit 1",
-    )
-    if not crypto.empty:
-        facts["crypto"] = crypto.to_dict("records")
-
-    spy = _q(
-        con,
-        "select date, close, daily_return, vol_20d from marts.fct_asset_daily "
-        "where symbol = 'SPY' order by date desc limit 1",
-    )
-    if not spy.empty:
-        facts["spy"] = spy.iloc[0].to_dict()
-
-    curve = _q(
-        con,
-        "select us_10y, us_2y, yield_curve_10y_2y from marts.fct_market_macro "
-        "order by date desc limit 1",
-    )
-    if not curve.empty:
-        facts["yields"] = curve.iloc[0].to_dict()
-
-    # Portfolio facts grounded in the real marts: returns-derived total return + worst drawdown,
-    # joined to the bootstrap full-sample Sharpe + its confidence interval (one row per strategy).
-    # Scoped to ONE window (the marts now carry three) so the per-strategy aggregates are coherent.
-    portfolio = _q(
-        con,
-        f"""
-        select s.strategy,
-               agg.total_return,
-               agg.max_drawdown,
-               s.sharpe,
-               s.sharpe_lo,
-               s.sharpe_hi
-        from marts.fct_portfolio_strategy_stats s
-        join (
-            select strategy,
-                   arg_max(cumulative_return, date) as total_return,
-                   min(drawdown) as max_drawdown
-            from marts.fct_portfolio_returns
-            where window_id = '{_BRIEF_WINDOW}'
-            group by strategy
-        ) agg on agg.strategy = s.strategy
-        where s.window_id = '{_BRIEF_WINDOW}'
-        order by s.sharpe desc
-        """,
-    )
-    if not portfolio.empty:
-        # Sort deterministically by strategy name so same facts → byte-identical offline brief
-        # regardless of the order rows arrive from the mart.
-        portfolio = portfolio.sort_values("strategy").reset_index(drop=True)
-        facts["portfolio"] = portfolio.to_dict("records")
-
-    # Pairwise distinguishability so the brief can hedge when differences are within noise.
-    pairs = _q(
-        con,
-        "select strategy_a, strategy_b, distinguishable from marts.fct_portfolio_strategy_pairs "
-        f"where window_id = '{_BRIEF_WINDOW}'",
-    )
-    if not pairs.empty:
-        # Sort deterministically so same pairs in any row order → identical brief output.
-        pairs = pairs.sort_values(["strategy_a", "strategy_b"]).reset_index(drop=True)
-        facts["portfolio_pairs"] = pairs.to_dict("records")
-
-    # The ML gate: the mean weight the forecast earned in mvo_ml's blend. A near-zero weight is the
-    # honest signal that the ML showed no out-of-sample edge (so mvo_ml ≈ mvo_histmean).
-    gate = _q(
-        con,
-        "select avg(forecast_weight) as mean_weight, max(forecast_weight) as max_weight "
-        f"from marts.fct_portfolio_ml_gate where window_id = '{_BRIEF_WINDOW}'",
-    )
-    if not gate.empty and not pd.isna(gate.iloc[0]["mean_weight"]):
-        facts["ml_gate"] = gate.iloc[0].to_dict()
-
-    # Volatility model skill verdict — sources skill_verdict() which is the SINGLE source of the
-    # gate verdict (Contract E). Reads model_metrics long-format rows; fails closed if missing.
-    metrics_df = _q(con, "select model, symbol, metric, value from marts.model_metrics")
-    verdict = skill_verdict(metrics_df)
-    facts["vol_skill"] = {
-        "cleared": verdict["cleared"],
-        "oos_r2": verdict["oos_r2"],
-        "reasons": verdict["reasons"],
-    }
-
-    # Contract enforcement: raise loudly if gather_facts() produced an undocumented key,
-    # so regressions are caught at generation time rather than silently drifting.
-    _validate_facts_keys(facts)
-    return facts  # type: ignore[return-value]
-
-
 def _n(x: object, default: float = 0.0) -> float:
     """Coerce a possibly-None/NaN numeric fact to a plain float (NaN is truthy, so guard it)."""
     if x is None or (isinstance(x, float) and pd.isna(x)):
@@ -275,171 +172,302 @@ def _n(x: object, default: float = 0.0) -> float:
     return float(x)  # type: ignore[arg-type]
 
 
+# ---------------------------------------------------------------------------
+# Fact gathering
+# ---------------------------------------------------------------------------
+
+
+def _yoy_change(con, series_id: str) -> float | None:
+    """Year-over-year fractional change for a (monthly) macro series, or None if unavailable.
+
+    Compares the latest value to the last value at or before ~12 months earlier. Returns None
+    when there isn't ~a year of history (e.g. small sample data) or the prior value is 0/NaN.
+    """
+    df = _q(
+        con,
+        f"select date, value from marts.fct_macro_indicator where series_id = '{series_id}' "
+        "order by date",
+    )
+    if df.empty or len(df) < 13:
+        return None
+    latest = df.iloc[-1]
+    cutoff = pd.Timestamp(latest["date"]) - pd.DateOffset(months=12)
+    prior = df[pd.to_datetime(df["date"]) <= cutoff]
+    if prior.empty:
+        return None
+    pv = prior["value"].iloc[-1]
+    if pv is None or pd.isna(pv) or pv == 0 or pd.isna(latest["value"]):
+        return None
+    return float(latest["value"] / pv - 1.0)
+
+
+def _macro_readings(con) -> list[dict[str, Any]]:
+    """Curated macro panel: latest value + change per series, plus YoY for inflation series."""
+    latest = _q(
+        con,
+        "select series_id, value, change from marts.fct_macro_indicator "
+        "qualify row_number() over (partition by series_id order by date desc) = 1",
+    )
+    if latest.empty:
+        return []
+    by_id = {str(r["series_id"]): r for _, r in latest.iterrows()}
+    out: list[dict[str, Any]] = []
+    for sid, label, units in _MACRO_BRIEF:
+        row = by_id.get(sid)
+        if row is None:
+            continue
+        rec: dict[str, Any] = {
+            "series_id": sid,
+            "label": label,
+            "units": units,
+            "value": _n(row["value"], default=float("nan")),
+            "change": None if pd.isna(row["change"]) else float(row["change"]),
+        }
+        if units == "yoy":
+            rec["yoy"] = _yoy_change(con, sid)
+        out.append(rec)
+    return out
+
+
+def _asset_signals(con) -> tuple[list[dict[str, Any]], pd.DataFrame]:
+    """Per-asset momentum/mean-reversion signals + a wide daily-return frame for correlation.
+
+    Returns (assets, returns_wide). ``assets`` carries 1d/5d/20d returns, position vs the 50-day
+    MA, and 20d vol per symbol. ``returns_wide`` is the last ``_CORR_WINDOW`` days of daily
+    returns pivoted date×symbol, for :func:`_correlation_notes`.
+    """
+    df = _q(
+        con,
+        "select symbol, asset_class, date, close, daily_return, ma_50, vol_20d "
+        "from marts.fct_asset_daily "
+        "qualify row_number() over (partition by symbol order by date desc) <= 70 "
+        "order by symbol, date",
+    )
+    if df.empty:
+        return [], pd.DataFrame()
+
+    assets: list[dict[str, Any]] = []
+    for sym, g in df.groupby("symbol", sort=True):
+        g = g.sort_values("date")
+        close = g["close"].to_numpy(dtype=float)
+        if len(close) < 2:
+            continue
+        ma50 = g["ma_50"].iloc[-1] if "ma_50" in g.columns else None
+        last_dr = g["daily_return"].iloc[-1]
+        assets.append(
+            {
+                "symbol": str(sym),
+                "label": _ASSET_LABELS.get(str(sym), str(sym)),
+                "asset_class": str(g["asset_class"].iloc[0]),
+                "last_close": float(close[-1]),
+                "ret_1d": None if pd.isna(last_dr) else float(last_dr),
+                "ret_5d": float(close[-1] / close[-6] - 1.0) if len(close) >= 6 else None,
+                "ret_20d": float(close[-1] / close[-21] - 1.0) if len(close) >= 21 else None,
+                "vs_ma50": (
+                    float(close[-1] / float(ma50) - 1.0)
+                    if ma50 is not None and not pd.isna(ma50) and float(ma50) != 0.0
+                    else None
+                ),
+                "vol_20d": (
+                    None if pd.isna(g["vol_20d"].iloc[-1]) else float(g["vol_20d"].iloc[-1])
+                ),
+            }
+        )
+
+    wide = (
+        df.pivot_table(index="date", columns="symbol", values="daily_return")
+        .sort_index()
+        .tail(_CORR_WINDOW)
+    )
+    return assets, wide
+
+
+def _correlation_notes(returns_wide: pd.DataFrame) -> list[dict[str, Any]]:
+    """Notable recent daily-return correlations: stocks-vs-bonds, most-positive, most-negative."""
+    if returns_wide.empty or returns_wide.shape[0] < _CORR_MIN_OBS or returns_wide.shape[1] < 2:
+        return []
+    corr = returns_wide.corr(min_periods=_CORR_MIN_OBS // 2)
+    notes: list[dict[str, Any]] = []
+
+    if {"SPY", "TLT"} <= set(corr.columns) and not pd.isna(corr.loc["SPY", "TLT"]):
+        notes.append(
+            {
+                "a": "SPY",
+                "b": "TLT",
+                "corr": float(corr.loc["SPY", "TLT"]),
+                "kind": "stocks vs bonds",
+            }
+        )
+
+    cols = list(corr.columns)
+    pairs: list[tuple[str, str, float]] = []
+    for i in range(len(cols)):
+        for j in range(i + 1, len(cols)):
+            v = corr.iloc[i, j]
+            if not pd.isna(v):
+                pairs.append((str(cols[i]), str(cols[j]), float(v)))
+    if pairs:
+        pairs.sort(key=lambda t: t[2])
+        lo, hi = pairs[0], pairs[-1]
+        # Sign-neutral labels: the extremes may both be positive in a risk-on regime, so "highest"
+        # / "lowest" stays accurate (the signed value is right there for the reader/LLM to judge).
+        notes.append({"a": hi[0], "b": hi[1], "corr": hi[2], "kind": "highest co-movement"})
+        notes.append({"a": lo[0], "b": lo[1], "corr": lo[2], "kind": "lowest co-movement"})
+    return notes
+
+
+def gather_facts(con) -> FactsDict:
+    facts: dict = {"as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
+
+    data_date_row = _q(con, "select max(date) as data_date from marts.fct_asset_daily")
+    if not data_date_row.empty and data_date_row.iloc[0]["data_date"] is not None:
+        facts["data_date"] = str(data_date_row.iloc[0]["data_date"])[:10]
+    else:
+        facts["data_date"] = facts["as_of"][:10]
+
+    macro = _macro_readings(con)
+    if macro:
+        facts["macro"] = macro
+
+    assets, returns_wide = _asset_signals(con)
+    if assets:
+        facts["assets"] = assets
+    corr = _correlation_notes(returns_wide)
+    if corr:
+        facts["correlations"] = corr
+
+    _validate_facts_keys(facts)
+    return facts  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
+# Formatting — shared by the LLM prompt and the deterministic offline template.
+# ---------------------------------------------------------------------------
+
+
+def _fmt_macro_value(rec: dict[str, Any]) -> str | None:
+    """Format one macro reading's headline value by units. None if it can't be rendered."""
+    units = rec.get("units")
+    if units == "yoy":
+        yoy = rec.get("yoy")
+        if yoy is None or pd.isna(yoy):
+            return None  # not enough history for a YoY read → skip the line entirely
+        return f"{yoy:+.1%} YoY"
+    value = rec.get("value")
+    if value is None or pd.isna(value):
+        return None
+    v = float(value)
+    if units == "%":
+        return f"{v:.2f}%"
+    if units == "pp":
+        return f"{v:+.2f}pp"
+    if units == "$/bbl":
+        return f"${v:,.2f}"
+    if units == "index":
+        return f"{v:,.1f}"
+    return f"{v:,.2f}"
+
+
+def _fmt_macro_change(rec: dict[str, Any]) -> str:
+    """Short change suffix for a macro reading (empty when no change / YoY series)."""
+    if rec.get("units") == "yoy":
+        return ""
+    chg = rec.get("change")
+    if chg is None or pd.isna(chg):
+        return ""
+    return f" (Δ {float(chg):+,.2f})"
+
+
+def _macro_lines(macro: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for rec in macro:
+        disp = _fmt_macro_value(rec)
+        if disp is None:
+            continue
+        lines.append(f"- {rec['label']}: {disp}{_fmt_macro_change(rec)}")
+    return lines
+
+
+def _asset_line(a: dict[str, Any]) -> str:
+    parts: list[str] = []
+    if a.get("ret_1d") is not None:
+        parts.append(f"1d {_n(a['ret_1d']):+.1%}")
+    if a.get("ret_5d") is not None:
+        parts.append(f"5d {_n(a['ret_5d']):+.1%}")
+    if a.get("ret_20d") is not None:
+        parts.append(f"20d {_n(a['ret_20d']):+.1%}")
+    if a.get("vs_ma50") is not None:
+        parts.append(f"{_n(a['vs_ma50']):+.1%} vs 50d avg")
+    if a.get("vol_20d") is not None:
+        parts.append(f"20d vol {_n(a['vol_20d']):.1%}")
+    return f"- {a['label']} [{a['asset_class']}]: " + ", ".join(parts)
+
+
+def _corr_lines(correlations: list[dict[str, Any]]) -> list[str]:
+    return [f"- {c['a']}–{c['b']} {_n(c['corr']):+.2f} ({c['kind']})" for c in correlations]
+
+
 def _fmt_facts_for_prompt(facts: FactsDict) -> str:
-    """Render the facts as a clean, pre-formatted block for the LLM — $ prices, % returns/yields,
-    2dp Sharpe — so the model quotes tidy figures instead of echoing raw floats (e.g.
-    ``59362.21875`` / ``-0.006018...``). The offline template formats independently from the raw
-    facts dict; this is the LLM-prompt view only."""
-    lines: list[str] = [f"Data as of {facts.get('data_date', facts.get('as_of', ''))}."]
-    for c in facts.get("crypto", []):
-        lines.append(
-            f"{str(c['symbol']).title()}: ${_n(c.get('last_price')):,.0f} "
-            f"({_n(c.get('chg_24h')):+.2%} on the day)."
-        )
-    if "spy" in facts:
-        s = facts["spy"]
-        line = (
-            f"SPY: close ${_n(s.get('close')):,.2f} ({_n(s.get('daily_return')):+.2%} on the day)"
-        )
-        if s.get("vol_20d") is not None and not pd.isna(s["vol_20d"]):
-            line += f", 20-day annualised vol {_n(s.get('vol_20d')):.1%}"
-        lines.append(line + ".")
-    if "yields" in facts:
-        y = facts["yields"]
-        parts = []
-        if y.get("us_10y") is not None:
-            parts.append(f"10Y {_n(y.get('us_10y')):.2f}%")
-        if y.get("us_2y") is not None:
-            parts.append(f"2Y {_n(y.get('us_2y')):.2f}%")
-        sp = y.get("yield_curve_10y_2y")
-        tail = f" -> 10Y-2Y spread {_n(sp):+.2f}pp" if sp is not None else ""
-        if parts:
-            lines.append("Treasuries: " + " / ".join(parts) + tail + ".")
-    if facts.get("portfolio"):
-        lines.append("Portfolio strategies (long-baseline window):")
-        for p in facts["portfolio"]:
-            lines.append(
-                f"  - {_STRATEGY_LABELS.get(p['strategy'], p['strategy'])}: "
-                f"total return {_n(p.get('total_return')):+.1%}, "
-                f"max drawdown {_n(p.get('max_drawdown')):.1%}, {_sharpe_phrase(p)}."
-            )
-    if facts.get("portfolio_pairs"):
-        pairs = facts["portfolio_pairs"]
-        n_distinct = sum(1 for p in pairs if p.get("distinguishable"))
-        lines.append(
-            f"Pairwise Sharpe distinguishability: {n_distinct} of {len(pairs)} pairs "
-            "distinguishable at the 90% level."
-        )
-    if "ml_gate" in facts:
-        mw = facts["ml_gate"].get("mean_weight")
-        if mw is not None and not pd.isna(mw):
-            lines.append(
-                f"ML forecast mean weight in mvo_ml: {_n(mw):.1%} (near zero = no OOS edge)."
-            )
-    if "vol_skill" in facts:
-        v = facts["vol_skill"]
-        r2 = v.get("oos_r2")
-        r2s = f"{r2:.3f}" if isinstance(r2, (int, float)) and not pd.isna(r2) else "n/a"
-        lines.append(f"Volatility model: cleared={v.get('cleared')}, out-of-sample R2={r2s}.")
-    return "\n".join(lines)
+    """Render the facts as a clean, pre-formatted block (%, $, pp) so the LLM quotes tidy figures
+    instead of echoing raw floats. The offline template formats independently of this."""
+    out: list[str] = [f"Data as of {facts.get('data_date', facts.get('as_of', ''))}."]
+
+    macro_lines = _macro_lines(facts.get("macro", []))
+    if macro_lines:
+        out += ["", "Macro backdrop (latest readings):", *macro_lines]
+
+    assets = facts.get("assets", [])
+    if assets:
+        out += ["", "Cross-asset moves:", *[_asset_line(a) for a in assets]]
+
+    corr_lines = _corr_lines(facts.get("correlations", []))
+    if corr_lines:
+        out += [
+            "",
+            f"Recent co-movement (~{_CORR_WINDOW}-day daily-return correlation):",
+            *corr_lines,
+        ]
+    return "\n".join(out)
 
 
 def _build_prompt(facts: FactsDict) -> str:
     return (
-        "Here are today's market facts, already formatted for you. Write the brief, quoting these "
-        "figures exactly as written.\n\n" + _fmt_facts_for_prompt(facts)
+        "Here are today's macro and market readings, already formatted for you. Write the daily "
+        "narrative described in your instructions, quoting these figures exactly as written.\n\n"
+        + _fmt_facts_for_prompt(facts)
     )
-
-
-def _sharpe_phrase(p: dict) -> str:
-    """'Sharpe X [lo, hi]' from the bootstrap stats, degrading gracefully if a value is absent."""
-    sharpe = p.get("sharpe")
-    if sharpe is None or pd.isna(sharpe):
-        return "Sharpe n/a"
-    lo, hi = p.get("sharpe_lo"), p.get("sharpe_hi")
-    if lo is None or hi is None or pd.isna(lo) or pd.isna(hi):
-        return f"Sharpe {sharpe:.2f}"
-    return f"Sharpe {sharpe:.2f} [{lo:.2f}, {hi:.2f}]"
-
-
-def _distinguishability_note(pairs: list) -> str:
-    """One honest sentence: are any strategy Sharpe differences beyond bootstrap noise?"""
-    if not pairs:
-        return ""
-    distinct = [p for p in pairs if p["distinguishable"]]
-    if not distinct:
-        return (
-            "_Statistical note: at the 90% level no pair of strategies is distinguishable by "
-            "Sharpe — the differences are within bootstrap noise._"
-        )
-    # Sort deterministically so same pairs in any input order produce identical output.
-    sorted_distinct = sorted(distinct, key=lambda p: (p["strategy_a"], p["strategy_b"]))
-    named = ", ".join(
-        f"{_STRATEGY_LABELS.get(p['strategy_a'], p['strategy_a'])} vs "
-        f"{_STRATEGY_LABELS.get(p['strategy_b'], p['strategy_b'])}"
-        for p in sorted_distinct
-    )
-    return f"_Statistical note: only {named} differ beyond bootstrap noise (90% CI)._"
 
 
 def _offline_brief(facts: FactsDict, note: str = "no LLM key set") -> str:
-    """Deterministic template used when the LLM narrative is unavailable. ``note`` states *why*
-    (no key, the call failed, or the output was rejected) so the header stays honest — the old
-    text always said "set an LLM key", which was misleading when a key WAS set but the call 503'd.
+    """Deterministic template used when the LLM narrative is unavailable.
+
+    It reports the macro backdrop, cross-asset moves and notable correlations honestly and
+    deterministically (same facts → byte-identical output) — but does not editorialise the
+    'why' the way the LLM narrative does.
     """
-    # Use the data date (YYYY-MM-DD from the marts) in the header so it is grounded in the
-    # actual data window, not the wall-clock generation time (Contract G).
     data_date = facts.get("data_date", facts.get("as_of", ""))
     lines = [
         f"**Market brief — data as of {data_date}** _(deterministic template — {note})_",
         "",
     ]
-    for c in facts.get("crypto", []):
-        chg = (c.get("chg_24h") or 0) * 100
-        lines.append(f"- {c['symbol'].title()}: ${c['last_price']:,.0f} ({chg:+.1f}% 1d)")
-    if "spy" in facts:
-        s = facts["spy"]
-        ret = (s.get("daily_return") or 0) * 100
-        lines.append(f"- SPY last close ${s['close']:,.2f} ({ret:+.2f}% on the day).")
-    if "yields" in facts and facts["yields"].get("yield_curve_10y_2y") is not None:
-        y = facts["yields"]
-        spread = y["yield_curve_10y_2y"]
-        lines.append(
-            f"- 10Y {y['us_10y']:.2f}% / 2Y {y['us_2y']:.2f}% → 10Y-2Y spread {spread:+.2f}pp."
-        )
-    if facts.get("portfolio"):
-        lines += ["", "**Strategy comparison** (walk-forward, net of costs):"]
-        # Sort deterministically by strategy name so the same facts produce a byte-identical
-        # brief regardless of the order the caller assembled the list.
-        for p in sorted(facts["portfolio"], key=lambda x: x.get("strategy", "")):
-            name = _STRATEGY_LABELS.get(p["strategy"], p["strategy"])
-            lines.append(
-                f"- {name}: {p['total_return'] * 100:+.1f}% total return, "
-                f"max drawdown {p['max_drawdown'] * 100:.1f}%, {_sharpe_phrase(p)}."
-            )
-        note = _distinguishability_note(facts.get("portfolio_pairs", []))
-        if note:
-            lines.append(note)
-        gate = facts.get("ml_gate")
-        if gate and gate.get("mean_weight") is not None:
-            weight = gate["mean_weight"]
-            if weight < 0.05:
-                lines.append(
-                    f"- ML gate: the forecast earned a mean weight of {weight:.0%} in mvo_ml's "
-                    "blend — no reliable out-of-sample edge, so mvo_ml tracked the historical-mean "
-                    "baseline."
-                )
-            else:
-                lines.append(
-                    f"- ML gate: the forecast earned a mean weight of {weight:.0%} in mvo_ml's "
-                    "blend over the historical-mean prior."
-                )
-    # Volatility model skill verdict — honest escape-hatch state (Contract E / Contract G).
-    vol_skill = facts.get("vol_skill")
-    if vol_skill is not None:
-        if vol_skill.get("cleared"):
-            r2 = vol_skill.get("oos_r2")
-            r2_str = f" (OOS R² {r2:.2f})" if r2 is not None else ""
-            lines.append(
-                f"- Volatility model (HAR/SPY): the model beat its persistence baseline "
-                f"out-of-sample{r2_str}."
-            )
-        else:
-            lines.append(
-                "- Volatility model (HAR/SPY): the model showed no demonstrated "
-                "out-of-sample skill — no reliable out-of-sample edge; baseline-only state."
-            )
-    lines += ["", "_Watch: macro releases and any shift in the yield-curve spread._"]
+
+    macro_lines = _macro_lines(facts.get("macro", []))
+    if macro_lines:
+        lines += ["**Macro backdrop**", *macro_lines, ""]
+
+    assets = facts.get("assets", [])
+    if assets:
+        lines += ["**Cross-asset moves**", *[_asset_line(a) for a in assets], ""]
+
+    corr_lines = _corr_lines(facts.get("correlations", []))
+    if corr_lines:
+        lines += [
+            f"**Recent co-movement** (~{_CORR_WINDOW}-day daily-return correlation)",
+            *corr_lines,
+            "",
+        ]
+
+    lines.append("_Watch: incoming macro releases and any shift in rates, the dollar, or risk._")
     return "\n".join(lines)
 
 
@@ -448,12 +476,10 @@ def generate_brief(con) -> str:
     facts = gather_facts(con)
     if llm.available():
         try:
-            # 2048 (not the 800 default) so medium thinking has room before the answer.
+            # 4096 so medium thinking has room before the 6-10 sentence narrative answer.
             raw_text = llm.complete(_build_prompt(facts), system=_SYSTEM, max_tokens=4096)
             rejection = _validate_llm_output(raw_text)
             if rejection is not None:
-                # Log the rejection reason (no secret values in there — they matched by
-                # pattern, not value) and fall back to the offline template.
                 log.warning(
                     "LLM brief rejected (%s); falling back to offline template",
                     rejection,
@@ -474,17 +500,14 @@ def generate_brief(con) -> str:
         engine = "offline-template"
     log.info("brief generated via %s", engine)
 
-    # Contract G: redact() EVERY persisted brief body before it is written to the .md file
-    # or the mart — closes the P1 where a raw (potentially key-bearing) body was stored.
+    # Contract G: redact() EVERY persisted brief body before it is written to the .md file or mart.
     safe_text = redact(text)
 
-    # Persist to a dated markdown file (history of briefs).
     out_dir = Path(settings.duckdb_path).parent / "briefs"
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     (out_dir / f"{stamp}.md").write_text(safe_text, encoding="utf-8")
 
-    # Persist to a mart for the dashboard.
     row = pd.DataFrame(
         [{"created_at": datetime.now(timezone.utc), "engine": engine, "brief": safe_text}]
     )

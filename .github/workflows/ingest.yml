@@ -8,9 +8,10 @@ name: Refresh public snapshot (scheduled)
 # Runs ENTIRELY in GitHub Actions (this is a PUBLIC repo: free unlimited Actions minutes + a 6-hour
 # job cap), so even the heavy weekly backtest runs here — never on a laptop. Two cadences because the
 # portfolio backtest is a ~static, multi-decade computation that barely moves day-to-day:
-#   • DAILY  — cheap refresh of prices / macro / crypto / ML. Skips the portfolio backtest AND the
-#              brief; their committed Parquet from the last weekly run is preserved untouched.
-#   • WEEKLY — full refresh incl. the portfolio backtest + the (portfolio-grounded) brief.
+#   • DAILY (weekdays) — refresh prices / macro / crypto / ML AND regenerate the macro-&-markets
+#              brief. Skips ONLY the portfolio backtest; its committed Parquet from the last weekly
+#              run is preserved untouched.
+#   • WEEKLY — full refresh that adds the portfolio backtest.
 on:
   workflow_dispatch:
     inputs:
@@ -19,8 +20,8 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "0 6 * * *" # DAILY 06:00 UTC — cheap refresh (prices/macro/crypto/ML); preserves portfolio + brief
-    - cron: "0 4 * * 1" # WEEKLY Mon 04:00 UTC — FULL refresh incl. the portfolio backtest + brief
+    - cron: "0 6 * * 1-5" # WEEKDAYS 06:00 UTC — refresh prices/macro/crypto/ML + the brief; preserves the portfolio backtest
+    - cron: "0 4 * * 1" # WEEKLY Mon 04:00 UTC — FULL refresh that also reruns the portfolio backtest
 
 # The job commits the refreshed Parquet snapshot back to the repo.
 permissions:
@@ -77,7 +78,7 @@ jobs:
             # Weekly. Two dbt builds on purpose: `mmi ingest` only lands raw.* (unlike `mmi seed` it
             # does NOT build the demo fallback marts), so the 1st build creates marts.fct_asset_daily
             # that `mmi portfolio` reads; portfolio writes raw.portfolio_*; the 2nd build populates the
-            # portfolio marts from it. Then `mmi ai` writes the portfolio-grounded brief.
+            # portfolio marts from it. `mmi ai` then writes the macro-&-markets brief.
             dbt build --project-dir transform --profiles-dir transform --target dev
             mmi portfolio
             dbt build --project-dir transform --profiles-dir transform --target dev
@@ -88,14 +89,16 @@ jobs:
             mmi ml-gate --warn-only || true
             mmi ai
           else
-            # Daily. Skip the heavy backtest AND the brief (both refresh weekly). Excluding tag:portfolio
-            # leaves the portfolio marts absent (cautious indirect selection skips their tests too), and
-            # not running `mmi ai` leaves market_brief absent. Since `mmi snapshot` only exports marts
-            # present in the DB, the committed Parquet for those marts (from the last weekly run) is
-            # preserved untouched — the public snapshot stays complete while the daily run stays cheap.
+            # Daily (weekdays). Skip ONLY the heavy portfolio backtest (it refreshes weekly).
+            # Excluding tag:portfolio leaves the portfolio marts absent (cautious indirect selection
+            # skips their tests too); since `mmi snapshot` only exports marts present in the DB, the
+            # committed portfolio Parquet from the last weekly run is preserved untouched. The brief
+            # now narrates only macro + markets (no portfolio/ML facts), so `mmi ai` regenerates it
+            # daily from the freshly-built fct_asset_daily + fct_macro_indicator marts.
             dbt build --project-dir transform --profiles-dir transform --target dev --exclude tag:portfolio --indirect-selection cautious
             mmi ml
             mmi ml-gate --warn-only || true # log skill verdict; never blocks
+            mmi ai
           fi
           mmi snapshot
       # Commit only the Parquet snapshot (never the .duckdb binary, which is gitignored). The push to
