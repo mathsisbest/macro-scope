@@ -1,9 +1,8 @@
 """ML and regime edge-case tests (Wave 3a, task C9).
 
 Covers:
-  1. forecast.train_and_backtest raises ValueError (not crash) on <60 obs, single-row,
-     and all-constant series — verifying the pipeline guard without importing sklearn at module
-     scope (the function itself handles it before any training).
+  1. forecast.train_and_predict returns empty metrics on <60 obs, single-row,
+     and all-constant series — verifying the pipeline guard.
   2. regime.label_regimes on empty vol_20d (returns empty frame, no raise).
   3. regime.label_regimes on constant vol_20d (qcut tie handling via rank, no raise).
   4. forecast_panel.walk_forward_mu short-panel min_train path returns empty/zero-skill
@@ -16,9 +15,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
-from mmi.ml.forecast import train_and_backtest
+from mmi.ml.forecast import train_and_predict
 from mmi.ml.forecast_panel import walk_forward_mu
 from mmi.ml.regime import label_regimes
 
@@ -41,7 +39,7 @@ class _MockCon:
 
 
 def _asset_df(n: int, *, symbol: str = "SPY", constant_return: float | None = None) -> pd.DataFrame:
-    """Synthetic asset DataFrame with columns [date, close, daily_return, symbol].
+    """Synthetic asset DataFrame with columns [date, open, high, low, close, daily_return, symbol].
 
     When ``constant_return`` is given every row has the same return value (all-constant series).
     """
@@ -52,9 +50,16 @@ def _asset_df(n: int, *, symbol: str = "SPY", constant_return: float | None = No
     else:
         rets = rng.normal(0.0004, 0.01, n)
     close = 100.0 * np.cumprod(1 + rets)
+    # Synthesize OHLC from close (small random ranges for GK vol)
+    high = close * (1 + np.abs(rng.normal(0, 0.005, n)))
+    low = close * (1 - np.abs(rng.normal(0, 0.005, n)))
+    open_ = close * (1 + rng.normal(0, 0.002, n))
     return pd.DataFrame(
         {
             "date": dates,
+            "open": open_,
+            "high": high,
+            "low": low,
             "close": close,
             "daily_return": rets,
             "symbol": symbol,
@@ -63,36 +68,32 @@ def _asset_df(n: int, *, symbol: str = "SPY", constant_return: float | None = No
 
 
 # ---------------------------------------------------------------------------
-# 1. train_and_backtest ValueError guard
+# 1. train_and_predict — graceful degradation on small data
 # ---------------------------------------------------------------------------
 
 
-def test_train_and_backtest_raises_on_too_few_obs():
-    """Less than 60 usable observations must raise ValueError, not crash the process."""
-    df = _asset_df(30)  # 30 rows; after dropna on features will be well below 60
+def test_train_and_predict_returns_empty_on_too_few_obs():
+    """Less than 60 usable observations → empty metrics, no crash."""
+    df = _asset_df(30)
     con = _MockCon(df)
-    with pytest.raises(ValueError, match="not enough observations"):
-        train_and_backtest(con, symbol="SPY")
+    metrics, forecasts = train_and_predict(con, symbol="SPY")
+    assert metrics.get("horizons") == {} or not forecasts
 
 
-def test_train_and_backtest_raises_on_single_row():
-    """A single-row frame is the extreme of the too-few-obs case; ValueError expected."""
+def test_train_and_predict_returns_empty_on_single_row():
+    """A single-row frame → empty metrics, no crash."""
     df = _asset_df(1)
     con = _MockCon(df)
-    with pytest.raises(ValueError, match="not enough observations"):
-        train_and_backtest(con, symbol="SPY")
+    metrics, forecasts = train_and_predict(con, symbol="SPY")
+    assert metrics.get("horizons") == {} or not forecasts
 
 
-def test_train_and_backtest_raises_on_all_constant_series():
-    """All-constant return series → features are all-constant → still too few obs after dropna.
-
-    The guard is an observation-count check; a constant series collapses features via NaN
-    or produces degenerate feature rows, so len(y) < 60 must trigger cleanly.
-    """
-    df = _asset_df(50, constant_return=0.001)  # 50 rows, well-formed but constant
+def test_train_and_predict_returns_empty_on_all_constant_series():
+    """All-constant return series → degenerate features → empty metrics."""
+    df = _asset_df(50, constant_return=0.001)
     con = _MockCon(df)
-    with pytest.raises(ValueError, match="not enough observations"):
-        train_and_backtest(con, symbol="SPY")
+    metrics, forecasts = train_and_predict(con, symbol="SPY")
+    assert metrics.get("horizons") == {} or not forecasts
 
 
 # ---------------------------------------------------------------------------

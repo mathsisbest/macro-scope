@@ -6,7 +6,9 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from mmi.ml import forecast, regime
+from mmi.ml import regime
+from mmi.ml.forecast import train_and_predict
+from mmi.ml.research import _load_asset_data, _load_macro_data
 from mmi.ml.volatility import MODEL_TAG as VOL_MODEL_TAG
 from mmi.ml.volatility import train_and_backtest_vol
 from mmi.utils.db import init_schemas
@@ -27,66 +29,97 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
     symbols = symbols or ["SPY"]
     now = datetime.now(timezone.utc)
 
+    # Load macro/asset data for rich features
+    macro_df = _load_macro_data(con)
+    asset_dfs = _load_asset_data(con, ["GLD", "TLT"])
+
     # 1. Regimes for every asset.
     _write(con, "marts.fct_regime", regime.label_regimes(con))
 
-    # 2. Direction forecast + metrics per requested symbol.
+    # 2. Return forecast + metrics per requested symbol.
     metric_rows, forecast_rows = [], []
     for sym in symbols:
         try:
-            metrics, fc = forecast.train_and_backtest(con, sym)
-        except ValueError as exc:
-            log.warning("skip %s: %s", sym, exc)
+            metrics, forecasts = train_and_predict(
+                con,
+                symbol=sym,
+                feature_set="vol_rich",
+                macro_df=macro_df,
+                asset_dfs=asset_dfs,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("skip return forecast for %s: %s", sym, exc)
             continue
-        forecast_rows.append(fc)
 
-        # Original 5 direction-model metric rows
-        for name in ("mae", "baseline_mae", "dir_acc", "baseline_dir_acc", "n_obs"):
-            metric_rows.append(
-                {
-                    "model": "random_forest",
-                    "symbol": sym,
-                    "metric": name,
-                    "value": float(metrics[name]),
-                    "trained_at": now,
-                }
-            )
+        # Persist per-horizon metrics
+        for horizon, h_metrics in metrics.get("horizons", {}).items():
+            for name in (
+                "dir_acc",
+                "baseline_dir_acc",
+                "mae",
+                "baseline_mae",
+                "r2",
+                "ic",
+                "n_obs",
+            ):
+                if name in h_metrics:
+                    metric_rows.append(
+                        {
+                            "model": "return_rf",
+                            "symbol": sym,
+                            "metric": f"{name}_h{horizon}",
+                            "value": float(h_metrics[name]),
+                            "trained_at": now,
+                        }
+                    )
+            # Per-regime breakdown
+            for regime_name in ("low", "medium", "high"):
+                key = f"dir_acc_{regime_name}"
+                if key in h_metrics:
+                    metric_rows.append(
+                        {
+                            "model": "return_rf",
+                            "symbol": sym,
+                            "metric": f"dir_acc_{regime_name}_h{horizon}",
+                            "value": float(h_metrics[key]),
+                            "trained_at": now,
+                        }
+                    )
+            # Holdout metrics
+            for name in (
+                "holdout_dir_acc",
+                "holdout_baseline_dir_acc",
+                "holdout_r2",
+                "holdout_ic",
+                "holdout_n_obs",
+            ):
+                if name in h_metrics:
+                    metric_rows.append(
+                        {
+                            "model": "return_rf",
+                            "symbol": sym,
+                            "metric": f"{name}_h{horizon}",
+                            "value": float(h_metrics[name]),
+                            "trained_at": now,
+                        }
+                    )
 
-        # C4: honest secondary skill rows for the direction model
-        mae_skill_ratio = (
-            metrics["mae"] / metrics["baseline_mae"]
-            if metrics["baseline_mae"] > 1e-20
-            else float("nan")
-        )
-        dir_acc_edge = metrics["dir_acc"] - metrics["baseline_dir_acc"]
-
-        for name, value in (
-            ("mae_skill_ratio", mae_skill_ratio),
-            ("dir_acc_edge", dir_acc_edge),
-        ):
-            metric_rows.append(
-                {
-                    "model": "random_forest",
-                    "symbol": sym,
-                    "metric": name,
-                    "value": float(value),
-                    "trained_at": now,
-                }
-            )
-
-        # Locked-holdout rows (honest extra OOS readout; reported, not gated).  Only present
-        # when the holdout was carved (enough dev rows); persist whatever keys were emitted.
-        for name in ("holdout_dir_acc", "holdout_baseline_dir_acc", "holdout_n_obs"):
+        # Aggregate metrics
+        for name in ("overall_dir_acc", "overall_r2", "overall_ic"):
             if name in metrics:
                 metric_rows.append(
                     {
-                        "model": "random_forest",
+                        "model": "return_rf",
                         "symbol": sym,
                         "metric": name,
                         "value": float(metrics[name]),
                         "trained_at": now,
                     }
                 )
+
+        # Persist forecasts (one row per horizon)
+        for fc in forecasts:
+            forecast_rows.append(fc)
 
     # 3. HAR realized-vol model (rv_har) per requested symbol.
     for sym in symbols:
@@ -97,13 +130,8 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
             continue
 
         if not vol_metrics:
-            # Small-sample skip — train_and_backtest_vol already logged
             continue
 
-        # Persist vol metric rows (Contract D: new rows only, never new columns).
-        # The holdout_* rows are an honest extra OOS readout (reported, not gated); they are
-        # only present when the locked holdout was carved (enough dev rows), so persist any
-        # holdout_* key that the model actually emitted.
         vol_metric_names = [
             "oos_r2",
             "qlike",
