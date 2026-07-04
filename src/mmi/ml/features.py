@@ -70,7 +70,6 @@ _MACRO_FEATURE_NAMES: list[str] = [
     "vix_change_5d",
     "gld_vol_20d_lag1",
     "tlt_vol_20d_lag1",
-    "nfci_lag1",
 ]
 
 
@@ -185,20 +184,22 @@ def _add_macro_features(
             out[col] = np.nan
 
     if macro_df is not None and not macro_df.empty:
-        macro = macro_df[["date", "yield_curve_10y_2y", "us_10y"]].copy()
-        macro["date"] = pd.to_datetime(macro["date"])
-        out = out.merge(macro, on="date", how="left", suffixes=("", "_macro"))
+        # fct_market_macro has: date, yield_curve_10y_2y, us_10y, vol_20d, etc.
+        available = [
+            c for c in ["yield_curve_10y_2y", "us_10y", "vol_20d"] if c in macro_df.columns
+        ]
+        if available:
+            macro = macro_df[["date"] + available].copy()
+            macro["date"] = pd.to_datetime(macro["date"])
+            out = out.merge(macro, on="date", how="left", suffixes=("", "_macro"))
         if "yield_curve_10y_2y" in out.columns:
             out["yield_curve_10y_2y_lag1"] = out["yield_curve_10y_2y"].shift(1)
         if "us_10y" in out.columns:
             out["us_10y_lag1"] = out["us_10y"].shift(1)
-
-        # VIX level + 5-day change
-        vix = macro_df[["date", "value"]].copy()
-        vix.columns = ["date", "vix_raw"]
-        # VIX comes from fct_macro_indicator; we need to filter to VIXCLS
-        # but macro_df here is fct_market_macro which doesn't have VIX.
-        # Fall back: use vol_20d as a vol-of-vol proxy if VIX unavailable.
+        # Use SPY vol_20d as a vol-of-vol proxy (mean-reversion signal)
+        if "vol_20d" in out.columns:
+            out["vix_level_lag1"] = out["vol_20d"].shift(1)
+            out["vix_change_5d"] = out["vol_20d"].diff(5).shift(1)
 
     # Cross-asset vol: GLD and TLT 20-day realised vol (std of daily returns * sqrt(252))
     if asset_dfs:
