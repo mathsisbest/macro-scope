@@ -447,9 +447,9 @@ with tab_ml:
 
         vol_col1, vol_col2 = st.columns([1, 1])
         with vol_col1:
-            _chart(charts.vol_skill_r2_chart(metrics, symbol="SPY"))
+            _chart(charts.vol_skill_r2_chart(metrics, symbol="SPY", height=280))
         with vol_col2:
-            _chart(charts.vol_skill_qlike_chart(metrics, symbol="SPY"))
+            _chart(charts.vol_skill_qlike_chart(metrics, symbol="SPY", height=280))
 
         # Predicted next-week volatility and training date — read from the existing accessors.
         # The forecast lookup filters on BOTH model AND symbol (see vol_forecast_value) so a
@@ -493,7 +493,7 @@ with tab_ml:
 
         reg_view = data.regimes("SPY", rng_start)
         if not reg_view.empty:
-            _chart(charts.regime_chart(reg_view, "SPY"))
+            _chart(charts.regime_chart(reg_view, "SPY", height=280))
 
         st.divider()
 
@@ -513,7 +513,7 @@ with tab_ml:
         dir_holdout = charts.holdout_readout(metrics, symbol="SPY", exclude_model="rv_har")
         if dir_holdout is not None:
             st.caption(charts.HOLDOUT_CAPTION)
-            hd1, hd2, hd3 = st.columns(3)
+            hd1, hd2 = st.columns(2)
             if "holdout_dir_acc" in dir_holdout:
                 hd1.metric("Holdout dir. accuracy", f"{dir_holdout['holdout_dir_acc'] * 100:.1f}%")
             if "holdout_baseline_dir_acc" in dir_holdout:
@@ -522,7 +522,7 @@ with tab_ml:
                     f"{dir_holdout['holdout_baseline_dir_acc'] * 100:.1f}%",
                 )
             if "holdout_n_obs" in dir_holdout:
-                hd3.metric("Holdout obs", f"{dir_holdout['holdout_n_obs']:.0f}")
+                st.metric("Holdout obs", f"{dir_holdout['holdout_n_obs']:.0f}")
 
 with tab_ai:
     brief = data.latest_brief()
