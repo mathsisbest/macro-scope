@@ -868,7 +868,7 @@ def rebase_cumulative(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def portfolio_cumulative_chart(df: pd.DataFrame) -> go.Figure:
+def portfolio_cumulative_chart(df: pd.DataFrame, height: int = HEIGHT_TALL) -> go.Figure:
     fig = _by_strategy(rebase_cumulative(df), "cumulative_return")
     fig.update_layout(
         title=dict(
@@ -880,10 +880,10 @@ def portfolio_cumulative_chart(df: pd.DataFrame) -> go.Figure:
     _apply_axis_fonts(fig)
     n = df["strategy"].nunique() if not df.empty else 0
     _overflow_legend(fig, n)
-    return style_fig(fig, height=HEIGHT_TALL)
+    return style_fig(fig, height=height)
 
 
-def portfolio_drawdown_chart(df: pd.DataFrame) -> go.Figure:
+def portfolio_drawdown_chart(df: pd.DataFrame, height: int = HEIGHT_MEDIUM) -> go.Figure:
     fig = _by_strategy(df, "drawdown")
     fig.update_layout(
         title=dict(text="Drawdown from running peak", font=_TITLE_FONT),
@@ -897,10 +897,10 @@ def portfolio_drawdown_chart(df: pd.DataFrame) -> go.Figure:
     _apply_axis_fonts(fig)
     n = df["strategy"].nunique() if not df.empty else 0
     _overflow_legend(fig, n)
-    return style_fig(fig, height=HEIGHT_MEDIUM)
+    return style_fig(fig, height=height)
 
 
-def portfolio_sharpe_chart(df: pd.DataFrame) -> go.Figure:
+def portfolio_sharpe_chart(df: pd.DataFrame, height: int = HEIGHT_MEDIUM) -> go.Figure:
     fig = _by_strategy(df, "rolling_sharpe_252")
     fig.update_layout(
         title=dict(text="Rolling 252-day Sharpe (annualised)", font=_TITLE_FONT),
@@ -908,7 +908,7 @@ def portfolio_sharpe_chart(df: pd.DataFrame) -> go.Figure:
     _apply_axis_fonts(fig)
     n = df["strategy"].nunique() if not df.empty else 0
     _overflow_legend(fig, n)
-    return style_fig(fig, height=HEIGHT_MEDIUM)
+    return style_fig(fig, height=height)
 
 
 def portfolio_summary(df: pd.DataFrame) -> pd.DataFrame:
