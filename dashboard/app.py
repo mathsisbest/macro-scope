@@ -289,11 +289,13 @@ with tab_mkt:
         # (so a short window still shows a correct MA at its left edge), never recomputed here.
         d = data.asset_daily(sym, rng_start)
         if not d.empty:
+            st.markdown('<div class="chart-pair">', unsafe_allow_html=True)
             mc1, mc2 = st.columns(2)
             with mc1:
                 _chart(charts.price_chart(d, sym))
             with mc2:
                 _chart(charts.vol_chart(d, sym))
+            st.markdown("</div>", unsafe_allow_html=True)
         else:
             st.info(
                 f"No daily price data for {sym} yet. Run `mmi ingest` (or `make demo`) to populate."
@@ -443,11 +445,13 @@ with tab_ml:
         else:
             st.success(verdict_text)
 
+        st.markdown('<div class="chart-pair">', unsafe_allow_html=True)
         vol_col1, vol_col2 = st.columns([1, 1])
         with vol_col1:
             _chart(charts.vol_skill_r2_chart(metrics, symbol="SPY", height=280))
         with vol_col2:
             _chart(charts.vol_skill_qlike_chart(metrics, symbol="SPY", height=280))
+        st.markdown("</div>", unsafe_allow_html=True)
 
         # Predicted next-week volatility and training date — read from the existing accessors.
         # The forecast lookup filters on BOTH model AND symbol (see vol_forecast_value) so a
@@ -594,11 +598,13 @@ with tab_portfolio:
 
         # ---- secondary sections (collapsible) --------------------------------
         with st.expander("📉 Drawdown & rolling Sharpe", expanded=False):
+            st.markdown('<div class="chart-pair">', unsafe_allow_html=True)
             cda, cdb = st.columns(2)
             with cda:
                 _chart(charts.portfolio_drawdown_chart(pf, height=260))
             with cdb:
                 _chart(charts.portfolio_sharpe_chart(pf, height=260))
+            st.markdown("</div>", unsafe_allow_html=True)
             st.dataframe(
                 charts.portfolio_summary(pf).style.format(
                     {

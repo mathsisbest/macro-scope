@@ -150,6 +150,13 @@ def inject_css() -> None:
             [data-testid="stSegmentedControl"] label {{ font-size: 0.8rem; white-space: nowrap; }}
             /* Radio buttons: stack vertically when labels are long (portfolio window selector) */
             [data-testid="stRadio"] {{ flex-direction: column !important; }}
+            /* Chart pairs: stack vertically so each chart gets full width on phones */
+            .chart-pair [data-testid="stHorizontalBlock"] {{
+                flex-direction: column !important;
+            }}
+            .chart-pair [data-testid="stHorizontalBlock"] > div {{
+                flex: 0 0 100% !important; max-width: 100% !important;
+            }}
         }}
         </style>
         """,
