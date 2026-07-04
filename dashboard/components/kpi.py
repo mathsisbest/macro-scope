@@ -147,13 +147,18 @@ def metric_row(items: list[dict]) -> None:
 
     _delta_css()
 
-    cols = st.columns(len(items))
-    for col, item in zip(cols, items, strict=False):
-        col.metric(
-            label=item.get("label", ""),
-            value=item.get("value", "—"),
-            delta=item.get("delta"),
-        )
+    # Chunk into rows of at most 4 so the layout stays readable on narrow screens.
+    # Streamlit's flexbox stacks columns naturally below ~500px.
+    _ROW_SIZE = 4
+    for start in range(0, len(items), _ROW_SIZE):
+        chunk = items[start : start + _ROW_SIZE]
+        cols = st.columns(len(chunk))
+        for col, item in zip(cols, chunk, strict=False):
+            col.metric(
+                label=item.get("label", ""),
+                value=item.get("value", "—"),
+                delta=item.get("delta"),
+            )
 
     if truncated:
         st.caption(

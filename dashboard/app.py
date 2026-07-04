@@ -38,7 +38,7 @@ configure_dashboard_env(os.environ, _REPO_ROOT)
 from dashboard import data  # noqa: E402
 from dashboard.components import charts  # noqa: E402
 from dashboard.components.kpi import metric_row  # noqa: E402
-from dashboard.theme import inject_css  # noqa: E402
+from dashboard.theme import PLOTLY_CONFIG, inject_css  # noqa: E402
 
 from mmi.settings import settings  # noqa: E402
 from mmi.utils.db import connect  # noqa: E402
@@ -51,6 +51,13 @@ st.set_page_config(
     layout="wide",
 )
 inject_css()
+
+
+def _chart(fig, **kwargs):
+    """Thin wrapper so every chart gets the mobile-safe config (no scroll-zoom, no modebar)."""
+    kwargs.setdefault("config", PLOTLY_CONFIG)
+    st.plotly_chart(fig, use_container_width=True, **kwargs)
+
 
 # --------------------------------------------------------------------------- hero / header
 st.title("📈 Macro Scope")
@@ -136,7 +143,7 @@ with st.sidebar:
     with st.expander("⚙️ Pipeline health", expanded=False):
         runs = data.pipeline_runs()
         if not runs.empty:
-            st.dataframe(runs, hide_index=True, use_container_width=True)
+            st.dataframe(runs, hide_index=True)
         elif is_sample is True:
             st.caption("Sample data seeded (synthetic; no live ingestion runs).")
         elif is_sample is False:
@@ -242,7 +249,7 @@ with tab_mkt:
         board = charts.cross_asset_leaderboard(long_df)
         if not board.empty:
             st.caption("📊 Over the selected range · sorted by return")
-            lb_cols = st.columns(min(len(board), 5))
+            lb_cols = st.columns(min(len(board), 3))
             for i, row in enumerate(board.itertuples(index=False)):
                 with lb_cols[i % len(lb_cols)]:
                     dot = charts.asset_class_color(row.asset_class)
@@ -262,14 +269,14 @@ with tab_mkt:
         # ---- 2. Cross-asset performance, rebased to 0% at the window start --------------------
         perf = charts.rebased_performance(long_df)
         if not perf.empty:
-            st.plotly_chart(charts.rebased_performance_chart(perf), use_container_width=True)
+            _chart(charts.rebased_performance_chart(perf))
 
         # ---- 3. Correlation heatmap (with the <30-obs guard) ---------------------------------
         corr = charts.correlation_matrix(long_df)
         if corr is None:
             st.caption(charts.CORR_TOO_SHORT)
         else:
-            st.plotly_chart(charts.correlation_heatmap(corr), use_container_width=True)
+            _chart(charts.correlation_heatmap(corr))
             takeaway = charts.correlation_takeaway(corr)
             if takeaway:
                 st.caption(takeaway)
@@ -284,9 +291,9 @@ with tab_mkt:
         if not d.empty:
             mc1, mc2 = st.columns(2)
             with mc1:
-                st.plotly_chart(charts.price_chart(d, sym), use_container_width=True)
+                _chart(charts.price_chart(d, sym))
             with mc2:
-                st.plotly_chart(charts.vol_chart(d, sym), use_container_width=True)
+                _chart(charts.vol_chart(d, sym))
         else:
             st.info(
                 f"No daily price data for {sym} yet. Run `mmi ingest` (or `make demo`) to populate."
@@ -339,22 +346,25 @@ with tab_macro:
         ]
         snap = [by_id[i] for i in _MACRO_HEADLINE if i in by_id]
         if snap:
-            for col, c in zip(st.columns(len(snap)), snap, strict=True):
-                s = data.macro(c["id"])  # full series → latest headline value, range-independent
-                if s.empty:
-                    continue
-                chg = s["change"].dropna()
-                with col:
-                    st.metric(
-                        c["label"],
-                        _fmt_macro(float(s["value"].iloc[-1]), c["units"]),
-                        delta=(
-                            _fmt_macro_delta(float(chg.iloc[-1]), c["units"])
-                            if not chg.empty
-                            else None
-                        ),
-                        delta_color="off",
-                    )
+            # Render in rows of 3 so the strip stays readable on mobile.
+            for chunk_start in range(0, len(snap), 3):
+                chunk = snap[chunk_start : chunk_start + 3]
+                for col, c in zip(st.columns(len(chunk)), chunk, strict=True):
+                    s = data.macro(c["id"])
+                    if s.empty:
+                        continue
+                    chg = s["change"].dropna()
+                    with col:
+                        st.metric(
+                            c["label"],
+                            _fmt_macro(float(s["value"].iloc[-1]), c["units"]),
+                            delta=(
+                                _fmt_macro_delta(float(chg.iloc[-1]), c["units"])
+                                if not chg.empty
+                                else None
+                            ),
+                            delta_color="off",
+                        )
             st.divider()
 
         # ---- Category selector → small-multiples grid (each chart windowed by the range) ----
@@ -384,10 +394,7 @@ with tab_macro:
                     if df.empty:
                         st.caption(f"{c['label']} — no data in this range")
                     else:
-                        st.plotly_chart(
-                            charts.macro_chart(df, c["label"], c["units"], height=240),
-                            use_container_width=True,
-                        )
+                        _chart(charts.macro_chart(df, c["label"], c["units"], height=240))
         macro_caption = data.macro_source_caption(is_sample)
         if macro_caption:
             st.caption(macro_caption)
@@ -396,7 +403,7 @@ with tab_macro:
         if not mm_view.empty:
             st.divider()
             st.caption("📌 Always-on context")
-            st.plotly_chart(charts.yield_curve_chart(mm_view), use_container_width=True)
+            _chart(charts.yield_curve_chart(mm_view))
 
     # ---- Recession-risk panel -----------------------------------------------
     # Macro CONTEXT only — not a return/price forecast (Contract E, §8).
@@ -411,7 +418,7 @@ with tab_macro:
                 "Run `make demo` or `mmi ingest` to populate."
             )
         else:
-            st.plotly_chart(charts.recession_risk_chart(rr), use_container_width=True)
+            _chart(charts.recession_risk_chart(rr))
         # Caveats are always shown so the panel reads as honest context even before data arrives.
         st.caption(charts._RECESSION_RISK_CAVEATS)
         rr_caption = charts.recession_risk_caption(is_sample)
@@ -443,13 +450,9 @@ with tab_ml:
 
         vol_col1, vol_col2 = st.columns([1, 1])
         with vol_col1:
-            st.plotly_chart(
-                charts.vol_skill_r2_chart(metrics, symbol="SPY"), use_container_width=True
-            )
+            _chart(charts.vol_skill_r2_chart(metrics, symbol="SPY"))
         with vol_col2:
-            st.plotly_chart(
-                charts.vol_skill_qlike_chart(metrics, symbol="SPY"), use_container_width=True
-            )
+            _chart(charts.vol_skill_qlike_chart(metrics, symbol="SPY"))
 
         # Predicted next-week volatility and training date — read from the existing accessors.
         # The forecast lookup filters on BOTH model AND symbol (see vol_forecast_value) so a
@@ -481,7 +484,7 @@ with tab_ml:
         vol_holdout = charts.holdout_readout(metrics, model="rv_har", symbol="SPY")
         if vol_holdout is not None:
             st.caption(charts.HOLDOUT_CAPTION)
-            hv1, hv2, hv3 = st.columns(3)
+            hv1, hv2 = st.columns(2)
             if "holdout_oos_r2" in vol_holdout:
                 hv1.metric("Holdout OOS R²", f"{vol_holdout['holdout_oos_r2']:.3f}")
             if "holdout_qlike_skill_ratio" in vol_holdout:
@@ -489,11 +492,11 @@ with tab_ml:
                     "Holdout QLIKE skill ratio", f"{vol_holdout['holdout_qlike_skill_ratio']:.3f}"
                 )
             if "holdout_n_obs" in vol_holdout:
-                hv3.metric("Holdout obs", f"{vol_holdout['holdout_n_obs']:.0f}")
+                st.metric("Holdout obs", f"{vol_holdout['holdout_n_obs']:.0f}")
 
         reg_view = data.regimes("SPY", rng_start)
         if not reg_view.empty:
-            st.plotly_chart(charts.regime_chart(reg_view, "SPY"), use_container_width=True)
+            _chart(charts.regime_chart(reg_view, "SPY"))
 
         st.divider()
 
@@ -505,9 +508,7 @@ with tab_ml:
             "Short-horizon equity direction is near-noise; this model carries "
             "**no demonstrated out-of-sample edge** and is not used as a go-live gate."
         )
-        st.plotly_chart(
-            charts.direction_skill_chart(metrics, symbol="SPY"), use_container_width=True
-        )
+        _chart(charts.direction_skill_chart(metrics, symbol="SPY"))
 
         # ---- Locked holdout (direction) — honest extra OOS readout, NOT gated ----------------
         # Mirrors direction_skill_chart's "not the vol model" filter so a future direction-model
@@ -592,7 +593,7 @@ with tab_portfolio:
         pairs = data.portfolio_strategy_pairs(window_id)
         if not pairs.empty:
             st.info("📊 " + charts.distinguishability_verdict(pairs))
-        st.plotly_chart(charts.portfolio_cumulative_chart(pf), use_container_width=True)
+        _chart(charts.portfolio_cumulative_chart(pf))
         if rng_start:
             st.caption("Cumulative return is rebased to 0% at the start of the selected range.")
 
@@ -600,9 +601,9 @@ with tab_portfolio:
         with st.expander("📉 Drawdown & rolling Sharpe", expanded=False):
             cda, cdb = st.columns(2)
             with cda:
-                st.plotly_chart(charts.portfolio_drawdown_chart(pf), use_container_width=True)
+                _chart(charts.portfolio_drawdown_chart(pf))
             with cdb:
-                st.plotly_chart(charts.portfolio_sharpe_chart(pf), use_container_width=True)
+                _chart(charts.portfolio_sharpe_chart(pf))
             st.dataframe(
                 charts.portfolio_summary(pf).style.format(
                     {
@@ -648,13 +649,13 @@ with tab_portfolio:
                 astrat = st.selectbox(
                     "Strategy", sorted(attr["strategy"].unique()), key="attribution_strategy"
                 )
-                st.plotly_chart(charts.attribution_chart(attr, astrat), use_container_width=True)
+                _chart(charts.attribution_chart(attr, astrat))
 
         # Regime-conditional performance — behaviour across market volatility regimes.
         regime = data.portfolio_regime_performance(window_id)
         if not regime.empty:
             with st.expander("🌡️ Performance by market volatility regime", expanded=False):
-                st.plotly_chart(charts.regime_sharpe_chart(regime), use_container_width=True)
+                _chart(charts.regime_sharpe_chart(regime))
                 st.caption(
                     "Market regime = SPY 20-day-vol terciles; "
                     "stats over each strategy's invested days."
@@ -665,7 +666,7 @@ with tab_portfolio:
         if not gate.empty:
             with st.expander("🔬 ML experiment — does the forecast add value?", expanded=False):
                 st.info("🔬 " + charts.ml_verdict(gate, pairs))
-                st.plotly_chart(charts.ml_gate_chart(gate), use_container_width=True)
+                _chart(charts.ml_gate_chart(gate))
                 st.caption(
                     "forecast_weight is the share mvo_ml puts on the ML forecast over the "
                     "historical-mean prior, gated point-in-time by the forecast's realised skill. "
@@ -679,7 +680,7 @@ with tab_portfolio:
                 "🪙 BTC impact — does adding BTC change risk-adjusted return?", expanded=False
             ):
                 st.info("🪙 " + charts.btc_effect_verdict(btc_effect))
-                st.plotly_chart(charts.btc_effect_chart(btc_effect), use_container_width=True)
+                _chart(charts.btc_effect_chart(btc_effect))
                 st.caption(
                     "Sharpe(inc-BTC@2015) − Sharpe(ex-BTC@2015): same dates ± BTC, with a "
                     "paired block-bootstrap 90% CI. The 60/40 benchmark (never holds BTC) is "
