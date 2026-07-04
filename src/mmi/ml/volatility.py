@@ -211,12 +211,80 @@ def _fit_predict_gb(
     return model.predict(x_pred)
 
 
+def _get_regime_labels(con, symbol: str, frame: pd.DataFrame) -> np.ndarray:
+    """Get per-row regime labels (0=Low, 1=Medium, 2=High) for the given frame dates."""
+    try:
+        dates = frame["date"].tolist()
+        min_d, max_d = min(dates), max(dates)
+        df = con.execute(
+            "select date, vol_20d from marts.fct_asset_daily "
+            "where symbol = ? and date between ? and ? and vol_20d is not null "
+            "order by date",
+            [symbol, min_d, max_d],
+        ).df()
+        if df.empty:
+            return np.ones(len(frame), dtype=int)  # default to Medium
+        # Label regimes via terciles
+        df["regime"] = pd.qcut(df["vol_20d"].rank(method="first"), 3, labels=[0, 1, 2])
+        # Merge onto frame dates
+        regime_map = dict(zip(df["date"], df["regime"].astype(int), strict=False))
+        return np.array([regime_map.get(d, 1) for d in dates])
+    except Exception:
+        return np.ones(len(frame), dtype=int)  # default to Medium
+
+
+def _fit_predict_har_regime(
+    x_train: np.ndarray,
+    y_train_vol: np.ndarray,
+    x_pred: np.ndarray,
+    regime_train: np.ndarray,
+    regime_pred: np.ndarray,
+    min_regime_rows: int = 30,
+) -> np.ndarray:
+    """Regime-aware HAR: train separate models per regime, predict with the regime-specific model.
+
+    Falls back to the global model when a regime has fewer than ``min_regime_rows`` training
+    samples.
+    """
+    ylog = np.log(np.clip(y_train_vol, _VOL_FLOOR, None))
+    unique_regimes = np.unique(regime_train)
+
+    # Pre-train a global model as fallback
+    global_model = LinearRegression().fit(x_train, ylog)
+    global_smear = float(np.mean(np.exp(ylog - global_model.predict(x_train))))
+
+    # Train per-regime models
+    regime_models = {}
+    regime_smeans = {}
+    for r in unique_regimes:
+        mask = regime_train == r
+        if mask.sum() >= min_regime_rows:
+            x_r = x_train[mask]
+            y_r = ylog[mask]
+            model = LinearRegression().fit(x_r, y_r)
+            smear = float(np.mean(np.exp(y_r - model.predict(x_r))))
+            regime_models[r] = model
+            regime_smeans[r] = smear
+
+    # Predict: use regime-specific model if available, else global
+    preds = np.empty(len(regime_pred))
+    for i, r in enumerate(regime_pred):
+        if r in regime_models:
+            p = np.exp(regime_models[r].predict(x_pred[i : i + 1]))[0] * regime_smeans[r]
+        else:
+            p = np.exp(global_model.predict(x_pred[i : i + 1]))[0] * global_smear
+        preds[i] = float(p)
+    return preds
+
+
 # Model registry: maps model_name -> (fit_function, needs_log_transform)
+# rv_har_regime is handled specially in the walk-forward loop (not a simple fit/predict fn).
 _MODEL_REGISTRY: dict[str, tuple] = {
     "rv_har": (_fit_predict_har, True),
     "rv_ridge": (_fit_predict_ridge, True),
     "rv_lasso": (_fit_predict_lasso, True),
     "rv_gb": (_fit_predict_gb, False),
+    "rv_har_regime": (_fit_predict_har, True),  # regime logic is in the walk-forward loop
 }
 
 
@@ -336,8 +404,33 @@ def train_and_backtest_vol(
     # --- walk-forward evaluation (DEV portion only) ---
     tscv = TimeSeriesSplit(n_splits=n_splits)
     preds, actuals, base_preds = [], [], []
+
+    # Regime labels for regime-aware model — built from the dev FRAME (before target dropna),
+    # then trimmed to match the actual training rows (after target dropna removes the last
+    # `horizon` rows per slice).
+    regime_labels = None
+    if model_name == "rv_har_regime":
+        dev_regime_full = _get_regime_labels(con, symbol, dev_frame)
+        # Trim to match the trainable rows (same indices that _slice_xy keeps)
+        target_rv = _make_targets(dev_frame["gk_vol"], horizon=horizon)
+        valid_mask = target_rv.notna().to_numpy()
+        regime_labels = dev_regime_full[valid_mask]
+
     for train_idx, test_idx in tscv.split(x_dev):
-        preds.append(fit_fn(x_dev[train_idx], y_dev[train_idx], x_dev[test_idx], **extra_params))
+        if model_name == "rv_har_regime" and regime_labels is not None:
+            preds.append(
+                _fit_predict_har_regime(
+                    x_dev[train_idx],
+                    y_dev[train_idx],
+                    x_dev[test_idx],
+                    regime_labels[train_idx],
+                    regime_labels[test_idx],
+                )
+            )
+        else:
+            preds.append(
+                fit_fn(x_dev[train_idx], y_dev[train_idx], x_dev[test_idx], **extra_params)
+            )
         actuals.append(y_dev[test_idx])
         base_preds.append(_walk_forward_ewma_baseline(gk_dev, test_idx))
 
@@ -382,9 +475,23 @@ def train_and_backtest_vol(
     # The holdout target is built WITHIN the holdout slice (P1-A), so it never reads a dev
     # value and the dev/holdout label sets are disjoint.
     if hold > 0:
-        x_hold, y_hold, gk_hold = _slice_xy(feat_valid.iloc[dev_end:])
+        hold_frame = feat_valid.iloc[dev_end:]
+        x_hold, y_hold, gk_hold = _slice_xy(hold_frame)
         if len(y_hold) > 0:
-            hold_preds = fit_fn(x_dev, y_dev, x_hold, **extra_params)
+            if model_name == "rv_har_regime":
+                hold_regime_full = _get_regime_labels(con, symbol, hold_frame)
+                hold_target = _make_targets(hold_frame["gk_vol"], horizon=horizon)
+                hold_valid = hold_target.notna().to_numpy()
+                hold_regime = hold_regime_full[hold_valid]
+                hold_preds = _fit_predict_har_regime(
+                    x_dev,
+                    y_dev,
+                    x_hold,
+                    regime_labels,
+                    hold_regime,
+                )
+            else:
+                hold_preds = fit_fn(x_dev, y_dev, x_hold, **extra_params)
 
             ss_res_h = float(np.sum((y_hold - hold_preds) ** 2))
             ss_tot_h = float(np.sum((y_hold - y_hold.mean()) ** 2))
@@ -434,7 +541,22 @@ def train_and_backtest_vol(
     y_full = full_trained["target_rv"].to_numpy()
     x_last_raw = full[vol_cols].iloc[[-1]].to_numpy()
     x_last = np.log(np.clip(x_last_raw, _VOL_FLOOR, None)) if needs_log else x_last_raw
-    next_vol = float(fit_fn(x_full, y_full, x_last, **extra_params)[0])
+    if model_name == "rv_har_regime":
+        # full_trained already has the target built and NaN rows dropped.
+        # Regime labels must align with full_trained's row count.
+        full_regime = _get_regime_labels(con, symbol, full_trained)
+        last_regime = _get_regime_labels(con, symbol, full.iloc[[-1]])
+        next_vol = float(
+            _fit_predict_har_regime(
+                x_full,
+                y_full,
+                x_last,
+                full_regime,
+                last_regime,
+            )[0]
+        )
+    else:
+        next_vol = float(fit_fn(x_full, y_full, x_last, **extra_params)[0])
 
     forecast = {
         "symbol": symbol,

@@ -23,7 +23,7 @@ log = get_logger("ml.research")
 # Sweep grid
 # ---------------------------------------------------------------------------
 
-MODELS = ["rv_har", "rv_ridge", "rv_lasso", "rv_gb"]
+MODELS = ["rv_har", "rv_ridge", "rv_lasso", "rv_gb", "rv_har_regime"]
 FEATURE_SETS = ["vol", "vol_macro"]
 HORIZONS = [5, 10]
 N_SPLITS_LIST = [5, 10]

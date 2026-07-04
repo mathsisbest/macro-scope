@@ -185,9 +185,8 @@ def _add_macro_features(
 
     if macro_df is not None and not macro_df.empty:
         # fct_market_macro has: date, yield_curve_10y_2y, us_10y, vol_20d, etc.
-        available = [
-            c for c in ["yield_curve_10y_2y", "us_10y", "vol_20d"] if c in macro_df.columns
-        ]
+        available = [c for c in ["yield_curve_10y_2y", "us_10y", "vol_20d"]
+                     if c in macro_df.columns]
         if available:
             macro = macro_df[["date"] + available].copy()
             macro["date"] = pd.to_datetime(macro["date"])
@@ -200,6 +199,13 @@ def _add_macro_features(
         if "vol_20d" in out.columns:
             out["vix_level_lag1"] = out["vol_20d"].shift(1)
             out["vix_change_5d"] = out["vol_20d"].diff(5).shift(1)
+
+    # Forward-fill macro features within their available date range, then leave NaN
+    # outside that range. This lets the model use macro data where it exists without
+    # requiring the full history.
+    for col in _MACRO_FEATURE_NAMES:
+        if col in out.columns:
+            out[col] = out[col].ffill()
 
     # Cross-asset vol: GLD and TLT 20-day realised vol (std of daily returns * sqrt(252))
     if asset_dfs:
