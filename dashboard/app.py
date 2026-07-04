@@ -439,6 +439,11 @@ with tab_ml:
             "Gradient Boosting with 35 features (yield curve, VIX, dollar, financial conditions, "
             "cross-asset correlations, kurtosis/skewness). Per-regime models for Low/Med/High vol."
         )
+        st.warning(
+            "⚠️ These are model outputs, not calibrated forecasts. Negative R² means the model "
+            "is worse than predicting the mean. Use the direction (↑/↓) and regime breakdown as "
+            "relative signals, not absolute return predictions."
+        )
 
         # Display per-horizon forecasts from ml_forecast
         return_fc = fc[fc["model"].str.contains("return_rf", na=False)] if not fc.empty else fc
