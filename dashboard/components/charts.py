@@ -499,7 +499,7 @@ def forecast_bar(metrics: pd.DataFrame, symbol: str) -> go.Figure:
     return style_fig(fig, height=HEIGHT_MEDIUM)
 
 
-def regime_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
+def regime_chart(df: pd.DataFrame, symbol: str, height: int = HEIGHT_MEDIUM) -> go.Figure:
     colors = {
         "Low": PALETTE["up"],
         "Medium": SERIES_VOL,
@@ -520,7 +520,7 @@ def regime_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
     _apply_axis_fonts(fig)
     n_traces = df["regime"].nunique() if not df.empty else 0
     _overflow_legend(fig, n_traces)
-    return style_fig(fig, height=HEIGHT_MEDIUM)
+    return style_fig(fig, height=height)
 
 
 def ml_gate_chart(gate: pd.DataFrame) -> go.Figure:
@@ -554,7 +554,9 @@ def ml_gate_chart(gate: pd.DataFrame) -> go.Figure:
 ML_SCOPE_CAPTION: str = "Forecast universe: SPY (single-asset baseline)"
 
 
-def vol_skill_r2_chart(metrics: pd.DataFrame, symbol: str = "SPY") -> go.Figure:
+def vol_skill_r2_chart(
+    metrics: pd.DataFrame, symbol: str = "SPY", height: int = HEIGHT_MEDIUM
+) -> go.Figure:
     """Grouped bars: OOS R² for the rv_har model vs the persistence/EWMA baseline.
 
     Baseline R² is always 0 by construction (persistence = the null model), so this
@@ -592,10 +594,12 @@ def vol_skill_r2_chart(metrics: pd.DataFrame, symbol: str = "SPY") -> go.Figure:
         showlegend=False,
     )
     _apply_axis_fonts(fig)
-    return style_fig(fig, height=HEIGHT_MEDIUM)
+    return style_fig(fig, height=height)
 
 
-def vol_skill_qlike_chart(metrics: pd.DataFrame, symbol: str = "SPY") -> go.Figure:
+def vol_skill_qlike_chart(
+    metrics: pd.DataFrame, symbol: str = "SPY", height: int = HEIGHT_MEDIUM
+) -> go.Figure:
     """Grouped bars: model QLIKE vs baseline QLIKE, with the skill-ratio annotated.
 
     Lower QLIKE is better (it is a proper scoring rule for volatility forecasts).
@@ -646,7 +650,7 @@ def vol_skill_qlike_chart(metrics: pd.DataFrame, symbol: str = "SPY") -> go.Figu
         showlegend=False,
     )
     _apply_axis_fonts(fig)
-    return style_fig(fig, height=HEIGHT_MEDIUM)
+    return style_fig(fig, height=height)
 
 
 def vol_skill_verdict_text(metrics: pd.DataFrame, symbol: str = "SPY") -> str:
