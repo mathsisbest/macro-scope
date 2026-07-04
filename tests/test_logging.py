@@ -7,6 +7,7 @@ from mmi.utils.logging import get_logger
 
 def _reset():
     import mmi.utils.logging as m
+
     object.__setattr__(m, "_CONFIGURED", False)
     root = logging.getLogger()
     for h in list(root.handlers):

@@ -57,7 +57,5 @@ def test_get_text_returns_body():
 @respx.mock
 def test_get_text_follows_redirects():
     respx.get(_TEXT_URL).mock(return_value=httpx.Response(302, headers={"Location": "/final"}))
-    respx.get("https://api.example.com/final").mock(
-        return_value=httpx.Response(200, text="final")
-    )
+    respx.get("https://api.example.com/final").mock(return_value=httpx.Response(200, text="final"))
     assert get_text(_TEXT_URL) == "final"
