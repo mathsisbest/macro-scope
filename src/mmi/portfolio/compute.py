@@ -142,11 +142,12 @@ def build_ml_mu_panel(
     lookback: int,
     horizon: int = 21,
     lambda_max: float = 0.5,
-    feature_set: str = "vol_rich",
+    feature_set: str = "default",  # vol_rich too slow for portfolio backtest; use default
     regime_aware: bool = True,
     con=None,
     macro_df: pd.DataFrame | None = None,
     asset_dfs: dict[str, pd.DataFrame] | None = None,
+    asset_daily_full: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Blend the point-in-time ML forecast toward the historical-mean prior, gated by skill.
 
@@ -176,6 +177,7 @@ def build_ml_mu_panel(
         con=con,
         macro_df=macro_df,
         asset_dfs=asset_dfs,
+        asset_daily_full=asset_daily_full,
     )
     mu_fc = (
         mu_fc_df.pivot_table(index="date", columns="symbol", values="mu")
@@ -244,11 +246,12 @@ def compute_ml_mu_panel(
     horizon: int = 21,
     lambda_max: float = 0.5,
     window: str = windows.DEFAULT_WINDOW,
-    feature_set: str = "vol_rich",
+    feature_set: str = "default",  # vol_rich too slow for portfolio backtest; use default
     regime_aware: bool = True,
     con=None,
     macro_df=None,
     asset_dfs=None,
+    asset_daily_full=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Build the mvo_ml blended-mu panel + gate ONCE, so callers reuse it (and can land the gate).
 
@@ -275,6 +278,7 @@ def compute_ml_mu_panel(
         con=con,
         macro_df=macro_df,
         asset_dfs=asset_dfs,
+        asset_daily_full=asset_daily_full,
     )
     if not gate.empty:
         gate.insert(0, "window_id", window)
@@ -292,11 +296,12 @@ def _strategy_runs(
     lambda_max: float,
     include_ml: bool,
     ml_mu_panel: pd.DataFrame | None = None,
-    feature_set: str = "vol_rich",
+    feature_set: str = "default",  # vol_rich too slow for portfolio backtest; use default
     regime_aware: bool = True,
     con=None,
     macro_df=None,
     asset_dfs=None,
+    asset_daily_full=None,
 ):
     """Yield ``(label, returns, contributions)`` for each strategy, the 60/40 benchmark, and (when
     ``include_ml``) the gated ``mvo_ml``. A precomputed ``ml_mu_panel`` is reused if given (so the
@@ -340,6 +345,7 @@ def _strategy_runs(
                     con=con,
                     macro_df=macro_df,
                     asset_dfs=asset_dfs,
+                    asset_daily_full=asset_daily_full,
                 )
             out, contrib = run_backtest_full(
                 clean, strategy=MVO_ML, lookback=lookback, freq=freq, cost=cost, mu_panel=mu_panel
@@ -359,6 +365,12 @@ def compute_portfolio_returns(
     include_ml: bool = True,
     ml_mu_panel: pd.DataFrame | None = None,
     window: str = windows.DEFAULT_WINDOW,
+    feature_set: str = "default",  # vol_rich too slow for portfolio backtest; use default
+    regime_aware: bool = True,
+    con=None,
+    macro_df=None,
+    asset_dfs=None,
+    asset_daily_full=None,
 ) -> pd.DataFrame:
     """Backtest each strategy, the 60/40 benchmark, and (when ``include_ml``) the gated mvo_ml.
 
@@ -377,6 +389,12 @@ def compute_portfolio_returns(
         lambda_max=lambda_max,
         include_ml=include_ml,
         ml_mu_panel=ml_mu_panel,
+        feature_set=feature_set,
+        regime_aware=regime_aware,
+        con=con,
+        macro_df=macro_df,
+        asset_dfs=asset_dfs,
+        asset_daily_full=asset_daily_full,
     ):
         result = out.reset_index()
         result.insert(0, "strategy", label)
@@ -397,6 +415,12 @@ def compute_attribution(
     include_ml: bool = True,
     ml_mu_panel: pd.DataFrame | None = None,
     window: str = windows.DEFAULT_WINDOW,
+    feature_set: str = "default",  # vol_rich too slow for portfolio backtest; use default
+    regime_aware: bool = True,
+    con=None,
+    macro_df=None,
+    asset_dfs=None,
+    asset_daily_full=None,
 ) -> pd.DataFrame:
     """Per-(strategy, symbol) return + risk attribution, from the same backtest runs.
 
@@ -421,6 +445,12 @@ def compute_attribution(
         lambda_max=lambda_max,
         include_ml=include_ml,
         ml_mu_panel=ml_mu_panel,
+        feature_set=feature_set,
+        regime_aware=regime_aware,
+        con=con,
+        macro_df=macro_df,
+        asset_dfs=asset_dfs,
+        asset_daily_full=asset_daily_full,
     ):
         if contrib.empty:
             continue

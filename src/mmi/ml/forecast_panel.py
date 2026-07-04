@@ -61,6 +61,7 @@ def walk_forward_mu(
     con=None,
     macro_df: pd.DataFrame | None = None,
     asset_dfs: dict[str, pd.DataFrame] | None = None,
+    asset_daily_full: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Point-in-time forecast of each asset's forward-``horizon`` return at each rebalance date.
 
@@ -80,8 +81,16 @@ def walk_forward_mu(
     skill_rows: list[dict] = []
 
     for symbol, group in asset_daily.sort_values("date").groupby("symbol"):
-        # Build features — pass OHLC if available for vol features
-        if "open" in group.columns:
+        # Build features — use full OHLC from asset_daily_full if available
+        if asset_daily_full is not None and symbol in asset_daily_full["symbol"].to_numpy():
+            sym_data = asset_daily_full[asset_daily_full["symbol"] == symbol].copy()
+            feats = make_features(
+                sym_data[["date", "open", "high", "low", "close", "daily_return"]],
+                feature_set=feature_set,
+                macro_df=macro_df,
+                asset_dfs=asset_dfs,
+            )
+        elif "open" in group.columns:
             feats = make_features(
                 group[["date", "open", "high", "low", "close", "daily_return"]],
                 feature_set=feature_set,
@@ -89,9 +98,12 @@ def walk_forward_mu(
                 asset_dfs=asset_dfs,
             )
         else:
+            effective_set = (
+                "default" if feature_set in ("vol", "vol_macro", "vol_rich") else feature_set
+            )
             feats = make_features(
                 group[["date", "daily_return"]],
-                feature_set=feature_set,
+                feature_set=effective_set,
                 macro_df=macro_df,
                 asset_dfs=asset_dfs,
             )

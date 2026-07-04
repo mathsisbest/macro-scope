@@ -342,8 +342,12 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
 
     def run_window(loader: DuckDBLoader, window_id: str, wad) -> tuple[int, int, pd.DataFrame]:
         # Build the ML forecast + gate ONCE per window, then reuse for returns + attribution.
-        ml_mu_panel, ml_gate = compute.compute_ml_mu_panel(wad, window=window_id)
-        results = compute.compute_portfolio_returns(wad, ml_mu_panel=ml_mu_panel, window=window_id)
+        ml_mu_panel, ml_gate = compute.compute_ml_mu_panel(
+            wad, window=window_id, asset_daily_full=wad
+        )
+        results = compute.compute_portfolio_returns(
+            wad, ml_mu_panel=ml_mu_panel, window=window_id, asset_daily_full=wad
+        )
         n = loader.upsert("raw.portfolio_returns", results, ["window_id", "strategy", "date"])
         # Honest uncertainty: block-bootstrap Sharpe CIs. One window at a time — the bootstrap
         # pivots by date x strategy and would collide windows if handed more than one.
@@ -352,7 +356,9 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         loader.upsert(
             "raw.portfolio_strategy_pairs", pairs, ["window_id", "strategy_a", "strategy_b"]
         )
-        attribution = compute.compute_attribution(wad, ml_mu_panel=ml_mu_panel, window=window_id)
+        attribution = compute.compute_attribution(
+            wad, ml_mu_panel=ml_mu_panel, window=window_id, asset_daily_full=wad
+        )
         loader.upsert("raw.portfolio_attribution", attribution, ["window_id", "strategy", "symbol"])
         # The ML gate (forecast skill + the weight it earns) makes "mvo_ml ≈ mvo_histmean" legible.
         if not ml_gate.empty:
