@@ -346,22 +346,25 @@ with tab_macro:
         ]
         snap = [by_id[i] for i in _MACRO_HEADLINE if i in by_id]
         if snap:
-            for col, c in zip(st.columns(len(snap)), snap, strict=True):
-                s = data.macro(c["id"])  # full series → latest headline value, range-independent
-                if s.empty:
-                    continue
-                chg = s["change"].dropna()
-                with col:
-                    st.metric(
-                        c["label"],
-                        _fmt_macro(float(s["value"].iloc[-1]), c["units"]),
-                        delta=(
-                            _fmt_macro_delta(float(chg.iloc[-1]), c["units"])
-                            if not chg.empty
-                            else None
-                        ),
-                        delta_color="off",
-                    )
+            # Render in rows of 3 so the strip stays readable on mobile.
+            for chunk_start in range(0, len(snap), 3):
+                chunk = snap[chunk_start : chunk_start + 3]
+                for col, c in zip(st.columns(len(chunk)), chunk, strict=True):
+                    s = data.macro(c["id"])
+                    if s.empty:
+                        continue
+                    chg = s["change"].dropna()
+                    with col:
+                        st.metric(
+                            c["label"],
+                            _fmt_macro(float(s["value"].iloc[-1]), c["units"]),
+                            delta=(
+                                _fmt_macro_delta(float(chg.iloc[-1]), c["units"])
+                                if not chg.empty
+                                else None
+                            ),
+                            delta_color="off",
+                        )
             st.divider()
 
         # ---- Category selector → small-multiples grid (each chart windowed by the range) ----
@@ -378,12 +381,7 @@ with tab_macro:
         ]
         cats_present = [k for k in _CAT_ORDER if any(c["category"] == k for c in cat)]
         if cats_present:
-            sel_cat = (
-                st.segmented_control(
-                    "Category", cats_present, default=cats_present[0], key="macro_cat"
-                )
-                or cats_present[0]
-            )
+            sel_cat = st.selectbox("Category", cats_present, key="macro_cat")
             gcols = st.columns(2)
             for i, c in enumerate(c for c in cat if c["category"] == sel_cat):
                 with gcols[i % 2]:
@@ -391,7 +389,7 @@ with tab_macro:
                     if df.empty:
                         st.caption(f"{c['label']} — no data in this range")
                     else:
-                        _chart(charts.macro_chart(df, c["label"], c["units"], height=240))
+                        _chart(charts.macro_chart(df, c["label"], c["units"], height=200))
         macro_caption = data.macro_source_caption(is_sample)
         if macro_caption:
             st.caption(macro_caption)
