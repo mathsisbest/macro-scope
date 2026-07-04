@@ -381,12 +381,7 @@ with tab_macro:
         ]
         cats_present = [k for k in _CAT_ORDER if any(c["category"] == k for c in cat)]
         if cats_present:
-            sel_cat = (
-                st.segmented_control(
-                    "Category", cats_present, default=cats_present[0], key="macro_cat"
-                )
-                or cats_present[0]
-            )
+            sel_cat = st.selectbox("Category", cats_present, key="macro_cat")
             gcols = st.columns(2)
             for i, c in enumerate(c for c in cat if c["category"] == sel_cat):
                 with gcols[i % 2]:
@@ -394,7 +389,7 @@ with tab_macro:
                     if df.empty:
                         st.caption(f"{c['label']} — no data in this range")
                     else:
-                        _chart(charts.macro_chart(df, c["label"], c["units"], height=240))
+                        _chart(charts.macro_chart(df, c["label"], c["units"], height=200))
         macro_caption = data.macro_source_caption(is_sample)
         if macro_caption:
             st.caption(macro_caption)
