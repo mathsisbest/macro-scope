@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     # GenAI behaviour — Gemini 3.x "thinking" effort. medium is Google's default and best
     # quality/cost trade-off; low is faster/cheaper, high for hard reasoning. gemini-only.
     gemini_thinking_level: Literal["low", "medium", "high"] = Field(
-        default="medium", alias="GEMINI_THINKING_LEVEL"
+        default="low", alias="GEMINI_THINKING_LEVEL"
     )
 
     # Behaviour

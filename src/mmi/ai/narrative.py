@@ -476,7 +476,8 @@ def generate_brief(con) -> str:
     facts = gather_facts(con)
     if llm.available():
         try:
-            raw_text = llm.complete(_build_prompt(facts), system=_SYSTEM, max_tokens=2048)
+            # 4096 so medium thinking has room before the 6-10 sentence narrative answer.
+            raw_text = llm.complete(_build_prompt(facts), system=_SYSTEM, max_tokens=4096)
             rejection = _validate_llm_output(raw_text)
             if rejection is not None:
                 log.warning(
