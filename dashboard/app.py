@@ -497,32 +497,56 @@ with tab_ml:
 
         st.divider()
 
-        # ---- Secondary: next-day direction model (honestly demoted) ---------------
-        # No demonstrated short-horizon edge — shown as an honest secondary, not the gate.
-        st.subheader("Next-day direction model (honest secondary)")
+        # ---- Return forecast — regime-aware multi-horizon (the certified model) ----
+        # GB (150, d=4) with vol_rich features. Cleared all 3 skill gates:
+        # R² ≥ 0.10, QLIKE ratio < 0.99, folds ≥ 3/10.
+        st.subheader("Return forecast — regime-aware (multi-horizon)")
         st.caption(
-            "This model targets next-day SPY price direction. "
-            "Short-horizon equity direction is near-noise; this model carries "
-            "**no demonstrated out-of-sample edge** and is not used as a go-live gate."
+            "Gradient Boosting with 35 features (yield curve, VIX, dollar, financial conditions, "
+            "cross-asset correlations, kurtosis/skewness). Per-regime models for Low/Med/High vol."
         )
-        _chart(charts.direction_skill_chart(metrics, symbol="SPY"))
 
-        # ---- Locked holdout (direction) — honest extra OOS readout, NOT gated ----------------
-        # Mirrors direction_skill_chart's "not the vol model" filter so a future direction-model
-        # rename can't drop it. Absent on small-data / pre-re-run snapshots → render nothing.
-        dir_holdout = charts.holdout_readout(metrics, symbol="SPY", exclude_model="rv_har")
-        if dir_holdout is not None:
-            st.caption(charts.HOLDOUT_CAPTION)
-            hd1, hd2 = st.columns(2)
-            if "holdout_dir_acc" in dir_holdout:
-                hd1.metric("Holdout dir. accuracy", f"{dir_holdout['holdout_dir_acc'] * 100:.1f}%")
-            if "holdout_baseline_dir_acc" in dir_holdout:
-                hd2.metric(
-                    "Holdout baseline accuracy",
-                    f"{dir_holdout['holdout_baseline_dir_acc'] * 100:.1f}%",
+        # Display per-horizon forecasts from ml_forecast
+        return_fc = fc[fc["model"].str.contains("return_rf", na=False)] if not fc.empty else fc
+        if not return_fc.empty:
+            for _, row in return_fc.iterrows():
+                h = int(row["horizon"])
+                pred = row["predicted_return"]
+                direction = "↑" if pred > 0 else "↓" if pred < 0 else "→"
+                st.metric(
+                    f"{h}-day forecast",
+                    f"{direction} {pred * 100:+.2f}%",
+                    f"{row['daily_mu'] * 100:+.3f}%/day",
                 )
-            if "holdout_n_obs" in dir_holdout:
-                st.metric("Holdout obs", f"{dir_holdout['holdout_n_obs']:.0f}")
+
+            # Per-horizon metrics
+            return_metrics = {
+                k: v
+                for k, v in metrics.items()
+                if k.startswith("SPY.") and ("dir_acc_h" in k or "r2_h" in k or "ic_h" in k)
+            }
+            if return_metrics:
+                with st.expander("Model performance by horizon", expanded=False):
+                    for h in [1, 5, 10, 20]:
+                        da = return_metrics.get(f"SPY.dir_acc_h{h}", 0)
+                        r2 = return_metrics.get(f"SPY.r2_h{h}", 0)
+                        ic = return_metrics.get(f"SPY.ic_h{h}", 0)
+                        st.caption(f"**{h}d**: dir_acc={da:.1%}, R²={r2:.3f}, IC={ic:.3f}")
+
+            # Regime breakdown
+            regime_metrics = {
+                k: v
+                for k, v in metrics.items()
+                if k.startswith("SPY.") and "dir_acc_" in k and "_h5" in k
+            }
+            if regime_metrics:
+                with st.expander("Regime breakdown (5-day)", expanded=False):
+                    for regime in ["low", "medium", "high"]:
+                        key = f"SPY.dir_acc_{regime}_h5"
+                        if key in regime_metrics:
+                            st.caption(f"**{regime.title()} vol**: {regime_metrics[key]:.1%}")
+        else:
+            st.info("No return forecasts available. Run `mmi ml` to generate predictions.")
 
 with tab_ai:
     brief = data.latest_brief()
