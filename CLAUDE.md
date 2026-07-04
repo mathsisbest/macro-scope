@@ -33,6 +33,9 @@ Generic roles (Planner / Builder / Reviewer — see `~/.claude/velocity-playbook
 **separate sessions** with a repo-only handoff (no chat relay) — the anti-rubber-stamp rule.
 - **Build:** `Builder: implement <issue #N / task>` → one small single-concern PR.
 - **Review:** `/review-pr <n>` → separate session; loads `docs/REVIEW_GUIDE.md`, posts via `gh pr review`.
+  **Every review must:** (1) write unit tests for uncovered modules with adversarial edge-case depth,
+  (2) run `pytest --cov=mmi --cov-report=term-missing` before/after to prove coverage improved,
+  (3) follow the extracted-pure-functions pattern (`dashboard/components/utils.py`) for dashboard helpers.
 - **Plan / architect:** `Planner: <question>` → read-only Q&A, **no commits**; hands specs via the repo.
 
 ## Key decisions (full rationale in PLAN.md + docs/adr/)
