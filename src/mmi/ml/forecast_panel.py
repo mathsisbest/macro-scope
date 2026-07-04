@@ -21,10 +21,17 @@ import numpy as np
 import pandas as pd
 
 from mmi.ml.features import feature_columns, make_features
-from mmi.ml.forecast import make_regressor
+from mmi.ml.forecast import (
+    _get_regime_labels,
+    _predict_per_regime,
+    _train_per_regime,
+    make_regressor,
+)
 from mmi.utils.logging import get_logger
 
 log = get_logger("ml.forecast_panel")
+
+_MIN_REGIME_ROWS = 30
 
 
 def _skill(pred: np.ndarray, actual: np.ndarray) -> dict:
@@ -49,6 +56,11 @@ def walk_forward_mu(
     min_train: int = 120,
     n_estimators: int = 100,
     seed: int = 0,
+    feature_set: str = "default",
+    regime_aware: bool = True,
+    con=None,
+    macro_df: pd.DataFrame | None = None,
+    asset_dfs: dict[str, pd.DataFrame] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Point-in-time forecast of each asset's forward-``horizon`` return at each rebalance date.
 
@@ -63,14 +75,34 @@ def walk_forward_mu(
       decision at date t uses only outcomes realised before t.
     """
     rebals = sorted(pd.to_datetime(list(rebalance_dates)))
-    cols = feature_columns()
+    cols = feature_columns(feature_set=feature_set)
     mu_rows: list[dict] = []
     skill_rows: list[dict] = []
 
     for symbol, group in asset_daily.sort_values("date").groupby("symbol"):
-        feats = make_features(group[["date", "daily_return"]])
+        # Build features — pass OHLC if available for vol features
+        if "open" in group.columns:
+            feats = make_features(
+                group[["date", "open", "high", "low", "close", "daily_return"]],
+                feature_set=feature_set,
+                macro_df=macro_df,
+                asset_dfs=asset_dfs,
+            )
+        else:
+            feats = make_features(
+                group[["date", "daily_return"]],
+                feature_set=feature_set,
+                macro_df=macro_df,
+                asset_dfs=asset_dfs,
+            )
+
         # Forward horizon return (arithmetic) realised over [d+1, d+horizon]; NaN near the tail.
         feats["target_h"] = feats["ret"].rolling(horizon).sum().shift(-horizon)
+
+        # Get regime labels for this symbol
+        regimes = None
+        if regime_aware and con is not None:
+            regimes = _get_regime_labels(con, symbol, feats)
 
         preds: list[float] = []
         actuals: list[float] = []
@@ -85,9 +117,35 @@ def walk_forward_mu(
             x_pred = hist[cols].iloc[[-1]].to_numpy()  # latest features, all known before `rebal`
             if not np.isfinite(x_pred).all():
                 continue
-            model = make_regressor(n_estimators=n_estimators, seed=seed)
-            model.fit(train[cols].to_numpy(), train["target_h"].to_numpy())
-            forecast = float(model.predict(x_pred)[0])  # cumulative forward-horizon return
+
+            # Get regime labels for this symbol's training data
+            if regimes is not None and len(regimes) == len(feats):
+                r_train = regimes[: len(hist) - horizon][train.index]
+                r_pred = regimes[hist.index[-1]]
+            else:
+                r_train = None
+                r_pred = None
+
+            if regime_aware and r_train is not None and len(np.unique(r_train)) > 1:
+                # Train per-regime models
+                x_train = train[cols].to_numpy()
+                y_train = train["target_h"].to_numpy()
+                regime_models = _train_per_regime(x_train, y_train, r_train, n_estimators)
+                global_model = make_regressor(n_estimators)
+                global_model.fit(x_train, y_train)
+                forecast = float(
+                    _predict_per_regime(
+                        x_pred.reshape(1, -1),
+                        np.array([r_pred]),
+                        regime_models,
+                        global_model,
+                    )[0]
+                )
+            else:
+                model = make_regressor(n_estimators=n_estimators, seed=seed)
+                model.fit(train[cols].to_numpy(), train["target_h"].to_numpy())
+                forecast = float(model.predict(x_pred)[0])
+
             # Store as a daily-equivalent so mu is commensurate with daily cov / historical-mean mu.
             mu_rows.append({"date": rebal, "symbol": symbol, "mu": forecast / horizon})
             # Realised cumulative forward return (known only later — used for skill, never fitting).

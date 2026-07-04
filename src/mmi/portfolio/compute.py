@@ -142,6 +142,11 @@ def build_ml_mu_panel(
     lookback: int,
     horizon: int = 21,
     lambda_max: float = 0.5,
+    feature_set: str = "vol_rich",
+    regime_aware: bool = True,
+    con=None,
+    macro_df: pd.DataFrame | None = None,
+    asset_dfs: dict[str, pd.DataFrame] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Blend the point-in-time ML forecast toward the historical-mean prior, gated by skill.
 
@@ -162,7 +167,16 @@ def build_ml_mu_panel(
         .reset_index()
         .melt(id_vars=["date"], var_name="symbol", value_name="daily_return")
     )
-    mu_fc_df, _skill = walk_forward_mu(long, rebals, horizon=horizon)
+    mu_fc_df, _skill = walk_forward_mu(
+        long,
+        rebals,
+        horizon=horizon,
+        feature_set=feature_set,
+        regime_aware=regime_aware,
+        con=con,
+        macro_df=macro_df,
+        asset_dfs=asset_dfs,
+    )
     mu_fc = (
         mu_fc_df.pivot_table(index="date", columns="symbol", values="mu")
         if not mu_fc_df.empty
@@ -230,6 +244,11 @@ def compute_ml_mu_panel(
     horizon: int = 21,
     lambda_max: float = 0.5,
     window: str = windows.DEFAULT_WINDOW,
+    feature_set: str = "vol_rich",
+    regime_aware: bool = True,
+    con=None,
+    macro_df=None,
+    asset_dfs=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Build the mvo_ml blended-mu panel + gate ONCE, so callers reuse it (and can land the gate).
 
@@ -246,7 +265,16 @@ def compute_ml_mu_panel(
         )
         return empty_mu, empty_gate
     mu_panel, gate = build_ml_mu_panel(
-        panel, rebals, lookback=lookback, horizon=horizon, lambda_max=lambda_max
+        panel,
+        rebals,
+        lookback=lookback,
+        horizon=horizon,
+        lambda_max=lambda_max,
+        feature_set=feature_set,
+        regime_aware=regime_aware,
+        con=con,
+        macro_df=macro_df,
+        asset_dfs=asset_dfs,
     )
     if not gate.empty:
         gate.insert(0, "window_id", window)
@@ -264,6 +292,11 @@ def _strategy_runs(
     lambda_max: float,
     include_ml: bool,
     ml_mu_panel: pd.DataFrame | None = None,
+    feature_set: str = "vol_rich",
+    regime_aware: bool = True,
+    con=None,
+    macro_df=None,
+    asset_dfs=None,
 ):
     """Yield ``(label, returns, contributions)`` for each strategy, the 60/40 benchmark, and (when
     ``include_ml``) the gated ``mvo_ml``. A precomputed ``ml_mu_panel`` is reused if given (so the
@@ -297,7 +330,16 @@ def _strategy_runs(
             mu_panel = ml_mu_panel
             if mu_panel is None:  # build it here unless a precomputed panel was supplied
                 mu_panel, _gate = build_ml_mu_panel(
-                    clean, rebals, lookback=lookback, horizon=horizon, lambda_max=lambda_max
+                    clean,
+                    rebals,
+                    lookback=lookback,
+                    horizon=horizon,
+                    lambda_max=lambda_max,
+                    feature_set=feature_set,
+                    regime_aware=regime_aware,
+                    con=con,
+                    macro_df=macro_df,
+                    asset_dfs=asset_dfs,
                 )
             out, contrib = run_backtest_full(
                 clean, strategy=MVO_ML, lookback=lookback, freq=freq, cost=cost, mu_panel=mu_panel
