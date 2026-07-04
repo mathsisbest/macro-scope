@@ -33,11 +33,20 @@ git log main..HEAD --format='%an <%ae> | %s'   # check authorship + commit hygie
 ```
 If `make ci` fails, that alone is request-changes — include the failing output.
 
-## 4. Skeptical checklist
+## 4. Adversarial review checklist
 - **Correctness:** does it do what the PR claims? Trace the logic. Hunt edge cases, off-by-one,
   error handling, resource leaks (unclosed DB connections), wrong assumptions.
 - **Scope / altitude:** minimal and single-concern, or sprawling? Anything unrelated sneaked in?
 - **Secret hygiene:** grep the diff for tokens/keys/paths that could reach logs or the UI.
+- **Unit tests — mandatory for all uncovered modules.** Every review must identify source modules
+  that lack test coverage and write tests for them. Run `pytest --cov=mmi --cov-report=term-missing`
+  before and after to prove coverage improved. Dashboard helpers follow the **extracted-pure-functions
+  pattern** (`dashboard/components/utils.py` → `test_dashboard_app.py`); the Streamlit UI layer is
+  exempt (covered by `make app-smoke`).
+- **Adversarial depth:** don't just test the happy path. Test empty states, error returns, edge
+  inputs (None, empty DataFrames, boundary values), secret-leak guards, and any silent-failure
+  paths. If the code has a `try/except`, the test should cover both branches. If it has a retry
+  loop, prove the retry count is correct.
 - **Tests:** is new behaviour actually covered? Could it silently break (e.g. dashboard ↔ marts
   drift)? Are the tests meaningful or trivially true?
 - **Docs honesty:** are new claims actually implemented? Any over-claim or stale instruction?
