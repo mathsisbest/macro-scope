@@ -235,7 +235,7 @@ def leaderboard_return_color(period_return: float) -> str:
     return PALETTE["up"] if period_return >= 0 else PALETTE["down"]
 
 
-def rebased_performance_chart(perf_long: pd.DataFrame) -> go.Figure:
+def rebased_performance_chart(perf_long: pd.DataFrame, height: int = HEIGHT_TALL) -> go.Figure:
     """One class-coloured line per symbol over the window, each rebased to 0% at the start.
 
     The legend shows each symbol with its final % so the chart reads without hovering. Line
@@ -260,10 +260,10 @@ def rebased_performance_chart(perf_long: pd.DataFrame) -> go.Figure:
     _apply_axis_fonts(fig)
     n = perf_long["symbol"].nunique() if not perf_long.empty else 0
     _overflow_legend(fig, n)
-    return style_fig(fig, height=HEIGHT_TALL)
+    return style_fig(fig, height=height)
 
 
-def correlation_heatmap(corr: pd.DataFrame) -> go.Figure:
+def correlation_heatmap(corr: pd.DataFrame, height: int = HEIGHT_TALL) -> go.Figure:
     """Annotated Pearson-correlation heatmap on a diverging RdBu scale fixed to −1..1."""
     symbols = list(corr.columns)
     z = corr.to_numpy()
@@ -288,7 +288,7 @@ def correlation_heatmap(corr: pd.DataFrame) -> go.Figure:
     )
     fig.update_yaxes(autorange="reversed")  # diagonal runs top-left → bottom-right
     _apply_axis_fonts(fig)
-    return style_fig(fig, height=HEIGHT_TALL)
+    return style_fig(fig, height=height)
 
 
 # ---------------------------------------------------------------------------
