@@ -28,7 +28,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: snapshot-refresh
+  group: snapshot-${{ github.event.schedule || 'manual' }}
   cancel-in-progress: false # let an in-flight run (esp. the weekly backtest) finish; serialize pushes
 
 jobs:

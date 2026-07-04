@@ -1,24 +1,15 @@
-# Deploying the dashboard (free) — local-first architecture
+# Deploying the dashboard (free) — CI-native architecture
 
-> **Architecture:** the heavy portfolio backtest runs **locally** (no time cap) via
-> `make refresh-full`; the owner commits the resulting Parquet snapshot. GitHub Actions' role is
-> the **cheap daily refresh** of prices / macro / crypto / ML, which **preserves** the committed
-> portfolio + brief Parquet (it never rebuilds them). The heavy backtest is never run in CI.
->
-> ⚠️ **Current status (pre-go-live):** the scheduled cron in `ingest.yml` is **PAUSED** (both
-> `schedule:` lines are commented out — see [#76](https://github.com/mathsisbest/macro-scope/pull/76)).
-> Today, refreshes happen **manually** (the **Run workflow** button / `workflow_dispatch`, which
-> still carries a `full` toggle) or **locally**. **Re-enabling the daily-cheap cron is a go-live
-> step** (Step 3 below + [docs/RUNBOOK.md](../../docs/RUNBOOK.md)); the heavy refresh stays local
-> regardless of cron state.
->
-> For the full GUI click-path to go live, see [docs/RUNBOOK.md](../../docs/RUNBOOK.md).
+> **Architecture:** the repo is **public**, so GitHub Actions has **free unlimited minutes + a
+> 6-hour job cap**. Both the cheap daily refresh AND the heavy weekly portfolio backtest run in
+> CI — no laptop required. The pipeline commits a Parquet snapshot to `data/public/` on every
+> run; Streamlit Community Cloud auto-redeploys on the push.
 
 ---
 
 ## Step 1 — Deploy on Streamlit Community Cloud (free)
 
-1. Push this repo to GitHub (private is fine).
+1. Push this repo to GitHub.
 2. Go to <https://share.streamlit.io>, click **New app**, pick this repo and `dashboard/app.py`.
 3. In **Advanced settings → Secrets**, set just:
    ```
@@ -31,27 +22,21 @@
 4. Click **Deploy**. Streamlit registers a webhook; every push to `main` — including a
    snapshot-refresh commit — auto-redeploys the app.
 
-> The repo already ships a committed **sample** snapshot in `data/public/`, so the app renders
-> immediately on deploy. While that sample snapshot is live, the provenance badge honestly reads
-> **"sample"** (synthetic — not FRED/live); it flips to **"live"** only after Step 2.
+> The repo ships a committed snapshot in `data/public/`, so the app renders immediately on
+> deploy. The provenance badge reads **"live"** once every source in the snapshot is real data
+> (not sample).
 
 ---
 
-## Step 2 — Seed the real portfolio + brief Parquet locally (required once)
+## Step 2 — Initial data seed (one-time)
 
-The portfolio backtest (24 years × 3 windows × MVO + a 2 000-draw bootstrap) is too heavy for the
-60-minute GitHub Actions cap, so it runs **locally on your machine** where there is no time limit.
+The first time, trigger a **manual full run** to seed the portfolio backtest and brief:
 
-**The daily cron preserves whatever is committed to `data/public/` but never creates the
-portfolio/brief Parquet from scratch** — so you seed the real data once, here, before the daily
-cron has anything to preserve.
+1. Go to **Actions → Refresh public snapshot (scheduled) → Run workflow**
+2. Check **Full refresh incl. the portfolio backtest**
+3. Click **Run workflow**
 
-```bash
-# From the repo root, with real keys in .env:
-make refresh-full
-```
-
-`make refresh-full` runs the full local pipeline in order:
+This runs the full pipeline in CI (~5–15 min on the 6-hour cap):
 
 ```
 mmi ingest → dbt build → mmi portfolio → dbt build → mmi ml → mmi ml-gate (STRICT) → mmi ai → mmi snapshot
@@ -62,66 +47,60 @@ realized-volatility model must clear the minimum skill threshold (OOS R² ≥ 0.
 QLIKE-ratio < 0.99 **and** ≥ 3/5 walk-forward folds) before a snapshot can be produced. If it
 **fails**, the run exits non-zero and no snapshot is committed — and the honest response is **not**
 to re-tune to pass: either ship with the baseline-only state active (the ML tab then truthfully
-shows *"no demonstrated out-of-sample edge"*) or keep refining the features locally. The
-margins/seed are fixed and never adjusted to flip a verdict.
+shows *"no demonstrated out-of-sample edge"*) or keep refining the features locally.
 
-After a successful run, confirm `data/public/` holds one `.parquet` per mart (including
-`fct_portfolio_returns.parquet` and `market_brief.parquet`) and that each file is under the 2 MB
-cap, then commit and push:
+After the run completes, confirm `data/public/` holds one `.parquet` per mart (including
+`fct_portfolio_returns.parquet` and `market_brief.parquet`). The push auto-redeploys Streamlit.
 
-```bash
-git add data/public/
-git commit -m "chore(data): seed real public snapshot"
-git push
-```
-
-The push auto-redeploys Streamlit, and the provenance badge flips to **"live"** once every source
-in the snapshot is real.
-
-> **To refresh the heavy backtest later:** re-run `make refresh-full` locally and recommit
-> `data/public/`. The committed public artifact always uses the default `n_boot=2000` —
-> `make refresh-full-fast` (low `n_boot`) is for local iteration only, never for the commit.
+> **To refresh the heavy backtest later:** re-trigger a manual full run, or wait for the weekly
+> Monday cron. The committed public artifact always uses `n_boot=2000`.
 
 ---
 
-## Step 3 — Daily cron (re-enable at go-live; cheap refresh only)
+## Step 3 — Automated cron schedules
 
-> **Currently PAUSED.** Re-enabling the daily-cheap cron is a go-live step — do it **after** the
-> Step 2 real-data seed so the first run has the real portfolio/brief Parquet to preserve.
+Both schedules are active in `ingest.yml`:
 
-At go-live, `ingest.yml` is switched to a **single daily-cheap schedule** (the weekly auto-schedule
-is deleted so CI can never take the 60-minute-timeout path; the manual **Run workflow** /
-`workflow_dispatch` button — with its `full` toggle — remains for on-demand use, but the real
-heavy refresh is always the local `make refresh-full`, not the Actions `full` path). The daily run
-executes the cheap path:
+| Schedule | Path | What it does |
+|---|---|---|
+| **Weekdays 06:00 UTC** | Cheap daily | Refreshes prices, macro, crypto, ML, and regenerates the brief. **Preserves** the committed portfolio Parquet. |
+| **Monday 04:00 UTC** | Full weekly | Full refresh including the portfolio backtest (`n_boot=2000`). |
+
+Each schedule runs in its own concurrency slot (`snapshot-<schedule>`) so they never block each
+ other.
+
+### Daily (weekdays) — cheap path
 
 ```
-mmi ingest → dbt build --exclude tag:portfolio → mmi ml → mmi snapshot
+mmi ingest → dbt build --exclude tag:portfolio → mmi ml → mmi ai → mmi snapshot
 ```
 
-What this does:
-
-- Refreshes prices, macro series, crypto, and the ML rows in the snapshot.
-- **Does not** run the portfolio backtest or regenerate the AI brief.
+- Refreshes prices, macro series, crypto, ML, and the AI brief.
+- **Does not** run the portfolio backtest.
 - **Preserves** any `fct_portfolio_returns.parquet` and `market_brief.parquet` already committed
   to `data/public/` — `mmi snapshot` exports only marts present in the ephemeral DuckDB, and the
   portfolio marts were excluded from the build, so they are absent from the DB and therefore left
   untouched on disk.
 
-### Cron setup
+### Weekly (Monday) — full path
 
-The cron pushes the refreshed snapshot commit, and the data sources read these GitHub Actions
-secrets (all optional — without them the keyless core still runs and `mmi ingest` exits 0):
+```
+mmi ingest → dbt build → mmi portfolio → dbt build → mmi ml → mmi ml-gate --warn-only → mmi ai → mmi snapshot
+```
+
+- Full refresh including the portfolio backtest.
+- Runs with `timeout-minutes: 300` (well under the 6-hour public-repo cap).
+
+### Secrets (all optional)
 
 | Secret name | Purpose | Required? |
 |---|---|---|
 | `FRED_API_KEY` | Real macro data (FRED) | Recommended |
 | `GEMINI_API_KEY` | AI brief (else deterministic offline template) | Optional |
 
-The job already has `contents: write` permission to push the snapshot commit. If `main` has
-branch-protection rules that block Action pushes, add an exception for `github-actions[bot]` under
-**Settings → Branches → Branch protection rules → main** (see
-[docs/RUNBOOK.md](../../docs/RUNBOOK.md) Step D).
+The job has `contents: write` permission to push the snapshot commit. No branch protection is
+configured; if it is added later, allow `github-actions[bot]` to push under
+**Settings → Branches → Branch protection rules → main**.
 
 ---
 
@@ -136,7 +115,8 @@ the snapshot cron never touch it.
 
 ## Free-tier notes
 
-- **Streamlit Community Cloud:** one app from a private repo, ~1 GB RAM — fine for this dataset.
-- **GitHub Actions:** 2 000 free private-repo minutes/month. Once the daily cron is re-enabled,
-  ~30 cheap runs/month at ~3–5 min each ≈ 90–150 min/month, well inside the free tier. The heavy
-  portfolio backtest never runs in CI.
+- **Streamlit Community Cloud:** one app, ~1 GB RAM — fine for this dataset.
+- **GitHub Actions (public repo):** free unlimited minutes + 6-hour job cap. The daily cron
+  runs ~22 times/month at ~1–2 min each ≈ 20–40 min/month. The weekly full backtest runs
+  ~4 times/month at ~5–15 min each ≈ 20–60 min/month. Total: ~40–100 min/month, well within
+  the free tier.
