@@ -542,7 +542,7 @@ with tab_ai:
         )
     # Regenerating needs a writable DB + an LLM key — neither exists in the public, read-only
     # snapshot deploy, so the control is hidden there.
-    if not settings.snapshot_mode and st.button("🔄 Regenerate brief"):
+    if not settings.snapshot_mode and st.button("🔄 Regenerate brief", use_container_width=True):
         from mmi.ai.narrative import generate_brief
 
         con = connect()
