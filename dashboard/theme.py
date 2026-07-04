@@ -111,9 +111,14 @@ def style_fig(fig: go.Figure, height: int = 360) -> go.Figure:
     )
     if has_title:
         fig.update_layout(title=dict(y=1.0, yanchor="top", x=0, xanchor="left", pad=dict(b=6)))
-    fig.update_xaxes(gridcolor=PALETTE["grid"], zeroline=False)
-    fig.update_yaxes(gridcolor=PALETTE["grid"], zeroline=False)
+    fig.update_xaxes(gridcolor=PALETTE["grid"], zeroline=False, fixedrange=True)
+    fig.update_yaxes(gridcolor=PALETTE["grid"], zeroline=False, fixedrange=True)
     return fig
+
+
+# Mobile-safe Plotly config — disables scroll-zoom and hides the floating modebar so
+# touch gestures scroll the page instead of manipulating the chart.
+PLOTLY_CONFIG: dict = {"scrollZoom": False, "displayModeBar": False}
 
 
 def inject_css() -> None:
@@ -129,6 +134,15 @@ def inject_css() -> None:
             padding: 14px 16px; border-radius: 12px;
         }}
         [data-testid="stMetricLabel"] {{ color: {PALETTE["muted"]}; }}
+
+        /* ---- Mobile responsive ---- */
+        @media (max-width: 768px) {{
+            .block-container {{ padding-top: 2rem; padding-left: 1rem; padding-right: 1rem; }}
+            [data-testid="stMetric"] {{ padding: 10px 12px; }}
+            /* Allow tab bar and segmented controls to scroll horizontally instead of clipping */
+            [data-testid="stHorizontalBlock"] {{ overflow-x: auto; }}
+            [data-testid="stSegmentedControl"] label {{ font-size: 0.8rem; }}
+        }}
         </style>
         """,
         unsafe_allow_html=True,
