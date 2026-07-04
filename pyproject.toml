@@ -74,6 +74,6 @@ plugins = ["pydantic.mypy"]
 files = ["src", "config"]
 
 [tool.pytest.ini_options]
-addopts = "-q --cov=mmi --cov-report=term-missing"
+addopts = "-q --cov=mmi --cov-report=term-missing --cov-fail-under=70"
 testpaths = ["tests"]
 pythonpath = ["src", "."]  # "." so tests can import the top-level `dashboard` package
