@@ -4,7 +4,7 @@
       "rows": 9
     },
     "fct_asset_daily": {
-      "rows": 53226
+      "rows": 53228
     },
     "fct_macro_indicator": {
       "rows": 93280
@@ -16,7 +16,7 @@
       "rows": 12517
     },
     "fct_regime": {
-      "rows": 53208
+      "rows": 53210
     },
     "ml_forecast": {
       "rows": 2
@@ -25,5 +25,5 @@
       "rows": 21
     }
   },
-  "generated_at": "2026-07-03T09:18:20.254624+00:00"
+  "generated_at": "2026-07-04T08:35:54.709812+00:00"
 }
