@@ -47,7 +47,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.linear_model import Lasso, LinearRegression, Ridge
 from sklearn.model_selection import TimeSeriesSplit
 
 from mmi.ml.features import feature_columns, har_feature_names, make_features
@@ -167,13 +168,95 @@ def _fit_predict_har(
     return np.exp(model.predict(x_pred_log)) * smear
 
 
+def _fit_predict_ridge(
+    x_train_log: np.ndarray,
+    y_train_vol: np.ndarray,
+    x_pred_log: np.ndarray,
+    alpha: float = 1.0,
+) -> np.ndarray:
+    """Ridge regression in log space + Duan smearing (same as HAR but regularised)."""
+    ylog = np.log(np.clip(y_train_vol, _VOL_FLOOR, None))
+    model = Ridge(alpha=alpha).fit(x_train_log, ylog)
+    smear = float(np.mean(np.exp(ylog - model.predict(x_train_log))))
+    return np.exp(model.predict(x_pred_log)) * smear
+
+
+def _fit_predict_lasso(
+    x_train_log: np.ndarray,
+    y_train_vol: np.ndarray,
+    x_pred_log: np.ndarray,
+    alpha: float = 0.01,
+) -> np.ndarray:
+    """Lasso regression in log space + Duan smearing."""
+    ylog = np.log(np.clip(y_train_vol, _VOL_FLOOR, None))
+    model = Lasso(alpha=alpha, max_iter=5000).fit(x_train_log, ylog)
+    smear = float(np.mean(np.exp(ylog - model.predict(x_train_log))))
+    return np.exp(model.predict(x_pred_log)) * smear
+
+
+def _fit_predict_gb(
+    x_train: np.ndarray,
+    y_train_vol: np.ndarray,
+    x_pred: np.ndarray,
+    n_estimators: int = 100,
+    max_depth: int = 3,
+) -> np.ndarray:
+    """Gradient Boosting in level space (no log transform needed — trees handle skew)."""
+    model = GradientBoostingRegressor(
+        n_estimators=n_estimators,
+        max_depth=max_depth,
+        min_samples_leaf=20,
+        random_state=0,
+    ).fit(x_train, y_train_vol)
+    return model.predict(x_pred)
+
+
+# Model registry: maps model_name -> (fit_function, needs_log_transform)
+_MODEL_REGISTRY: dict[str, tuple] = {
+    "rv_har": (_fit_predict_har, True),
+    "rv_ridge": (_fit_predict_ridge, True),
+    "rv_lasso": (_fit_predict_lasso, True),
+    "rv_gb": (_fit_predict_gb, False),
+}
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 
-def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]:
-    """Walk-forward HAR vol backtest + next-week forecast.
+def train_and_backtest_vol(
+    con,
+    symbol: str = "SPY",
+    model_name: str = "rv_har",
+    feature_set: str = "vol",
+    horizon: int = _HORIZON,
+    n_splits: int = 5,
+    min_dev: int = _MIN_OBS,
+    model_params: dict | None = None,
+    macro_df: pd.DataFrame | None = None,
+    asset_dfs: dict[str, pd.DataFrame] | None = None,
+) -> tuple[dict, dict | None]:
+    """Walk-forward vol backtest + next-week forecast.
+
+    Parameters
+    ----------
+    model_name:
+        Model to use: ``'rv_har'``, ``'rv_ridge'``, ``'rv_lasso'``, ``'rv_gb'``.
+    feature_set:
+        ``'vol'`` (default HAR features) or ``'vol_macro'`` (adds macro/cross-asset).
+    horizon:
+        Forward target horizon in trading days (default 5 = next-week).
+    n_splits:
+        Number of walk-forward CV folds.
+    min_dev:
+        Minimum trainable dev rows required.
+    model_params:
+        Extra kwargs passed to the fit function (e.g. ``{'alpha': 0.1}``).
+    macro_df:
+        Macro dataframe for ``vol_macro`` feature set.
+    asset_dfs:
+        Per-symbol daily data for cross-asset vol features.
 
     Returns
     -------
@@ -191,8 +274,12 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
         [symbol],
     ).df()
 
-    feats = make_features(df, feature_set="vol")
-    vol_cols = feature_columns(feature_set="vol")
+    feats = make_features(df, feature_set=feature_set, macro_df=macro_df, asset_dfs=asset_dfs)
+    vol_cols = feature_columns(feature_set=feature_set)
+
+    # Resolve model
+    fit_fn, needs_log = _MODEL_REGISTRY.get(model_name, (_fit_predict_har, True))
+    extra_params = model_params or {}
 
     # Keep only rows with valid FEATURES (no target yet — see the label-leak note below).
     feat_valid = feats.dropna(subset=vol_cols).reset_index(drop=True)
@@ -206,31 +293,29 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
     # target separately on dev and on holdout, each slice's last `horizon` rows get an
     # incomplete forward window -> NaN -> dropped (exactly like the natural end of a series).
     # The carve is purely feature-based and time-ordered; the skip guard is unchanged.
-    dev_end, hold = split_indices(n_feat, min_dev=_MIN_OBS)
+    dev_end, hold = split_indices(n_feat, min_dev=min_dev)
     if hold == 0:
         log.info(
             "vol holdout skipped for %s: %d feature-valid rows too few to carve a holdout "
             "and keep >= %d dev rows — CV runs on the full series",
             symbol,
             n_feat,
-            _MIN_OBS,
+            min_dev,
         )
 
     def _slice_xy(frame: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Build the forward target WITHIN `frame` and drop rows with a NaN target.
 
-        Returns ``(x_log, y, gk)`` for the rows of `frame` whose forward window is fully inside
-        `frame`: ``x_log`` is the log HAR-cascade design (floored at ``_VOL_FLOOR`` then logged),
+        Returns ``(x, y, gk)`` where ``x`` is the design matrix (logged if needed),
         ``y`` the vol-LEVEL forward target, ``gk`` the daily GK vol (for the EWMA baseline).
-        Building the target here (not on the full series) is what makes the dev/holdout label
-        sets disjoint — no dev label depends on a holdout-period value.
         """
         f = frame.copy()
-        f["target_rv"] = _make_targets(f["gk_vol"], horizon=_HORIZON)
+        f["target_rv"] = _make_targets(f["gk_vol"], horizon=horizon)
         f = f.dropna(subset=["target_rv"])
-        x_log = np.log(np.clip(f[_HAR_COLS].to_numpy(), _VOL_FLOOR, None))
+        x_raw = f[vol_cols].to_numpy()
+        x = np.log(np.clip(x_raw, _VOL_FLOOR, None)) if needs_log else x_raw
         return (
-            x_log,
+            x,
             f["target_rv"].to_numpy(),
             f["gk_vol"].to_numpy(),
         )
@@ -239,24 +324,21 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
     x_dev, y_dev, gk_dev = _slice_xy(dev_frame)
 
     n = len(y_dev)  # trainable DEV rows (after the dev-only forward-target dropna)
-    if n < _MIN_OBS:
+    if n < min_dev:
         log.warning(
             "skip vol model for %s: only %d trainable dev rows (need %d)",
             symbol,
             n,
-            _MIN_OBS,
+            min_dev,
         )
         return {}, None
 
     # --- walk-forward evaluation (DEV portion only) ---
-    tscv = TimeSeriesSplit(n_splits=5)
+    tscv = TimeSeriesSplit(n_splits=n_splits)
     preds, actuals, base_preds = [], [], []
     for train_idx, test_idx in tscv.split(x_dev):
-        # Log-OLS HAR (see _fit_predict_har): fit on the fold's train rows, predict its test rows.
-        preds.append(_fit_predict_har(x_dev[train_idx], y_dev[train_idx], x_dev[test_idx]))
+        preds.append(fit_fn(x_dev[train_idx], y_dev[train_idx], x_dev[test_idx], **extra_params))
         actuals.append(y_dev[test_idx])
-        # EWMA baseline computed walk-forward: only gk vol up to each fold's last test
-        # point feeds the recursion — no look-ahead (honest-OOS contract).
         base_preds.append(_walk_forward_ewma_baseline(gk_dev, test_idx))
 
     preds_arr = np.concatenate(preds)
@@ -274,7 +356,7 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
     qlike_skill_ratio = qlike / baseline_qlike if baseline_qlike > 1e-20 else float("nan")
 
     # folds_passed: folds where model QLIKE < baseline QLIKE
-    n_folds = 5
+    n_folds = n_splits
     folds_passed = 0
     for p, a, b in zip(preds, actuals, base_preds, strict=False):
         if _qlike(a, p) < _qlike(a, b):
@@ -302,8 +384,7 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
     if hold > 0:
         x_hold, y_hold, gk_hold = _slice_xy(feat_valid.iloc[dev_end:])
         if len(y_hold) > 0:
-            # Final-fit the SAME log-OLS HAR on ALL of dev, score the untouched holdout slice.
-            hold_preds = _fit_predict_har(x_dev, y_dev, x_hold)
+            hold_preds = fit_fn(x_dev, y_dev, x_hold, **extra_params)
 
             ss_res_h = float(np.sum((y_hold - hold_preds) ** 2))
             ss_tot_h = float(np.sum((y_hold - y_hold.mean()) ** 2))
@@ -345,28 +426,27 @@ def train_and_backtest_vol(con, symbol: str = "SPY") -> tuple[dict, dict | None]
             )
 
     # --- final model on all data -> forecast next week ---
-    # The live forecast legitimately uses ALL valid rows (the holdout is an evaluation device,
-    # not a data quarantine for the production prediction).  Built on the full series here.
     full = feat_valid.copy()
-    full["target_rv"] = _make_targets(full["gk_vol"], horizon=_HORIZON)
+    full["target_rv"] = _make_targets(full["gk_vol"], horizon=horizon)
     full_trained = full.dropna(subset=["target_rv"])
-    x_full_log = np.log(np.clip(full_trained[_HAR_COLS].to_numpy(), _VOL_FLOOR, None))
+    x_full_raw = full_trained[vol_cols].to_numpy()
+    x_full = np.log(np.clip(x_full_raw, _VOL_FLOOR, None)) if needs_log else x_full_raw
     y_full = full_trained["target_rv"].to_numpy()
-    # Predict the last feature-valid row: its forward target is NaN (so it's absent from
-    # full_trained) but its HAR features are valid — mirrors the previous final-model forecast.
-    x_last_log = np.log(np.clip(full[_HAR_COLS].iloc[[-1]].to_numpy(), _VOL_FLOOR, None))
-    next_vol = float(_fit_predict_har(x_full_log, y_full, x_last_log)[0])
+    x_last_raw = full[vol_cols].iloc[[-1]].to_numpy()
+    x_last = np.log(np.clip(x_last_raw, _VOL_FLOOR, None)) if needs_log else x_last_raw
+    next_vol = float(fit_fn(x_full, y_full, x_last, **extra_params)[0])
 
     forecast = {
         "symbol": symbol,
         "as_of": pd.to_datetime(feat_valid["date"].iloc[-1]),
-        "predicted_next_return": next_vol,  # field name matches ml_forecast schema
-        "model": MODEL_TAG,
+        "predicted_next_return": next_vol,
+        "model": model_name,
     }
 
     log.info(
-        "vol backtest %s: oos_r2=%.3f qlike_ratio=%.3f folds_passed=%d/%d",
+        "vol backtest %s (%s): oos_r2=%.3f qlike_ratio=%.3f folds_passed=%d/%d",
         symbol,
+        model_name,
         oos_r2,
         qlike_skill_ratio if not np.isnan(qlike_skill_ratio) else -1,
         folds_passed,

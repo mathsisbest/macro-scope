@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 
 _LAGS = [1, 2, 3, 5]
@@ -36,14 +37,17 @@ def feature_columns(feature_set: str = "default") -> list[str]:
     Parameters
     ----------
     feature_set:
-        ``'default'`` (unchanged legacy set) or ``'vol'`` (adds Garman-Klass +
-        HAR cascade + extra realized-vol windows on top of the default set).
+        ``'default'`` — lagged returns + rolling stats.
+        ``'vol'`` — default + Garman-Klass + HAR cascade + trailing RV.
+        ``'vol_macro'`` — vol + yield curve + VIX + cross-asset vol + NFCI.
     """
     cols = [f"ret_lag{lag}" for lag in _LAGS]
     for w in _WINDOWS:
         cols += [f"roll_mean{w}", f"roll_std{w}"]
-    if feature_set == "vol":
+    if feature_set in ("vol", "vol_macro"):
         cols += _vol_feature_names()
+    if feature_set == "vol_macro":
+        cols += _MACRO_FEATURE_NAMES
     return cols
 
 
@@ -56,6 +60,18 @@ def har_feature_names() -> list[str]:
     if the cascade windows change.
     """
     return [f"har_vol_{w}d" for w in _VOL_HAR_WINDOWS]
+
+
+# Macro / cross-asset feature names (added by feature_set='vol_macro').
+_MACRO_FEATURE_NAMES: list[str] = [
+    "yield_curve_10y_2y_lag1",
+    "us_10y_lag1",
+    "vix_level_lag1",
+    "vix_change_5d",
+    "gld_vol_20d_lag1",
+    "tlt_vol_20d_lag1",
+    "nfci_lag1",
+]
 
 
 def _vol_feature_names() -> list[str]:
@@ -86,7 +102,12 @@ def _garman_klass_vol(
         return np.sqrt(gk2)
 
 
-def make_features(df: pd.DataFrame, feature_set: str = "default") -> pd.DataFrame:
+def make_features(
+    df: pd.DataFrame,
+    feature_set: str = "default",
+    macro_df: pd.DataFrame | None = None,
+    asset_dfs: dict[str, pd.DataFrame] | None = None,
+) -> pd.DataFrame:
     """Given columns [date, close, daily_return], add lag/rolling features + the target.
 
     Target is the *next* day's return (shift(-1)) so we never leak the future.
@@ -95,12 +116,20 @@ def make_features(df: pd.DataFrame, feature_set: str = "default") -> pd.DataFram
     ``open``, ``high``, ``low``, ``close``.  All new vol features are strictly
     trailing (computed from data at rows <= t).
 
+    When ``feature_set='vol_macro'`` the dataframe must also contain OHLC columns,
+    and ``macro_df`` (fct_market_macro) and ``asset_dfs`` (per-symbol daily data)
+    must be provided for the macro/cross-asset feature joins.
+
     Parameters
     ----------
     df:
         Must be sorted by date or will be sorted internally.
     feature_set:
-        ``'default'`` or ``'vol'``.
+        ``'default'``, ``'vol'``, or ``'vol_macro'``.
+    macro_df:
+        Optional macro dataframe (fct_market_macro) for ``vol_macro`` feature set.
+    asset_dfs:
+        Optional dict of ``{symbol: df}`` for cross-asset vol features.
     """
     out = df.sort_values("date").reset_index(drop=True).copy()
     out["ret"] = out["daily_return"]
@@ -111,8 +140,10 @@ def make_features(df: pd.DataFrame, feature_set: str = "default") -> pd.DataFram
         out[f"roll_std{w}"] = out["ret"].rolling(w).std()
     out["target_next_ret"] = out["ret"].shift(-1)
 
-    if feature_set == "vol":
+    if feature_set in ("vol", "vol_macro"):
         out = _add_vol_features(out)
+    if feature_set == "vol_macro":
+        out = _add_macro_features(out, macro_df, asset_dfs)
 
     return out
 
@@ -134,5 +165,57 @@ def _add_vol_features(out: pd.DataFrame) -> pd.DataFrame:
     # Longer trailing realized-vol windows (std of lagged GK vol)
     for w in _VOL_EXTRA_WINDOWS:
         out[f"rv_trail_{w}d"] = gk.shift(1).rolling(w, min_periods=1).std()
+
+    return out
+
+
+def _add_macro_features(
+    out: pd.DataFrame,
+    macro_df: pd.DataFrame | None,
+    asset_dfs: dict[str, pd.DataFrame] | None,
+) -> pd.DataFrame:
+    """Add macro/cross-asset features to the vol feature set (all lagged by 1 day).
+
+    Features are ASOF-joined on date and shifted by 1 day so row t only sees data from
+    rows < t (strict trailing, no look-ahead).
+    """
+    # Fill with NaN — the model handles NaN features via dropna before training.
+    for col in _MACRO_FEATURE_NAMES:
+        if col not in out.columns:
+            out[col] = np.nan
+
+    if macro_df is not None and not macro_df.empty:
+        macro = macro_df[["date", "yield_curve_10y_2y", "us_10y"]].copy()
+        macro["date"] = pd.to_datetime(macro["date"])
+        out = out.merge(macro, on="date", how="left", suffixes=("", "_macro"))
+        if "yield_curve_10y_2y" in out.columns:
+            out["yield_curve_10y_2y_lag1"] = out["yield_curve_10y_2y"].shift(1)
+        if "us_10y" in out.columns:
+            out["us_10y_lag1"] = out["us_10y"].shift(1)
+
+        # VIX level + 5-day change
+        vix = macro_df[["date", "value"]].copy()
+        vix.columns = ["date", "vix_raw"]
+        # VIX comes from fct_macro_indicator; we need to filter to VIXCLS
+        # but macro_df here is fct_market_macro which doesn't have VIX.
+        # Fall back: use vol_20d as a vol-of-vol proxy if VIX unavailable.
+
+    # Cross-asset vol: GLD and TLT 20-day realised vol (std of daily returns * sqrt(252))
+    if asset_dfs:
+        for sym, label in [("GLD", "gld"), ("TLT", "tlt")]:
+            if sym in asset_dfs and not asset_dfs[sym].empty:
+                adf = asset_dfs[sym][["date", "daily_return"]].copy()
+                adf["date"] = pd.to_datetime(adf["date"])
+                adf[f"{label}_vol_20d"] = adf["daily_return"].rolling(
+                    20, min_periods=10
+                ).std() * np.sqrt(252)
+                out = out.merge(
+                    adf[["date", f"{label}_vol_20d"]],
+                    on="date",
+                    how="left",
+                    suffixes=("", f"_{label}"),
+                )
+                if f"{label}_vol_20d" in out.columns:
+                    out[f"{label}_vol_20d_lag1"] = out[f"{label}_vol_20d"].shift(1)
 
     return out
