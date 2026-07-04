@@ -5,7 +5,6 @@ The Streamlit rendering layer (st.* calls) is not tested here — it is exercise
 """
 
 import pandas as pd
-
 from dashboard.components.utils import provenance_badge, sidebar_status
 
 

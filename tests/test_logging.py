@@ -2,7 +2,7 @@
 
 import logging
 
-from mmi.utils.logging import get_logger, _CONFIGURED
+from mmi.utils.logging import get_logger
 
 
 def _reset():
@@ -30,7 +30,7 @@ def test_get_logger_clamps_httpx_to_warning():
 def test_get_logger_respects_log_level(monkeypatch):
     _reset()
     monkeypatch.setattr("mmi.utils.logging.settings.log_level", "ERROR")
-    log = get_logger("x")
+    get_logger("x")
     assert logging.getLogger().level == logging.ERROR
 
 
