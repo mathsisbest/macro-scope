@@ -549,17 +549,17 @@ def ml_gate_chart(gate: pd.DataFrame) -> go.Figure:
 # ML tab — honest vol-skill builders (B7)
 # ---------------------------------------------------------------------------
 
-#: Scope caption required by Contract E / task B7.
-ML_SCOPE_CAPTION: str = "Forecast universe: SPY (single-asset baseline)"
+#: Scope caption for the ML forecast tab.
+ML_SCOPE_CAPTION: str = "Models: return forecaster (regime-aware RF) + volatility model (GB)"
 
 
 def vol_skill_r2_chart(
     metrics: pd.DataFrame, symbol: str = "SPY", height: int = HEIGHT_MEDIUM
 ) -> go.Figure:
-    """Grouped bars: OOS R² for the rv_har model vs the persistence/EWMA baseline.
+    """Grouped bars: OOS R² for the volatility model vs the persistence/EWMA baseline.
 
     Baseline R² is always 0 by construction (persistence = the null model), so this
-    chart shows whether the HAR model explains any variance beyond naive persistence.
+    chart shows whether the vol model explains any variance beyond naive persistence.
     The bar colours use named PALETTE tokens — no inline hex.
     """
     m = metrics[(metrics["model"] == "rv_har") & (metrics["symbol"] == symbol)].set_index("metric")[
@@ -571,7 +571,7 @@ def vol_skill_r2_chart(
 
     fig = go.Figure()
     fig.add_bar(
-        x=["HAR model (rv_har)", "Persistence / EWMA baseline"],
+        x=["Vol model", "Persistence / EWMA baseline"],
         y=[oos_r2, baseline_r2],
         marker_color=[PALETTE["accent"], PALETTE["muted"]],
         name="OOS R²",
@@ -615,7 +615,7 @@ def vol_skill_qlike_chart(
 
     fig = go.Figure()
     fig.add_bar(
-        x=["HAR model (rv_har)", "Persistence / EWMA baseline"],
+        x=["Vol model", "Persistence / EWMA baseline"],
         y=[
             model_qlike if not math.isnan(model_qlike) else 0.0,
             baseline_qlike if not math.isnan(baseline_qlike) else 0.0,
@@ -625,7 +625,7 @@ def vol_skill_qlike_chart(
     )
     # Annotate the skill ratio on the model bar.
     fig.add_annotation(
-        x="HAR model (rv_har)",
+        x="Vol model",
         y=model_qlike if not math.isnan(model_qlike) else 0.0,
         text=f"skill ratio: {ratio_label}",
         showarrow=False,
@@ -657,7 +657,6 @@ def vol_skill_verdict_text(metrics: pd.DataFrame, symbol: str = "SPY") -> str:
 
     Returns 'beats baseline OOS' language ONLY when cleared=True; otherwise
     returns an honest 'no demonstrated out-of-sample edge — baseline-only' message.
-    The verdict reflects the go-live gate conditions in Contract E verbatim.
     """
     verdict = skill_verdict(metrics, symbol=symbol)
     if verdict["cleared"]:
@@ -666,17 +665,12 @@ def vol_skill_verdict_text(metrics: pd.DataFrame, symbol: str = "SPY") -> str:
         folds_passed = verdict["folds_passed"]
         n_folds = verdict["n_folds"]
         return (
-            f"HAR realized-volatility model beats baseline OOS "
+            f"Volatility model beats baseline OOS "
             f"(OOS R²={r2:.3f} ≥ 0.10; QLIKE skill ratio={ratio:.3f} < 0.99; "
-            f"{folds_passed}/{n_folds} folds passed). "
-            f"Forecast universe: SPY (single-asset baseline)."
+            f"{folds_passed}/{n_folds} folds passed)."
         )
     reasons = "; ".join(verdict["reasons"]) if verdict["reasons"] else "metrics not yet available"
-    return (
-        "HAR realized-volatility model: no demonstrated out-of-sample edge — "
-        f"baseline-only. {reasons}. "
-        "Forecast universe: SPY (single-asset baseline)."
-    )
+    return f"Volatility model: no demonstrated out-of-sample edge — baseline-only. {reasons}."
 
 
 #: Honest framing for the locked-holdout readout — an extra OOS look, never a gate.

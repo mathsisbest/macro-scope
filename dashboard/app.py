@@ -89,12 +89,12 @@ FRED, World Bank, DuckDB, scikit-learn, a local or serverless LLM).
 
 **ML headline target**
 
-The certified ML model forecasts **next-week (5-trading-day) realised volatility for SPY** using
-a HAR-style cascade (1d / 5d / 22d Garman-Klass vol + yield-curve macro features).
-Walk-forward `TimeSeriesSplit(5)` — no lookahead leakage.
-The go-live skill gate is `OOS R² ≥ 0.10 AND QLIKE-ratio < 0.99 AND ≥ 3/5 folds pass`.
-If the gate is not cleared the dashboard shows the honest "no demonstrated out-of-sample edge"
-state — the model is never re-tuned to pass.
+The primary model is a **regime-aware return forecaster** (Random Forest, 35 features) that
+predicts SPY returns at 1d/5d/10d/20d horizons. The secondary model is a **volatility
+forecaster** (Gradient Boosting, rich features) that predicts next-week realised vol.
+Walk-forward `TimeSeriesSplit(10)` for returns, `TimeSeriesSplit(5)` for vol — no lookahead.
+The vol model goes live when it clears the skill gate: `OOS R² ≥ 0.10 AND QLIKE-ratio < 0.99
+AND ≥ 3/10 folds pass`.
 
 **Bond-return honesty note (TLT / TIP)**
 
@@ -403,7 +403,7 @@ with tab_macro:
             _chart(charts.yield_curve_chart(mm_view))
 
     # ---- Recession-risk panel -----------------------------------------------
-    # Macro CONTEXT only — not a return/price forecast (Contract E, §8).
+    # Macro CONTEXT only — not a return/price forecast.
     # The panel is always rendered (even when the main macro series are empty) because
     # fct_recession_risk is an independent mart built from the yield-curve data.
     rr = data.recession_risk(rng_start)
@@ -433,12 +433,10 @@ with tab_ml:
             "and commit updated forecasts."
         )
     else:
-        # ---- Headline: HAR realized-volatility model (Contract E) ---------------
-        # The certified ML target is next-week realized-volatility forecasting for SPY.
-        # Verdict text is ALWAYS sourced from skill_verdict() (via charts.vol_skill_verdict_text)
-        # — never re-derived here. The 'beats baseline OOS' language only appears when cleared.
-        st.subheader("Volatility forecast — HAR model (headline)")
-        st.caption(charts.ML_SCOPE_CAPTION)
+        # ---- Headline: Volatility model (secondary) ----------------------------------
+        # The vol model (GB + vol_rich) is now secondary to the return forecaster.
+        st.subheader("Volatility model")
+        st.caption("Gradient Boosting with rich features — secondary to the return forecaster.")
         verdict_text = charts.vol_skill_verdict_text(metrics, symbol="SPY")
         if "no demonstrated out-of-sample edge" in verdict_text:
             st.warning(verdict_text)
@@ -451,25 +449,23 @@ with tab_ml:
         with vol_col2:
             _chart(charts.vol_skill_qlike_chart(metrics, symbol="SPY", height=280))
 
-        # Predicted next-week volatility and training date — read from the existing accessors.
-        # The forecast lookup filters on BOTH model AND symbol (see vol_forecast_value) so a
-        # future multi-symbol ML run can't surface another asset's row in the SPY headline.
+        # Predicted next-week volatility
         pred_vol = charts.vol_forecast_value(fc, symbol="SPY")
-        rv_metrics = (
-            metrics[(metrics["model"] == "rv_har") & (metrics["symbol"] == "SPY")]
-            if not metrics.empty
-            else metrics
-        )
         fc_col1, fc_col2 = st.columns([1, 1])
         with fc_col1:
             if pred_vol is not None:
                 st.metric(
-                    "SPY predicted next-week realized vol (annualised)",
+                    "SPY predicted next-week vol (annualised)",
                     f"{pred_vol * 100:.2f}%",
                 )
             else:
                 st.caption("No SPY volatility forecast available yet.")
         with fc_col2:
+            rv_metrics = (
+                metrics[(metrics["model"] == "rv_har") & (metrics["symbol"] == "SPY")]
+                if not metrics.empty
+                else metrics
+            )
             if not rv_metrics.empty and "trained_at" in rv_metrics.columns:
                 trained_at = rv_metrics["trained_at"].dropna()
                 if not trained_at.empty:
