@@ -588,7 +588,7 @@ with tab_portfolio:
         pairs = data.portfolio_strategy_pairs(window_id)
         if not pairs.empty:
             st.info("📊 " + charts.distinguishability_verdict(pairs))
-        _chart(charts.portfolio_cumulative_chart(pf))
+        _chart(charts.portfolio_cumulative_chart(pf, height=320))
         if rng_start:
             st.caption("Cumulative return is rebased to 0% at the start of the selected range.")
 
@@ -596,9 +596,9 @@ with tab_portfolio:
         with st.expander("📉 Drawdown & rolling Sharpe", expanded=False):
             cda, cdb = st.columns(2)
             with cda:
-                _chart(charts.portfolio_drawdown_chart(pf))
+                _chart(charts.portfolio_drawdown_chart(pf, height=260))
             with cdb:
-                _chart(charts.portfolio_sharpe_chart(pf))
+                _chart(charts.portfolio_sharpe_chart(pf, height=260))
             st.dataframe(
                 charts.portfolio_summary(pf).style.format(
                     {
