@@ -39,15 +39,19 @@ def feature_columns(feature_set: str = "default") -> list[str]:
     feature_set:
         ``'default'`` — lagged returns + rolling stats.
         ``'vol'`` — default + Garman-Klass + HAR cascade + trailing RV.
-        ``'vol_macro'`` — vol + yield curve + VIX + cross-asset vol + NFCI.
+        ``'vol_macro'`` — vol + yield curve + VIX + cross-asset vol.
+        ``'vol_rich'`` — vol + macro + kurtosis/skewness + vol-of-vol + correlations
+                         + calendar effects.
     """
     cols = [f"ret_lag{lag}" for lag in _LAGS]
     for w in _WINDOWS:
         cols += [f"roll_mean{w}", f"roll_std{w}"]
-    if feature_set in ("vol", "vol_macro"):
+    if feature_set in ("vol", "vol_macro", "vol_rich"):
         cols += _vol_feature_names()
-    if feature_set == "vol_macro":
+    if feature_set in ("vol_macro", "vol_rich"):
         cols += _MACRO_FEATURE_NAMES
+    if feature_set == "vol_rich":
+        cols += _RICH_FEATURE_NAMES
     return cols
 
 
@@ -70,6 +74,26 @@ _MACRO_FEATURE_NAMES: list[str] = [
     "vix_change_5d",
     "gld_vol_20d_lag1",
     "tlt_vol_20d_lag1",
+]
+
+# Rich feature names (added by feature_set='vol_rich').
+_RICH_FEATURE_NAMES: list[str] = [
+    # Higher moments
+    "ret_kurt_20d",
+    "ret_skew_20d",
+    "ret_max_20d",
+    # Vol-of-vol term structure
+    "vol_of_vol_5d",
+    "vol_of_vol_22d",
+    "vol_dispersion",  # short-term vol minus long-term vol
+    # Cross-asset correlations
+    "corr_spy_tlt_20d",
+    "corr_spy_gld_20d",
+    # Macro regime
+    "yc_slope_change_20d",
+    # Calendar
+    "day_of_week",
+    "month_of_year",
 ]
 
 
@@ -139,10 +163,12 @@ def make_features(
         out[f"roll_std{w}"] = out["ret"].rolling(w).std()
     out["target_next_ret"] = out["ret"].shift(-1)
 
-    if feature_set in ("vol", "vol_macro"):
+    if feature_set in ("vol", "vol_macro", "vol_rich"):
         out = _add_vol_features(out)
-    if feature_set == "vol_macro":
+    if feature_set in ("vol_macro", "vol_rich"):
         out = _add_macro_features(out, macro_df, asset_dfs)
+    if feature_set == "vol_rich":
+        out = _add_rich_features(out, asset_dfs)
 
     return out
 
@@ -184,21 +210,33 @@ def _add_macro_features(
             out[col] = np.nan
 
     if macro_df is not None and not macro_df.empty:
-        # fct_market_macro has: date, yield_curve_10y_2y, us_10y, vol_20d, etc.
-        available = [c for c in ["yield_curve_10y_2y", "us_10y", "vol_20d"]
-                     if c in macro_df.columns]
+        # ASOF merge: align FRED dates to the nearest prior SPY trading date.
+        # FRED data is monthly/quarterly; SPY is daily. A regular merge produces
+        # mostly NaN because dates rarely match exactly.
+        available = [
+            c for c in ["yield_curve_10y_2y", "us_10y", "vol_20d"] if c in macro_df.columns
+        ]
         if available:
             macro = macro_df[["date"] + available].copy()
             macro["date"] = pd.to_datetime(macro["date"])
-            out = out.merge(macro, on="date", how="left", suffixes=("", "_macro"))
+            out["date"] = pd.to_datetime(out["date"])
+            out = pd.merge_asof(
+                out.sort_values("date"),
+                macro.sort_values("date"),
+                on="date",
+                direction="backward",
+                suffixes=("", "_macro"),
+            )
         if "yield_curve_10y_2y" in out.columns:
             out["yield_curve_10y_2y_lag1"] = out["yield_curve_10y_2y"].shift(1)
         if "us_10y" in out.columns:
             out["us_10y_lag1"] = out["us_10y"].shift(1)
-        # Use SPY vol_20d as a vol-of-vol proxy (mean-reversion signal)
-        if "vol_20d" in out.columns:
-            out["vix_level_lag1"] = out["vol_20d"].shift(1)
-            out["vix_change_5d"] = out["vol_20d"].diff(5).shift(1)
+        # Use VIXCLS (via vol_20d from fct_macro_indicator) as a vol-of-vol proxy
+        # The column may be named vol_20d or vol_20d_macro depending on merge suffixes
+        vix_col = "vol_20d" if "vol_20d" in out.columns else "vol_20d_macro"
+        if vix_col in out.columns:
+            out["vix_level_lag1"] = out[vix_col].shift(1)
+            out["vix_change_5d"] = out[vix_col].diff(5).shift(1)
 
     # Forward-fill macro features within their available date range, then leave NaN
     # outside that range. This lets the model use macro data where it exists without
@@ -224,5 +262,69 @@ def _add_macro_features(
                 )
                 if f"{label}_vol_20d" in out.columns:
                     out[f"{label}_vol_20d_lag1"] = out[f"{label}_vol_20d"].shift(1)
+
+    return out
+
+
+def _add_rich_features(
+    out: pd.DataFrame,
+    asset_dfs: dict[str, pd.DataFrame] | None,
+) -> pd.DataFrame:
+    """Add higher moments, vol-of-vol, cross-asset correlations, and calendar effects.
+
+    All features are strictly trailing (no look-ahead).
+    """
+    ret = out["ret"]
+
+    # --- Higher moments (20d rolling) ---
+    out["ret_kurt_20d"] = ret.rolling(20, min_periods=10).kurt()
+    out["ret_skew_20d"] = ret.rolling(20, min_periods=10).skew()
+    out["ret_max_20d"] = ret.rolling(20, min_periods=10).max()
+
+    # --- Vol-of-vol term structure ---
+    if "gk_vol" in out.columns:
+        gk = out["gk_vol"]
+        out["vol_of_vol_5d"] = gk.shift(1).rolling(5, min_periods=3).std()
+        out["vol_of_vol_22d"] = gk.shift(1).rolling(22, min_periods=10).std()
+        short_vol = gk.shift(1).rolling(5, min_periods=3).mean()
+        long_vol = gk.shift(1).rolling(22, min_periods=10).mean()
+        out["vol_dispersion"] = short_vol - long_vol
+
+    # --- Cross-asset correlations (20d rolling) ---
+    for label in ["gld", "tlt"]:
+        col_name = f"corr_spy_{label}_20d"
+        if col_name not in out.columns:
+            out[col_name] = np.nan
+    if asset_dfs:
+        for sym, label in [("GLD", "gld"), ("TLT", "tlt")]:
+            if sym in asset_dfs and not asset_dfs[sym].empty:
+                adf = asset_dfs[sym][["date", "daily_return"]].copy()
+                adf["date"] = pd.to_datetime(adf["date"])
+                adf = adf.rename(columns={"daily_return": f"{label}_ret"})
+                out = out.merge(adf, on="date", how="left", suffixes=("", f"_{label}"))
+                if f"{label}_ret" in out.columns:
+                    combined = pd.concat([ret, out[f"{label}_ret"]], axis=1)
+                    combined.columns = ["spy_ret", f"{label}_ret"]
+                    out[f"corr_spy_{label}_20d"] = (
+                        combined["spy_ret"]
+                        .rolling(20, min_periods=10)
+                        .corr(combined[f"{label}_ret"])
+                    )
+
+    # --- Macro regime: yield curve slope change ---
+    if "yield_curve_10y_2y_lag1" in out.columns:
+        yc = out["yield_curve_10y_2y_lag1"]
+        out["yc_slope_change_20d"] = yc.diff(20)
+
+    # --- Calendar effects ---
+    if "date" in out.columns:
+        dates = pd.to_datetime(out["date"])
+        out["day_of_week"] = dates.dt.dayofweek / 4.0
+        out["month_of_year"] = dates.dt.month / 12.0
+
+    # Forward-fill correlation features (available from GLD/TLT inception onward)
+    for col in ["corr_spy_tlt_20d", "corr_spy_gld_20d", "yc_slope_change_20d"]:
+        if col in out.columns:
+            out[col] = out[col].ffill()
 
     return out

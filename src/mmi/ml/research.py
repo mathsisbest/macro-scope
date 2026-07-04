@@ -24,7 +24,7 @@ log = get_logger("ml.research")
 # ---------------------------------------------------------------------------
 
 MODELS = ["rv_har", "rv_ridge", "rv_lasso", "rv_gb", "rv_har_regime"]
-FEATURE_SETS = ["vol", "vol_macro"]
+FEATURE_SETS = ["vol", "vol_macro", "vol_rich"]
 HORIZONS = [5, 10]
 N_SPLITS_LIST = [5, 10]
 
@@ -53,9 +53,44 @@ def _model_params(model_name: str) -> list[dict]:
 
 
 def _load_macro_data(con) -> pd.DataFrame:
-    """Load fct_market_macro for macro features."""
+    """Load macro data for features — uses fct_market_macro (ASOF-joined to SPY daily).
+
+    fct_market_macro has the yield curve and VIX data already aligned to SPY trading dates
+    via ASOF join, so dates match perfectly. Falls back to fct_macro_indicator pivoted
+    (less ideal — FRED dates don't align with Yahoo dates).
+    """
     try:
-        return con.execute("select * from marts.fct_market_macro order by date").df()
+        mm = con.execute("select * from marts.fct_market_macro order by date").df()
+        if len(mm) > 100:
+            return mm
+    except Exception:
+        pass
+    # Fallback: pivot fct_macro_indicator (FRED dates won't align perfectly with Yahoo)
+    try:
+        series = ["T10Y2Y", "DGS10", "VIXCLS"]
+        frames = []
+        for sid in series:
+            df = con.execute(
+                "select date, value from marts.fct_macro_indicator "
+                "where series_id = ? order by date",
+                [sid],
+            ).df()
+            if not df.empty:
+                df.columns = ["date", sid]
+                frames.append(df)
+        if not frames:
+            return pd.DataFrame()
+        result = frames[0]
+        for f in frames[1:]:
+            result = result.merge(f, on="date", how="outer")
+        result = result.sort_values("date").reset_index(drop=True)
+        if "T10Y2Y" in result.columns:
+            result["yield_curve_10y_2y"] = result["T10Y2Y"]
+        if "DGS10" in result.columns:
+            result["us_10y"] = result["DGS10"]
+        if "VIXCLS" in result.columns:
+            result["vol_20d"] = result["VIXCLS"]
+        return result
     except Exception:
         return pd.DataFrame()
 
@@ -143,8 +178,8 @@ def run_research(
                     horizon=horizon,
                     n_splits=n_splits,
                     model_params=params if params else None,
-                    macro_df=macro_df if feat_set == "vol_macro" else None,
-                    asset_dfs=asset_dfs if feat_set == "vol_macro" else None,
+                    macro_df=macro_df if feat_set in ("vol_macro", "vol_rich") else None,
+                    asset_dfs=asset_dfs if feat_set in ("vol_macro", "vol_rich") else None,
                 )
             except Exception as e:
                 log.warning("FAILED %s/%s: %s", model_name, feat_set, e)
