@@ -433,69 +433,7 @@ with tab_ml:
             "and commit updated forecasts."
         )
     else:
-        # ---- Headline: Volatility model (secondary) ----------------------------------
-        # The vol model (GB + vol_rich) is now secondary to the return forecaster.
-        st.subheader("Volatility model")
-        st.caption("Gradient Boosting with rich features — secondary to the return forecaster.")
-        verdict_text = charts.vol_skill_verdict_text(metrics, symbol="SPY")
-        if "no demonstrated out-of-sample edge" in verdict_text:
-            st.warning(verdict_text)
-        else:
-            st.success(verdict_text)
-
-        vol_col1, vol_col2 = st.columns([1, 1])
-        with vol_col1:
-            _chart(charts.vol_skill_r2_chart(metrics, symbol="SPY", height=280))
-        with vol_col2:
-            _chart(charts.vol_skill_qlike_chart(metrics, symbol="SPY", height=280))
-
-        # Predicted next-week volatility
-        pred_vol = charts.vol_forecast_value(fc, symbol="SPY")
-        fc_col1, fc_col2 = st.columns([1, 1])
-        with fc_col1:
-            if pred_vol is not None:
-                st.metric(
-                    "SPY predicted next-week vol (annualised)",
-                    f"{pred_vol * 100:.2f}%",
-                )
-            else:
-                st.caption("No SPY volatility forecast available yet.")
-        with fc_col2:
-            rv_metrics = (
-                metrics[(metrics["model"] == "rv_har") & (metrics["symbol"] == "SPY")]
-                if not metrics.empty
-                else metrics
-            )
-            if not rv_metrics.empty and "trained_at" in rv_metrics.columns:
-                trained_at = rv_metrics["trained_at"].dropna()
-                if not trained_at.empty:
-                    st.caption(f"Model trained {trained_at.iloc[0]}")
-
-        # ---- Locked holdout (vol) — an honest extra OOS readout, NOT the gate ----------------
-        # Absent on small-data (the holdout is skipped) and pre-re-run snapshots; render only when
-        # the holdout_* rows are present. Never feeds skill_verdict() / the go-live gate.
-        vol_holdout = charts.holdout_readout(metrics, model="rv_har", symbol="SPY")
-        if vol_holdout is not None:
-            st.caption(charts.HOLDOUT_CAPTION)
-            hv1, hv2, hv3 = st.columns(3)
-            if "holdout_oos_r2" in vol_holdout:
-                hv1.metric("Holdout OOS R²", f"{vol_holdout['holdout_oos_r2']:.3f}")
-            if "holdout_qlike_skill_ratio" in vol_holdout:
-                hv2.metric(
-                    "Holdout QLIKE skill ratio", f"{vol_holdout['holdout_qlike_skill_ratio']:.3f}"
-                )
-            if "holdout_n_obs" in vol_holdout:
-                hv3.metric("Holdout obs", f"{vol_holdout['holdout_n_obs']:.0f}")
-
-        reg_view = data.regimes("SPY", rng_start)
-        if not reg_view.empty:
-            _chart(charts.regime_chart(reg_view, "SPY", height=280))
-
-        st.divider()
-
-        # ---- Return forecast — regime-aware multi-horizon (the certified model) ----
-        # GB (150, d=4) with vol_rich features. Cleared all 3 skill gates:
-        # R² ≥ 0.10, QLIKE ratio < 0.99, folds ≥ 3/10.
+        # ---- Return forecast — regime-aware multi-horizon (the headline model) ----
         st.subheader("Return forecast — regime-aware (multi-horizon)")
         st.caption(
             "Gradient Boosting with 35 features (yield curve, VIX, dollar, financial conditions, "
@@ -534,6 +472,63 @@ with tab_ml:
                             st.caption(f"**{regime.title()} vol**: {rm[key]:.1%}")
         else:
             st.info("No return forecasts available. Run `mmi ml` to generate predictions.")
+
+        st.divider()
+
+        # ---- Volatility model (secondary) ----
+        st.subheader("Volatility model")
+        st.caption("Gradient Boosting with rich features — secondary to the return forecaster.")
+        verdict_text = charts.vol_skill_verdict_text(metrics, symbol="SPY")
+        if "no demonstrated out-of-sample edge" in verdict_text:
+            st.warning(verdict_text)
+        else:
+            st.success(verdict_text)
+
+        vol_col1, vol_col2 = st.columns([1, 1])
+        with vol_col1:
+            _chart(charts.vol_skill_r2_chart(metrics, symbol="SPY", height=280))
+        with vol_col2:
+            _chart(charts.vol_skill_qlike_chart(metrics, symbol="SPY", height=280))
+
+        # Predicted next-week volatility
+        pred_vol = charts.vol_forecast_value(fc, symbol="SPY")
+        fc_col1, fc_col2 = st.columns([1, 1])
+        with fc_col1:
+            if pred_vol is not None:
+                st.metric(
+                    "SPY predicted next-week vol (annualised)",
+                    f"{pred_vol * 100:.2f}%",
+                )
+            else:
+                st.caption("No SPY volatility forecast available yet.")
+        with fc_col2:
+            rv_metrics = (
+                metrics[(metrics["model"] == "rv_har") & (metrics["symbol"] == "SPY")]
+                if not metrics.empty
+                else metrics
+            )
+            if not rv_metrics.empty and "trained_at" in rv_metrics.columns:
+                trained_at = rv_metrics["trained_at"].dropna()
+                if not trained_at.empty:
+                    st.caption(f"Model trained {trained_at.iloc[0]}")
+
+        # ---- Locked holdout (vol) ----
+        vol_holdout = charts.holdout_readout(metrics, model="rv_har", symbol="SPY")
+        if vol_holdout is not None:
+            st.caption(charts.HOLDOUT_CAPTION)
+            hv1, hv2, hv3 = st.columns(3)
+            if "holdout_oos_r2" in vol_holdout:
+                hv1.metric("Holdout OOS R²", f"{vol_holdout['holdout_oos_r2']:.3f}")
+            if "holdout_qlike_skill_ratio" in vol_holdout:
+                hv2.metric(
+                    "Holdout QLIKE skill ratio", f"{vol_holdout['holdout_qlike_skill_ratio']:.3f}"
+                )
+            if "holdout_n_obs" in vol_holdout:
+                hv3.metric("Holdout obs", f"{vol_holdout['holdout_n_obs']:.0f}")
+
+        reg_view = data.regimes("SPY", rng_start)
+        if not reg_view.empty:
+            _chart(charts.regime_chart(reg_view, "SPY", height=280))
 
 with tab_ai:
     brief = data.latest_brief()
