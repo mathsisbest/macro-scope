@@ -256,7 +256,7 @@ class TestMacroAccessors:
         assert list(df.columns) == ["date", "value", "change"]
 
     def test_market_macro_columns(self, snap_con):
-        """data.market_macro() -> select * must include the 7 contract columns."""
+        """data.market_macro() -> select * must include the contract columns (incl. 10Y-3M)."""
         df = _q(snap_con, "select * from marts.fct_market_macro order by date")
         assert not df.empty, "fct_market_macro is empty after round-trip"
         expected = {
@@ -266,7 +266,9 @@ class TestMacroAccessors:
             "vol_20d",
             "us_10y",
             "us_2y",
+            "us_3m",
             "yield_curve_10y_2y",
+            "yield_curve_10y_3m",
         }
         assert expected <= set(df.columns), f"Missing columns: {expected - set(df.columns)}"
 
