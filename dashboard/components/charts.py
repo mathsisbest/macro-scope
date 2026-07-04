@@ -323,25 +323,35 @@ def macro_chart(
 
 
 def yield_curve_chart(df: pd.DataFrame) -> go.Figure:
-    """Yield-curve spread (10Y − 2Y).  Inversion belt shaded red below zero."""
+    """Yield-curve spread — canonical 10Y−3M when available, else the 10Y−2Y proxy.
+
+    The recession-risk panel uses the 10Y−3M spread (NY Fed / Estrella-Mishkin canonical), so this
+    inversion chart mirrors it, falling back to 10Y−2Y only when the 3-month series is unavailable.
+    Inversion belt is below the zero line.
+    """
+    use_3m = "yield_curve_10y_3m" in df.columns and df["yield_curve_10y_3m"].notna().any()
+    col = "yield_curve_10y_3m" if use_3m else "yield_curve_10y_2y"
+    label = "10Y − 3M" if use_3m else "10Y − 2Y"
+
     fig = go.Figure()
     fig.add_scatter(
         x=df["date"],
-        y=df["yield_curve_10y_2y"],
-        name="10Y-2Y spread",
+        y=df[col],
+        name=f"{label} spread",
         line=dict(color=SERIES_YIELD),
+        hovertemplate="%{x|%Y-%m-%d}: %{y:+.2f} pp<extra></extra>",
     )
     fig.add_hline(y=0, line_color=PALETTE["down"], line_dash="dot")
     fig.update_layout(
         title=dict(
-            text="Yield-curve spread (10Y − 2Y) — inversion below 0",
+            text=f"Yield-curve spread ({label}) — inversion below 0",
             font=_TITLE_FONT,
         ),
     )
     _apply_axis_fonts(fig)
     # Y-range guard: keep the zero-line visible with symmetric padding
-    if not df.empty and "yield_curve_10y_2y" in df.columns:
-        series = df["yield_curve_10y_2y"].dropna()
+    if not df.empty and col in df.columns:
+        series = df[col].dropna()
         if not series.empty:
             lo, hi = float(series.min()), float(series.max())
             span = max(abs(lo), abs(hi), 0.5)

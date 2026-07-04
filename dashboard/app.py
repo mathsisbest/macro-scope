@@ -133,18 +133,18 @@ if provenance:
 
 # --------------------------------------------------------------------------- sidebar
 with st.sidebar:
-    st.subheader("⚙️ Pipeline health")
-    runs = data.pipeline_runs()
-    if not runs.empty:
-        st.dataframe(runs, hide_index=True, use_container_width=True)
-    elif is_sample is True:
-        st.caption("Sample data seeded (synthetic; no live ingestion runs).")
-    elif is_sample is False:
-        st.caption("Live data from a committed snapshot (no in-app ingestion log).")
-    elif as_of:
-        st.caption("Mixed or unrecorded data provenance.")
-    else:
-        st.caption("No data yet — run `make demo` or `mmi ingest`.")
+    with st.expander("⚙️ Pipeline health", expanded=False):
+        runs = data.pipeline_runs()
+        if not runs.empty:
+            st.dataframe(runs, hide_index=True, use_container_width=True)
+        elif is_sample is True:
+            st.caption("Sample data seeded (synthetic; no live ingestion runs).")
+        elif is_sample is False:
+            st.caption("Live data from a committed snapshot (no in-app ingestion log).")
+        elif as_of:
+            st.caption("Mixed or unrecorded data provenance.")
+        else:
+            st.caption("No data yet — run `make demo` or `mmi ingest`.")
     st.divider()
     st.caption(f"`{settings.storage_label()}`")
     st.caption(f"LLM provider · `{settings.llm_provider}`")
@@ -180,7 +180,13 @@ if not reg.empty:
     kpis.append({"label": "SPY vol regime", "value": str(reg["regime"].iloc[-1])})
 
 mm = data.market_macro()
-if not mm.empty and mm["yield_curve_10y_2y"].notna().any():
+# Prefer the canonical 10Y−3M spread (NY Fed / Estrella-Mishkin — the inversion investors watch
+# for recession risk, and what the recession-risk panel uses); fall back to 10Y−2Y when the 3M
+# series is unavailable (e.g. a snapshot taken before the 10Y−3M column existed).
+if not mm.empty and "yield_curve_10y_3m" in mm.columns and mm["yield_curve_10y_3m"].notna().any():
+    spread = mm["yield_curve_10y_3m"].dropna().iloc[-1]
+    kpis.append({"label": "10Y−3M spread", "value": f"{spread:+.2f} pp"})
+elif not mm.empty and mm["yield_curve_10y_2y"].notna().any():
     spread = mm["yield_curve_10y_2y"].dropna().iloc[-1]
     kpis.append({"label": "10Y−2Y spread", "value": f"{spread:+.2f} pp"})
 

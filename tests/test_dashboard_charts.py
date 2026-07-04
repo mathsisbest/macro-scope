@@ -38,6 +38,41 @@ def test_verdict_handles_empty():
     assert "Not enough" in charts.distinguishability_verdict(_pairs([]))
 
 
+# --- yield_curve_chart: canonical 10Y-3M when available, 10Y-2Y proxy fallback -----------------
+
+
+def _yc_df(with_3m: bool) -> pd.DataFrame:
+    d = {
+        "date": pd.bdate_range("2024-01-01", periods=10),
+        "yield_curve_10y_2y": [0.3] * 10,
+    }
+    if with_3m:
+        d["yield_curve_10y_3m"] = [0.55] * 10
+    return pd.DataFrame(d)
+
+
+def test_yield_curve_chart_uses_10y_3m_when_present():
+    fig = charts.yield_curve_chart(_yc_df(with_3m=True))
+    assert "10Y − 3M" in fig.layout.title.text
+    assert fig.data[0].name == "10Y − 3M spread"
+    assert list(fig.data[0].y) == [0.55] * 10  # plotted the 3M-based spread, not the 2Y
+    assert "pp" in fig.data[0].hovertemplate  # hover shows the spread in pp, 2dp
+
+
+def test_yield_curve_chart_falls_back_to_10y_2y_without_3m():
+    fig = charts.yield_curve_chart(_yc_df(with_3m=False))
+    assert "10Y − 2Y" in fig.layout.title.text
+    assert fig.data[0].name == "10Y − 2Y spread"
+    assert list(fig.data[0].y) == [0.3] * 10
+
+
+def test_yield_curve_chart_falls_back_when_3m_all_null():
+    df = _yc_df(with_3m=True)
+    df["yield_curve_10y_3m"] = pd.NA  # column present but unpopulated → use the 2Y proxy
+    fig = charts.yield_curve_chart(df)
+    assert "10Y − 2Y" in fig.layout.title.text
+
+
 # --- hover formatting: ticks AND hover read the same units ---------------------------------------
 
 
