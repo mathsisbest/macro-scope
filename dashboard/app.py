@@ -269,14 +269,14 @@ with tab_mkt:
         # ---- 2. Cross-asset performance, rebased to 0% at the window start --------------------
         perf = charts.rebased_performance(long_df)
         if not perf.empty:
-            _chart(charts.rebased_performance_chart(perf))
+            _chart(charts.rebased_performance_chart(perf, height=320))
 
         # ---- 3. Correlation heatmap (with the <30-obs guard) ---------------------------------
         corr = charts.correlation_matrix(long_df)
         if corr is None:
             st.caption(charts.CORR_TOO_SHORT)
         else:
-            _chart(charts.correlation_heatmap(corr))
+            _chart(charts.correlation_heatmap(corr, height=320))
             takeaway = charts.correlation_takeaway(corr)
             if takeaway:
                 st.caption(takeaway)
