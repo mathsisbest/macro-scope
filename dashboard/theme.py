@@ -139,9 +139,17 @@ def inject_css() -> None:
         @media (max-width: 768px) {{
             .block-container {{ padding-top: 2rem; padding-left: 1rem; padding-right: 1rem; }}
             [data-testid="stMetric"] {{ padding: 10px 12px; }}
-            /* Allow tab bar and segmented controls to scroll horizontally instead of clipping */
-            [data-testid="stHorizontalBlock"] {{ overflow-x: auto; }}
-            [data-testid="stSegmentedControl"] label {{ font-size: 0.8rem; }}
+            /* Tab bar: scroll horizontally with momentum on iOS */
+            [data-testid="stHorizontalBlock"] {{
+                overflow-x: auto; -webkit-overflow-scrolling: touch;
+            }}
+            /* Segmented controls: smaller font + scroll so options don't clip */
+            [data-testid="stSegmentedControl"] {{
+                overflow-x: auto; -webkit-overflow-scrolling: touch;
+            }}
+            [data-testid="stSegmentedControl"] label {{ font-size: 0.8rem; white-space: nowrap; }}
+            /* Radio buttons: stack vertically when labels are long (portfolio window selector) */
+            [data-testid="stRadio"] {{ flex-direction: column !important; }}
         }}
         </style>
         """,
