@@ -516,31 +516,22 @@ with tab_ml:
                 )
 
             # Per-horizon metrics
-            return_metrics = {
-                k: v
-                for k, v in metrics.items()
-                if k.startswith("SPY.") and ("dir_acc_h" in k or "r2_h" in k or "ic_h" in k)
-            }
-            if return_metrics:
+            rm = metrics[metrics["model"] == "return_rf"].set_index("metric")["value"]
+            if not rm.empty:
                 with st.expander("Model performance by horizon", expanded=False):
                     for h in [1, 5, 10, 20]:
-                        da = return_metrics.get(f"SPY.dir_acc_h{h}", 0)
-                        r2 = return_metrics.get(f"SPY.r2_h{h}", 0)
-                        ic = return_metrics.get(f"SPY.ic_h{h}", 0)
+                        da = rm.get(f"dir_acc_h{h}", 0)
+                        r2 = rm.get(f"r2_h{h}", 0)
+                        ic = rm.get(f"ic_h{h}", 0)
                         st.caption(f"**{h}d**: dir_acc={da:.1%}, R²={r2:.3f}, IC={ic:.3f}")
 
             # Regime breakdown
-            regime_metrics = {
-                k: v
-                for k, v in metrics.items()
-                if k.startswith("SPY.") and "dir_acc_" in k and "_h5" in k
-            }
-            if regime_metrics:
+            if not rm.empty:
                 with st.expander("Regime breakdown (5-day)", expanded=False):
                     for regime in ["low", "medium", "high"]:
-                        key = f"SPY.dir_acc_{regime}_h5"
-                        if key in regime_metrics:
-                            st.caption(f"**{regime.title()} vol**: {regime_metrics[key]:.1%}")
+                        key = f"dir_acc_{regime}_h5"
+                        if key in rm:
+                            st.caption(f"**{regime.title()} vol**: {rm[key]:.1%}")
         else:
             st.info("No return forecasts available. Run `mmi ml` to generate predictions.")
 
