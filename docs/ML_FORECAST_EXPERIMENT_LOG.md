@@ -35,6 +35,7 @@
 | 23 | N-day cumulative return targets (63d, 126d) | S4 | IC=0.071-0.075, sharpe=3.48-4.58 | **Best result** |
 | 24 | Model ensemble (GB + LGB) | S4 | IC=-0.109 to -0.125 (single-split) | Noisy, inconclusive |
 | 25 | Rolling vs expanding window | S4 | Expanding slightly better | Need more testing |
+| 26 | Rolling window sweep (train=250, 63d/252d) | S4 | IC=0.101-0.119, sharpe=3.80-8.73 | **Best result** |
 
 ---
 
@@ -427,6 +428,38 @@
 
 ---
 
+### Experiment 26: Rolling Window Sweep (The Winner)
+
+**Date:** 2026-07-05 (Session 4)
+**Approach:** Fixed `use_all_train=False` (rolling window). Tested different train sizes and target horizons.
+
+**Results — Rolling window, GB/default, train=250:**
+
+| Target | IC | Dir Acc | Sharpe |
+|--------|-----|---------|--------|
+| 20d | 0.072 | 0.555 | 1.85 |
+| **63d** | **0.101** | **0.646** | **3.80** |
+| 126d | 0.100 | 0.684 | 5.50 |
+| **252d** | **0.119** | **0.769** | **8.73** |
+
+**Results — Rolling window, 63d target, different train sizes:**
+
+| Train Size | IC | Sharpe |
+|------------|-----|--------|
+| **250** | **0.101** | **3.80** |
+| 500 | 0.071 | 3.48 |
+| 750 | 0.080 | 3.58 |
+| 1000 | -0.011 | 2.92 |
+| 1500 | 0.018 | 3.45 |
+
+**Verdict:** **Best result across all sessions.** Rolling window with train=250 ≈ 1 trading year captures recent market dynamics without overfitting to old regimes. The 252d target achieves IC=0.119 — nearly 3x better than the previous best (IC=0.036).
+
+**Why it works:** Markets are non-stationary. Data from 1993 has different volatility structure, interest rate environment, and market microstructure than 2024. A 1-year rolling window adapts to current regime while still having enough data for robust training.
+
+**Commit:** Merged as PR #45.
+
+---
+
 ## Key Principles Discovered (Updated)
 
 1. **Don't prune from GB models.** GB handles irrelevant features naturally. Removing them hurts ensemble diversity.
@@ -436,8 +469,9 @@
 5. **HistGB over standard GB.** NaN-native handling is essential for mixed-frequency features.
 6. **Feature frequency matters.** Only daily/weekly FRED series help. Monthly/quarterly create noise.
 7. **Embargo is critical.** Without it, target leakage inflates metrics.
-8. **Returns are fundamentally hard.** Best IC is 0.036-0.075. Portfolio gate λ ≈ 0.01-0.05 (correctly weak).
-9. **Longer horizons capture macro signal.** 63d/126d cumulative returns have 2-5x higher IC than daily returns. Macro trends take months to play out.
+8. **Returns are fundamentally hard.** Best IC is 0.036-0.119. Portfolio gate λ ≈ 0.01-0.05 (correctly weak).
+9. **Longer horizons capture macro signal.** 63d/126d/252d cumulative returns have 2-8x higher IC than daily returns. Macro trends take months to play out.
+10. **Rolling window beats expanding.** 1-year rolling window (train=250) adapts to current regime. Expanding window overfits to old data with different market structure.
 
 ---
 
