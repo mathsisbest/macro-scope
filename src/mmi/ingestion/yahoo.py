@@ -29,18 +29,19 @@ class YahooChartExtractor(Extractor):
     required_columns = ["symbol", "date", "close"]
     required = True  # core price history — a *total* failure must fail the run, not pass silently
     probe_url = _URL.format(symbol="SPY")
+    watermark_col = "date"
 
     def probe(self) -> None:
         """Probe Yahoo chart endpoint for SPY with a minimal 1-day range."""
         get_json(self.probe_url, headers=_HEADERS, params={"range": "1d", "interval": "1d"})
 
-    def fetch(self) -> pd.DataFrame:
+    def fetch(self, start_after: str | None = None) -> pd.DataFrame:
         assets = load_assets()
         frames: list[pd.DataFrame] = []
         for kind in _KINDS:
             for symbol in assets.get(kind, []):
                 try:
-                    df = self._fetch_one(symbol, kind)
+                    df = self._fetch_one(symbol, kind, start_after=start_after)
                 except Exception as exc:  # noqa: BLE001 - per-symbol best-effort; total failure caught below
                     self.log.warning("yahoo: %s failed: %s", symbol, exc)
                     continue
@@ -53,18 +54,24 @@ class YahooChartExtractor(Extractor):
             raise ValueError("Yahoo returned no usable data for any symbol")
         return pd.concat(frames, ignore_index=True)
 
-    def _fetch_one(self, symbol: str, kind: str) -> pd.DataFrame:
+    def _fetch_one(self, symbol: str, kind: str, start_after: str | None = None) -> pd.DataFrame:
         yahoo_symbol = f"{symbol}=X" if kind == "fx" else symbol
         # crypto_daily holds Yahoo crypto tickers (e.g. BTC-USD); store them as a clean symbol
         # ('BTC') under asset_class 'crypto' so they join the daily price path. This is the only
         # crypto source — BTC daily via Yahoo.
         stored_symbol = symbol.split("-")[0] if kind == "crypto_daily" else symbol
         asset_class = "crypto" if kind == "crypto_daily" else kind
-        # Use explicit period1/period2 (not range=max, which silently coarsens to monthly bars)
-        # to get the full *daily* history. period2 far in the future -> Yahoo clamps to today.
+        # Incremental: if start_after is set, fetch only data after that date.
+        # Yahoo's period1 is a Unix timestamp; convert the date string to epoch.
+        if start_after:
+            wm_date = pd.Timestamp(start_after).normalize()
+            # Add 1 day so we don't re-fetch the last loaded row
+            period1 = int((wm_date + pd.Timedelta(days=1)).timestamp())
+        else:
+            period1 = 0
         payload = get_json(
             _URL.format(symbol=yahoo_symbol),
-            params={"period1": 0, "period2": 9999999999, "interval": "1d"},
+            params={"period1": period1, "period2": 9999999999, "interval": "1d"},
             headers=_HEADERS,
         )
         result = (payload.get("chart") or {}).get("result")

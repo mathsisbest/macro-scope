@@ -17,6 +17,7 @@ class FredExtractor(Extractor):
     keys = ["series_id", "date"]
     required_columns = ["series_id", "date", "value"]
     probe_url = _URL
+    watermark_col = "date"
 
     def probe(self) -> None:
         """Probe FRED with a real key-authenticated request against a well-known series."""
@@ -35,16 +36,21 @@ class FredExtractor(Extractor):
             return "FRED_API_KEY not set (get a free key at fredaccount.stlouisfed.org)"
         return None
 
-    def fetch(self) -> pd.DataFrame:
-        frames = [self._fetch_series(s["id"]) for s in load_assets()["macro"]]
+    def fetch(self, start_after: str | None = None) -> pd.DataFrame:
+        frames = [
+            self._fetch_series(s["id"], start_after=start_after) for s in load_assets()["macro"]
+        ]
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
-    def _fetch_series(self, series_id: str) -> pd.DataFrame:
-        params = {
+    def _fetch_series(self, series_id: str, start_after: str | None = None) -> pd.DataFrame:
+        params: dict = {
             "series_id": series_id,
             "api_key": settings.fred_api_key,
             "file_type": "json",
         }
+        if start_after:
+            # FRED API accepts observation_start as YYYY-MM-DD
+            params["observation_start"] = str(start_after)[:10]
         obs = get_json(_URL, params=params).get("observations", [])
         df = pd.DataFrame(obs)
         if df.empty:

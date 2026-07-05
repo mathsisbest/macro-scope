@@ -31,14 +31,24 @@ class Extractor(ABC):
     required: bool = True
     #: URL hit by the connectivity probe (no full fetch/parse). Empty string = not configured.
     probe_url: str = ""
+    #: Column name to use for incremental watermark (e.g. "date"). None = full refresh.
+    watermark_col: str | None = None
 
     def __init__(self, loader: DuckDBLoader) -> None:
         self.loader = loader
         self.log = get_logger(f"ingest.{self.source}")
 
     @abstractmethod
-    def fetch(self) -> pd.DataFrame:
-        """Return a dataframe of new/updated rows for this source."""
+    def fetch(self, start_after: str | None = None) -> pd.DataFrame:
+        """Return a dataframe of new/updated rows for this source.
+
+        Parameters
+        ----------
+        start_after:
+            If incremental, the latest value of ``watermark_col`` already in the raw table.
+            Subclasses use this to fetch only new data (e.g. ``period1=<date>`` for Yahoo).
+            None means full refresh.
+        """
 
     def validate(self, df: pd.DataFrame) -> pd.DataFrame:
         """Schema-level validation. Override for source-specific rules."""
@@ -81,7 +91,16 @@ class Extractor(ABC):
             self.loader.finish_run(run_id, 0, "skipped", reason)
             return 0
         try:
-            df = self.validate(self.fetch())
+            # Incremental watermark: query the latest date in the raw table
+            start_after = None
+            if self.watermark_col:
+                wm = self.loader.watermark(self.table, self.watermark_col)
+                if wm:
+                    start_after = wm
+                    self.log.info("%s: incremental from %s", self.source, start_after)
+                else:
+                    self.log.info("%s: no existing data — full refresh", self.source)
+            df = self.validate(self.fetch(start_after=start_after))
             rows = self.loader.upsert(self.table, df, self.keys)
             self.loader.finish_run(run_id, rows, "success")
             return rows
