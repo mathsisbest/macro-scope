@@ -409,3 +409,55 @@ def source_freshness() -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def mart_summary() -> pd.DataFrame:
+    """Row counts and latest dates for each mart table.
+
+    Returns a DataFrame with: table, rows, latest_date.
+    """
+    tables = [
+        "fct_asset_daily",
+        "fct_macro_indicator",
+        "fct_market_macro",
+        "fct_regime",
+        "fct_recession_risk",
+        "model_metrics",
+        "ml_forecast",
+        "market_brief",
+    ]
+    rows = []
+    for table in tables:
+        try:
+            df = query(f"select count(*) as n from marts.{table}")
+            n = int(df["n"].iloc[0]) if not df.empty else 0
+            # Get latest date if the table has a date column
+            try:
+                date_q = f"select cast(max(date) as varchar) as d from marts.{table}"
+                date_df = query(date_q)
+                latest = (
+                    str(date_df["d"].iloc[0])
+                    if (not date_df.empty and date_df["d"].iloc[0])
+                    else None
+                )
+            except Exception:
+                latest = None
+            rows.append({"table": table, "rows": n, "latest_date": latest})
+        except Exception:
+            rows.append({"table": table, "rows": 0, "latest_date": None})
+    return pd.DataFrame(rows)
+
+
+def pipeline_summary() -> pd.DataFrame:
+    """Summary of pipeline run status: source, last status, last run time, row count."""
+    df = query(
+        "select source, status, rows, finished_at, "
+        "row_number() over (partition by source order by started_at desc) as rn "
+        "from raw.pipeline_runs"
+    )
+    if df.empty:
+        return pd.DataFrame(columns=["source", "last_status", "last_rows", "last_run"])
+    latest = df[df["rn"] == 1].copy()
+    col_map = {"status": "last_status", "rows": "last_rows", "finished_at": "last_run"}
+    latest = latest.rename(columns=col_map)
+    return latest[["source", "last_status", "last_rows", "last_run"]]

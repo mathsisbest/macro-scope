@@ -152,6 +152,23 @@ with st.sidebar:
             st.caption("Mixed or unrecorded data provenance.")
         else:
             st.caption("No data yet — run `make demo` or `mmi ingest`.")
+    with st.expander("🔍 Data quality", expanded=False):
+        # Pipeline run status
+        pipe = data.pipeline_summary()
+        if not pipe.empty:
+            st.caption("**Pipeline runs**")
+            for _, row in pipe.iterrows():
+                s = row["last_status"]
+                icon = "✅" if s == "success" else "❌" if s == "failed" else "⏭️"
+                st.caption(f"{icon} {row['source']}: {s} ({row['last_rows']:,} rows)")
+
+        # Mart row counts
+        mart = data.mart_summary()
+        if not mart.empty:
+            st.caption("**Mart row counts**")
+            for _, row in mart.iterrows():
+                st.caption(f"{row['table']}: {row['rows']:,} rows")
+
     with st.expander("📊 Source freshness", expanded=False):
         freshness = data.source_freshness()
         if not freshness.empty:
