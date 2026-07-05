@@ -81,8 +81,9 @@ def walk_forward_mu(
     skill_rows: list[dict] = []
 
     for symbol, group in asset_daily.sort_values("date").groupby("symbol"):
-        # Build features — use full OHLC from asset_daily_full if available
-        if asset_daily_full is not None and symbol in asset_daily_full["symbol"].to_numpy():
+        # Build features — use full OHLC from asset_daily_full when feature_set needs it
+        needs_ohlc = feature_set in ("vol", "vol_macro", "vol_rich")
+        if needs_ohlc and asset_daily_full is not None and symbol in asset_daily_full["symbol"].to_numpy():
             sym_data = asset_daily_full[asset_daily_full["symbol"] == symbol].copy()
             feats = make_features(
                 sym_data[["date", "open", "high", "low", "close", "daily_return"]],
@@ -90,7 +91,7 @@ def walk_forward_mu(
                 macro_df=macro_df,
                 asset_dfs=asset_dfs,
             )
-        elif "open" in group.columns:
+        elif needs_ohlc and "open" in group.columns:
             feats = make_features(
                 group[["date", "open", "high", "low", "close", "daily_return"]],
                 feature_set=feature_set,

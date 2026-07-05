@@ -67,7 +67,9 @@ def _load_macro_data(con) -> pd.DataFrame:
         # Pivot: each series_id becomes a column
         wide = df.pivot_table(index="date", columns="series_id", values="value", aggfunc="first")
         wide = wide.reset_index().sort_values("date")
-        # Forward-fill weekly/monthly series so ASOF merge can propagate them to daily dates
+        # Forward-fill all series aggressively — monthly/quarterly data gets the last
+        # known value carried forward to every subsequent daily date. This is standard
+        # practice for mixing low-frequency macro with high-frequency market data.
         for col in wide.columns:
             if col != "date":
                 wide[col] = wide[col].ffill()
