@@ -44,18 +44,22 @@ def feature_columns(feature_set: str = "default") -> list[str]:
                            fast enough for portfolio backtest).
         ``'vol_rich'`` — vol + macro + kurtosis/skewness + vol-of-vol + correlations
                          + calendar effects (50 features).
+        ``'vol_rich_plus'`` — vol_rich + unused FRED macro + breakeven inflation +
+                         recession prob + cross-asset spreads + mom_rev (75 features).
     """
     cols = [f"ret_lag{lag}" for lag in _LAGS]
     for w in _WINDOWS:
         cols += [f"roll_mean{w}", f"roll_std{w}"]
-    if feature_set in ("vol", "vol_macro", "vol_rich", "vol_medium"):
+    if feature_set in ("vol", "vol_macro", "vol_rich", "vol_medium", "vol_rich_plus"):
         cols += _vol_feature_names()
-    if feature_set in ("vol_macro", "vol_rich", "vol_medium"):
+    if feature_set in ("vol_macro", "vol_rich", "vol_medium", "vol_rich_plus"):
         cols += _MACRO_FEATURE_NAMES
-    if feature_set == "vol_rich":
+    if feature_set in ("vol_rich", "vol_rich_plus"):
         cols += _RICH_FEATURE_NAMES
     if feature_set == "vol_medium":
         cols += _MEDIUM_FEATURE_NAMES
+    if feature_set == "vol_rich_plus":
+        cols += _EXTENDED_FEATURE_NAMES
     return cols
 
 
@@ -123,6 +127,45 @@ _MEDIUM_FEATURE_NAMES: list[str] = [
 ]
 
 # Rich feature names (added by feature_set='vol_rich').
+_EXTENDED_FEATURE_NAMES: list[str] = [
+    # Unused FRED macro series (exist in macro_df, not wired into any feature set)
+    "indpro_growth_1y",
+    "cpi_inflation_1y",
+    "core_pce_inflation_1y",
+    "unrate_level",
+    "unrate_change_3m",
+    "payems_growth_1m",
+    "payems_growth_1y",
+    "m2_growth_1y",
+    "walcl_growth_4w",
+    "umcsent_level",
+    "umcsent_change_1m",
+    "sahm_rule_level",
+    # Breakeven inflation (TLT - TIP return spread)
+    "breakeven_inflation_20d",
+    "breakeven_inflation_60d",
+    "breakeven_inflation_change_20d",
+    # Recession probability
+    "recession_prob_lag1",
+    "recession_prob_change_20d",
+    # Cross-asset return spreads
+    "spy_gld_spread_20d",
+    "gld_tlt_spread_20d",
+    "vea_spy_spread_20d",
+    "spy_tip_spread_20d",
+    "btc_spy_spread_20d",
+    # Momentum features not in vol_rich (unique ones from mom_rev set)
+    "mom_21d",
+    "mom_accel",
+    "rev_10d",
+    "ret_zscore_20d",
+    "ret_zscore_60d",
+    "dist_from_mean_20d",
+    "dist_from_mean_60d",
+    "trend_60d",
+]
+
+
 _RICH_FEATURE_NAMES: list[str] = [
     # Higher moments
     "ret_kurt_20d",
@@ -214,7 +257,8 @@ def make_features(
     df:
         Must be sorted by date or will be sorted internally.
     feature_set:
-        ``'default'``, ``'vol'``, ``'vol_macro'``, ``'vol_medium'``, or ``'vol_rich'``.
+        ``'default'``, ``'vol'``, ``'vol_macro'``, ``'vol_medium'``, ``'vol_rich'``,
+        or ``'vol_rich_plus'``.
     macro_df:
         Optional macro dataframe (fct_market_macro) for ``vol_macro`` feature set.
     asset_dfs:
@@ -231,14 +275,16 @@ def make_features(
 
     if feature_set == "mom_rev":
         out = _add_mom_rev_features(out)
-    if feature_set in ("vol", "vol_macro", "vol_rich", "vol_medium"):
+    if feature_set in ("vol", "vol_macro", "vol_rich", "vol_medium", "vol_rich_plus"):
         out = _add_vol_features(out)
-    if feature_set in ("vol_macro", "vol_rich", "vol_medium"):
+    if feature_set in ("vol_macro", "vol_rich", "vol_medium", "vol_rich_plus"):
         out = _add_macro_features(out, macro_df, asset_dfs)
-    if feature_set == "vol_rich":
+    if feature_set in ("vol_rich", "vol_rich_plus"):
         out = _add_rich_features(out, asset_dfs)
     if feature_set == "vol_medium":
         out = _add_medium_features(out)
+    if feature_set == "vol_rich_plus":
+        out = _add_extended_features(out, asset_dfs)
 
     return out
 
@@ -529,8 +575,118 @@ def _add_rich_features(
     if "ret_momentum_63d" in out.columns and "gk_vol" in out.columns:
         out["momentum_x_vol"] = out["ret_momentum_63d"] * out["gk_vol"]
 
-    for col in ["corr_spy_tlt_20d", "corr_spy_gld_20d", "yc_slope_change_20d"]:
+    for col in ["corr_spy_tlt_20d", "corr_spy_gld_20d"]:
         if col in out.columns:
             out[col] = out[col].ffill()
+
+    return out
+
+
+def _add_extended_features(
+    out: pd.DataFrame,
+    asset_dfs: dict[str, pd.DataFrame] | None,
+) -> pd.DataFrame:
+    """Add extended features for vol_rich_plus: unused FRED, breakeven inflation,
+    recession probability, cross-asset spreads, and unique mom_rev features.
+
+    All features are leakage-free (shifted by 1). The function gracefully handles
+    missing data sources — if a required FRED column or asset isn't available, the
+    corresponding features are filled as NaN.
+    """
+    ret = out["ret"]
+
+    # --- Unused FRED macro series ---
+    fred_unused = [
+        # (FRED column, feature name, transform)
+        ("INDPRO", "indpro_growth_1y", lambda s: s.pct_change(252)),
+        ("CPIAUCSL", "cpi_inflation_1y", lambda s: s.pct_change(252)),
+        ("PCEPILFE", "core_pce_inflation_1y", lambda s: s.pct_change(252)),
+        ("UNRATE", "unrate_level", lambda s: s),
+        ("UNRATE", "unrate_change_3m", lambda s: s.diff(63)),
+        ("PAYEMS", "payems_growth_1m", lambda s: s.pct_change(21)),
+        ("PAYEMS", "payems_growth_1y", lambda s: s.pct_change(252)),
+        ("M2SL", "m2_growth_1y", lambda s: s.pct_change(252)),
+        ("WALCL", "walcl_growth_4w", lambda s: s.pct_change(20)),
+        ("UMCSENT", "umcsent_level", lambda s: s),
+        ("UMCSENT", "umcsent_change_1m", lambda s: s.diff(21)),
+        ("SAHMREALTIME", "sahm_rule_level", lambda s: s),
+    ]
+    for fred_col, feat_name, transform in fred_unused:
+        if fred_col in out.columns:
+            out[feat_name] = transform(out[fred_col]).shift(1)
+
+    # --- Breakeven inflation (TLT - TIP return spread) ---
+    if asset_dfs:
+        for sym, label in [("TLT", "tlt"), ("TIP", "tip")]:
+            if sym not in asset_dfs or asset_dfs[sym].empty:
+                continue
+            adf = asset_dfs[sym][["date", "daily_return"]].copy()
+            adf["date"] = pd.to_datetime(adf["date"])
+            adf = adf.rename(columns={"daily_return": f"{label}_ret"})
+            out = out.merge(adf, on="date", how="left", suffixes=("", f"_{label}"))
+
+        if "tlt_ret" in out.columns and "tip_ret" in out.columns:
+            be_raw = out["tlt_ret"] - out["tip_ret"]
+            out["breakeven_inflation_20d"] = be_raw.rolling(20, min_periods=10).mean().shift(1)
+            out["breakeven_inflation_60d"] = be_raw.rolling(60, min_periods=20).mean().shift(1)
+            out["breakeven_inflation_change_20d"] = out["breakeven_inflation_20d"].diff(20)
+
+    # --- Recession probability ---
+    if "recession_prob" in out.columns:
+        out["recession_prob_lag1"] = out["recession_prob"].shift(1)
+        out["recession_prob_change_20d"] = out["recession_prob"].diff(20).shift(1)
+
+    # --- Cross-asset return spreads ---
+    if asset_dfs:
+        extra_symbols = [
+            ("GLD", "gld"),
+            ("TLT", "tlt"),
+            ("VEA", "vea"),
+            ("TIP", "tip"),
+            ("BTC", "btc"),
+        ]
+        for sym, label in extra_symbols:
+            if sym not in asset_dfs or asset_dfs[sym].empty:
+                continue
+            if f"{label}_ret" in out.columns:
+                continue
+            adf = asset_dfs[sym][["date", "daily_return"]].copy()
+            adf["date"] = pd.to_datetime(adf["date"])
+            adf = adf.rename(columns={"daily_return": f"{label}_ret"})
+            out = out.merge(adf, on="date", how="left", suffixes=("", f"_{label}"))
+
+        for sym, label, feat_name in [
+            ("GLD", "gld", "spy_gld_spread_20d"),
+            ("VEA", "vea", "vea_spy_spread_20d"),
+            ("TIP", "tip", "spy_tip_spread_20d"),
+            ("BTC", "btc", "btc_spy_spread_20d"),
+        ]:
+            if f"{label}_ret" in out.columns:
+                spread = (ret - out[f"{label}_ret"]).rolling(20, min_periods=10).mean()
+                out[feat_name] = spread.shift(1)
+
+        if "gld_ret" in out.columns and "tlt_ret" in out.columns:
+            spread = (out["gld_ret"] - out["tlt_ret"]).rolling(20, min_periods=10).mean()
+            out["gld_tlt_spread_20d"] = spread.shift(1)
+
+    # --- Momentum features (unique ones not in vol_rich) ---
+    out["mom_21d"] = ret.rolling(21, min_periods=10).sum().shift(1)
+    out["mom_accel"] = out["mom_21d"] - out["mom_21d"].shift(21)
+    out["rev_10d"] = -ret.rolling(10, min_periods=5).sum().shift(1)
+    for w, name in [(20, "ret_zscore_20d"), (60, "ret_zscore_60d")]:
+        mean = ret.rolling(w, min_periods=w // 2).mean()
+        std = ret.rolling(w, min_periods=w // 2).std()
+        out[name] = ((ret - mean) / std.replace(0, np.nan)).shift(1)
+    for w, name in [(20, "dist_from_mean_20d"), (60, "dist_from_mean_60d")]:
+        mean = ret.rolling(w, min_periods=w // 2).mean()
+        out[name] = (ret - mean).shift(1)
+    for w, name in [(60, "trend_60d")]:
+        mean = ret.rolling(w, min_periods=w // 2).mean()
+        std = ret.rolling(w, min_periods=w // 2).std()
+        out[name] = (mean.abs() / std.replace(0, np.nan)).shift(1)
+
+    for col in _EXTENDED_FEATURE_NAMES:
+        if col not in out.columns:
+            out[col] = np.nan
 
     return out
