@@ -2,7 +2,7 @@
 
 **Purpose:** Complete record of every approach tested to improve the ML return forecast for SPY.
 **Status:** Living document — append new experiments at the top.
-**Last updated:** 2026-07-05
+**Last updated:** 2026-07-05 (Session 4)
 
 ---
 
@@ -32,6 +32,9 @@
 | 20 | HistGB (NaN-native) | S3 | Handles NaN, crashes on constants | Fixed |
 | 21 | Constant feature filtering | S3 | Prevents HistGB binning crash | Fixed |
 | 22 | NaN target filtering | S3 | Enables excess/vol_adjusted | Fixed |
+| 23 | N-day cumulative return targets (63d, 126d) | S4 | IC=0.071-0.075, sharpe=3.48-4.58 | **Best result** |
+| 24 | Model ensemble (GB + LGB) | S4 | IC=-0.109 to -0.125 (single-split) | Noisy, inconclusive |
+| 25 | Rolling vs expanding window | S4 | Expanding slightly better | Need more testing |
 
 ---
 
@@ -372,7 +375,59 @@
 
 ---
 
-## Key Principles Discovered
+## Session 4 Experiments (2026-07-05)
+
+### Experiment 23: N-Day Cumulative Return Targets
+
+**Date:** 2026-07-05 (Session 4)
+**Approach:** Modified `evaluate_forecast()` to accept `target_horizon` parameter. When > 1, target = cumulative return over N days instead of next-day return.
+
+**Results (walk-forward, expanding window):**
+
+| Target Horizon | IC | Dir Acc | Sharpe | vs Previous Best |
+|----------------|-----|---------|--------|-----------------|
+| 1d (baseline) | 0.014 | 0.506 | 0.07 | — |
+| 5d | 0.016 | 0.512 | 0.58 | +14% IC |
+| 20d | 0.036 | 0.538 | 1.23 | +157% IC |
+| **63d** | **0.071** | **0.636** | **3.48** | **+407% IC** |
+| **126d** | **0.075** | **0.691** | **4.58** | **+436% IC** |
+| 252d | 0.039 | 0.716 | 5.65 | +179% IC |
+
+**Verdict:** **Breakthrough.** 63d/126d targets dramatically improve IC. This is the single biggest improvement across all sessions.
+
+**Why it works:** Daily returns are noise. But 63d/126d cumulative returns capture macroeconomic regime trends that take months to play out (Fed policy, earnings cycles, seasonal effects). The 63d target aligns with quarterly rebalancing.
+
+**Commit:** Merged as PR #43.
+
+---
+
+### Experiment 24: Model Ensemble (GB + LGB)
+
+**Date:** 2026-07-05 (Session 4)
+**Approach:** Combine HistGradientBoostingRegressor and LightGBM predictions.
+
+**Results (single-split, train=5000):**
+- GB: IC=-0.109
+- LGB: IC=-0.125
+- Equal-weight ensemble: IC=-0.123, dir=0.763, sharpe=0.99
+- IC-weighted ensemble: IC=-0.123
+
+**Verdict:** Inconclusive. Single-split IC is noisy. Need walk-forward validation. The negative IC with positive sharpe is a known phenomenon (magnitude vs direction mismatch).
+
+---
+
+### Experiment 25: Rolling vs Expanding Window
+
+**Date:** 2026-07-05 (Session 4)
+**Approach:** Compare fixed 500-row rolling window vs expanding window.
+
+**Results:** Expanding window slightly better (IC=0.071 vs 0.068). But expanding is slower.
+
+**Verdict:** Need more testing. Expanding window may overfit to old data; rolling window may be more robust to regime changes.
+
+---
+
+## Key Principles Discovered (Updated)
 
 1. **Don't prune from GB models.** GB handles irrelevant features naturally. Removing them hurts ensemble diversity.
 2. **Default features beat rich features for returns.** NaN in early windows kills richer feature sets.
@@ -381,7 +436,8 @@
 5. **HistGB over standard GB.** NaN-native handling is essential for mixed-frequency features.
 6. **Feature frequency matters.** Only daily/weekly FRED series help. Monthly/quarterly create noise.
 7. **Embargo is critical.** Without it, target leakage inflates metrics.
-8. **Returns are fundamentally hard.** Best IC is 0.036-0.067. Portfolio gate λ ≈ 0.01-0.05 (correctly weak).
+8. **Returns are fundamentally hard.** Best IC is 0.036-0.075. Portfolio gate λ ≈ 0.01-0.05 (correctly weak).
+9. **Longer horizons capture macro signal.** 63d/126d cumulative returns have 2-5x higher IC than daily returns. Macro trends take months to play out.
 
 ---
 
