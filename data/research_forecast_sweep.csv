@@ -1,0 +1,9 @@
+model,feature_set,target_type,horizon,ic,da,r2,n
+gb,default,raw,5,-0.106538,0.532143,-0.135096,1680
+gb,default,excess,5,-0.062344,0.469048,-0.134259,1680
+gb,vol_medium,raw,5,-0.092415,0.525595,-0.115742,1680
+gb,vol_medium,excess,5,-0.042485,0.463095,-0.10826,1680
+lgb,default,raw,5,-0.064527,0.539881,-0.144495,1680
+lgb,default,excess,5,-0.018118,0.483333,-0.108352,1680
+lgb,vol_medium,raw,5,0.061349,0.541667,-0.046039,1680
+lgb,vol_medium,excess,5,0.067019,0.469643,-0.053306,1680
