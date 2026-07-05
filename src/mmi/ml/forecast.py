@@ -215,14 +215,18 @@ def evaluate_forecast(
     else:
         for start in range(0, n - train_size, test_size):
             if use_all_train:
+                # Expanding window: always train from row 0 to current position
+                train_start = 0
                 train_end = start + train_size
             else:
+                # Rolling window: fixed-size training window that slides forward
+                train_start = start
                 train_end = start + train_size
 
             train_end = min(train_end, n - 1)
             test_end = min(train_end + test_size, n)
 
-            train_idx = list(range(start, train_end))
+            train_idx = list(range(train_start, train_end))
             test_idx = list(range(train_end, test_end))
             if not test_idx:
                 break
