@@ -713,6 +713,38 @@
 
 ---
 
+### Experiment 37: Rolling + Expanding Ensemble
+
+**Date:** 2026-07-05 (Session 4)
+**Approach:** Combine rolling window and expanding window model predictions.
+
+**Results (63d target):**
+
+| Model | IC |
+|-------|-----|
+| Rolling | 0.077 |
+| Expanding | 0.004 |
+| Equal-weight ensemble | 0.061 |
+| IC-weighted ensemble | 0.076 |
+| Best (w=1.00) | 0.077 |
+
+**Results across horizons:**
+
+| Horizon | Rolling | Expanding | Ensemble |
+|---------|---------|-----------|----------|
+| 20d | 0.063 | 0.008 | 0.052 |
+| 63d | 0.077 | 0.004 | 0.061 |
+| 126d | 0.064 | -0.044 | 0.032 |
+| 252d | 0.150 | 0.026 | 0.132 |
+
+**Verdict:** **Ensemble doesn't help.** Expanding window has near-zero IC (0.004-0.026) across all horizons. Adding it to the ensemble only dilutes the rolling model's signal. The best ensemble weight is w=1.00 (pure rolling).
+
+**Why:** Expanding window includes data from 1993+ which has different market structure. Old data doesn't predict current returns. Rolling window (1-year) adapts to current regime.
+
+**Lesson:** Rolling window is **strictly better** than expanding window for this task. No ensemble benefit.
+
+---
+
 ### Experiment 37: vol_rich_plus Feature Set Sweep
 
 **Date:** 2026-07-05 (Session 5)
@@ -787,6 +819,7 @@
 10. **Rolling window beats expanding.** 1-year rolling window (train=250) adapts to current regime. Expanding window overfits to old data with different market structure.
 11. **ML signal works for portfolio allocation.** Even with IC=0.10, the ML forecast improves portfolio returns by ~5% annualized when used for asset weighting. The signal is asset-specific (GLD IC=0.301, SPY IC=0.101, TLT IC=-0.122).
 12. **Regime sizing needs high IC.** At IC=0.10, sizing up/down doesn't help — noise amplification cancels signal amplification. Would need IC > 0.20 for regime sizing to add value.
+13. **Rolling beats expanding — no ensemble benefit.** Expanding window has near-zero IC across all horizons. Old data doesn't predict current returns. Rolling window is strictly better. Don't ensemble them.
 11. **Multi-asset forecasting reveals asset-specific predictability.** Gold is the most predictable (structural macro drivers), SPY is predictable (cycle-driven), TLT is not (rate path is a random walk).
 12. **Positive R² IS achievable.** GLD h=252 vol_macro achieves R²=+0.568 — the model explains 57% of 1-year gold return variance. The previous dogma ("returns have near-zero R²") was horizon-limited AND asset-limited, not fundamental.
 13. **Feature engineering is ASSET-SPECIFIC.** Gold needs macro features (vol_macro). SPY needs only vol features (no macro — causes overfitting). TLT is unpredictable regardless of features. One-size-fits-all feature engineering is worse than doing nothing.
