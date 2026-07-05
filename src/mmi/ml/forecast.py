@@ -22,7 +22,7 @@ from collections.abc import Sequence
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import make_scorer
 
 from . import features as feat
@@ -30,7 +30,7 @@ from . import features as feat
 # ---------- public constants ----------
 
 _MODELS = {
-    "gb": GradientBoostingRegressor,
+    "gb": HistGradientBoostingRegressor,
     "lgb": lgb.LGBMRegressor,
 }
 
@@ -43,7 +43,10 @@ _TARGET_TYPES = ("raw", "vol_adjusted", "excess")
 def _model_kwargs(model_name: str) -> dict:
     kw: dict = {"random_state": 42}
     if model_name == "gb":
-        kw.update(n_estimators=500, max_depth=3, min_samples_leaf=20, loss="squared_error")
+        kw.update(
+            max_iter=150, max_depth=4, min_samples_leaf=20,
+            loss="squared_error", max_bins=128,
+        )
     elif model_name == "lgb":
         kw.update(n_estimators=500, max_depth=3, min_child_samples=20, num_leaves=7)
     return kw
@@ -186,6 +189,14 @@ def evaluate_forecast(
         y_train = y_train.values.ravel()
         X_train = df_train[available_cols].values
         X_test = df_test[available_cols].values
+
+        # Drop constant features (std==0) — HistGB crashes on them
+        train_std = np.nanstd(X_train, axis=0)
+        non_const = train_std > 0
+        if non_const.sum() < 2:
+            continue
+        X_train = X_train[:, non_const]
+        X_test = X_test[:, non_const]
 
         if len(y_train) < 50:
             break
