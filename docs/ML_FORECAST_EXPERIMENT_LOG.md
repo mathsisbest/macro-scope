@@ -2,7 +2,7 @@
 
 **Purpose:** Complete record of every approach tested to improve the ML return forecast for SPY.
 **Status:** Living document — append new experiments at the top.
-**Last updated:** 2026-07-05 (Session 4)
+**Last updated:** 2026-07-05 (Session 5)
 
 ---
 
@@ -13,6 +13,8 @@
 | 27 | Portfolio integration — ML-tilted strategy | S4 | +5.36% annual, Sharpe 0.21 vs -0.10 | **Portfolio works** |
 | 28-34 | Multi-asset sweep (GLD/SPY/TLT) | S4 | GLD IC=0.876, SPY IC=0.282, TLT IC=0.291 | Asset-specific best configs |
 | 35 | Momentum + mean-reversion features | S4 | IC=0.058 (marginal), momentum regime IC=0.140 | Key regime finding |
+| 36 | vol_rich_plus — 32 new features (unused FRED, breakeven, recession, cross-asset, mom_rev) | S4 | GLD: IC=0.777 (-), SPY: IC=0.06 (crashed), TLT: IC=0.15 (worse) | **No improvement** |
+| 37 | Cross-ensemble + regime-switching + interactions sweep | S4 | SPY regime IC=0.393 (single-split), 0.265 (walk-forward — fluke) | **No improvement** |
 | 28 | Multi-asset long-horizon sweep (SPY/TLT/GLD, 21d-252d) | S4 | SPY h=252 LGB/vol_m: IC=0.35, DA=0.78; GLD h=252 GB/vol_m: IC=0.49, R²=+0.12 | **Best ever** |
 | 29 | GLD h=252 walk-forward validation | S4 | IC=0.488, DA=0.723, R²=+0.118 — first config with positive R² | **Breakthrough** |
 | 30 | ALL feature sets (5 sets × 3 assets × 2 models) at long horizons | S4 | GLD vol_macro: IC=0.677, R²=+0.456; SPY vol: IC=0.333; vol_macro hurts SPY | **Asset-specific** |
@@ -20,6 +22,10 @@
 | 32 | GLD hyperparameter + horizon sweep | S4 | h=378 vol_macro: IC=0.876, R²=+0.767; HPs flat (default is optimal) | **Even better** |
 | 33 | TLT comprehensive sweep (all h × all feature sets) | S4 | h=63 vol_rich LGB: IC=0.291, DA=0.613 | **First real TLT signal** |
 | 34 | GLD h=378 + TLT h=63 walk-forward validation | S4 | GLD: IC=0.876, R²=+0.767; TLT: IC=0.291, DA=0.613 | **Confirmed** |
+| 35 | Momentum + mean-reversion features | S4 | IC=0.058 (marginal), momentum regime IC=0.140 | Key regime finding |
+| 36 | Regime-aware portfolio sizing | S4 | Neg mult 2x/0.5x: Sharpe=0.20 (no improvement) | **Needs IC > 0.20** |
+| 37 | vol_rich_plus — 32 new features (unused FRED, breakeven, recession, cross-asset, mom_rev) | S5 | GLD: IC=0.777 (-), SPY: IC=0.06 (crashed), TLT: IC=0.15 (worse) | **No improvement** |
+| 38 | Cross-ensemble + regime-switching + interactions sweep | S5 | SPY regime IC=0.393 (single-split), 0.265 (walk-forward — fluke) | **No improvement** |
 | 1 | Regime-aware RF return forecaster | S1 | dir_acc=0.54, R²=-0.062 | Marginal |
 | 2 | Macro feature expansion (18 FRED) | S1 | R² dropped 0.115→0.091 (vol) | Reverted |
 | 3 | Low-frequency FRED features (CPI, GDP) | S1 | R² dropped, artificial plateaus | Reverted |
@@ -707,6 +713,66 @@
 
 ---
 
+### Experiment 37: vol_rich_plus Feature Set Sweep
+
+**Date:** 2026-07-05 (Session 5)
+**Approach:** Created a `vol_rich_plus` feature set combining vol_rich + 32 new features: 12 unused FRED series (INDPRO, CPI, Core PCE, UNRATE, PAYEMS, M2, WALCL, UMCSENT, SAHM), breakeven inflation (TLT/TIP spread), recession probability, cross-asset return spreads (VEA/SPY, GLD/TLT, BTC/SPY), and unique mom_rev features.
+
+**Walk-forward results (single-split):**
+
+| Asset | vol_rich_plus | Current Best | Δ |
+|-------|:------------:|:------------:|:-:|
+| GLD h=378 | IC=0.777, R²=+0.493 | IC=0.763, R²=+0.488 (vol_macro) | ≈ |
+| SPY h=252 | IC=0.061, DA=0.31 | IC=0.333, DA=0.80 (vol) | **Crashed** |
+| TLT h=63 | IC=0.151, DA=0.51 | IC=0.254, DA=0.60 (vol_rich) | **Worse** |
+
+**Key findings:**
+- **GLD is saturated** — vol_macro captures everything. Adding 32 more features barely moves IC (0.763→0.777)
+- **SPY crashes with more features** — confirms vol-only is the ceiling. Macro, cross-asset, momentum all add noise
+- **TLT gets worse** — vol_rich at h=63 is genuinely optimal for bonds
+
+**Why:** The unused FRED series are mostly monthly (CPI, UNRATE, M2, INDPRO). At short horizons, they're too slow to add signal. At long horizons, their information is already captured by the existing daily macro features (VIX, yield curve, dollar, NFCI).
+
+**Verdict:** **Negative result.** The existing best configs are genuinely optimal. Adding more features doesn't help.
+
+---
+
+### Experiment 38: Cross-Ensemble + Regime-Switching + Interactions
+
+**Date:** 2026-07-05 (Session 5)
+**Approach:** Tested 4 ML improvement techniques on all 3 assets:
+
+1. **Cross-feature-set ensemble** — average predictions from best feature set + alternate
+2. **Regime-switching (momentum)** — separate models for pos/neg momentum regimes
+3. **Regime-switching (vol)** — separate models for high/low vol regimes
+4. **Feature interactions** — top-5 feature interaction terms added to existing feature set
+
+**Single-split results:**
+
+| Method | GLD IC | SPY IC | TLT IC |
+|--------|:-----:|:-----:|:-----:|
+| Baseline | **0.763** | **0.333** | **0.254** |
+| Cross-ensemble | 0.744 | -0.079 (crashed) | 0.216 |
+| Regime (momentum) | 0.670 | 0.393 (best!) | 0.062 |
+| Regime (vol) | 0.663 | 0.252 | 0.044 |
+| Interactions | 0.786 | 0.318 | **0.276** |
+
+**Walk-forward validation of winners:**
+
+| Config | Single-split IC | Walk-forward IC | Verdict |
+|--------|:--------------:|:--------------:|---------|
+| SPY momentum regime | **0.393** | **0.265** (vs 0.282 baseline) | **Fluke** |
+| GLD interactions | 0.786 | 0.879 (vs 0.876 baseline) | **Noise** |
+
+**Key findings:**
+- **SPY momentum regime looked promising** (IC 0.333→0.393, +18%) but was single-split fluke. Walk-forward shows no improvement
+- **GLD interactions** are noise — already at IC=0.88 ceiling. Interaction terms can't improve what's already saturated
+- **Cross-ensemble hurts** because vol_rich on SPY is terrible, and vol_macro on TLT is terrible — averaging good + bad predictions always gives mediocre
+
+**Verdict:** **Dead end across all techniques.** The feature/horizon/model space is fully explored. Best configs are genuinely optimal.
+
+---
+
 ## Key Principles Discovered (Updated)
 
 1. **Don't prune from GB models.** GB handles irrelevant features naturally. Removing them hurts ensemble diversity.
@@ -726,6 +792,7 @@
 13. **Feature engineering is ASSET-SPECIFIC.** Gold needs macro features (vol_macro). SPY needs only vol features (no macro — causes overfitting). TLT is unpredictable regardless of features. One-size-fits-all feature engineering is worse than doing nothing.
 14. **Gold is the most predictable portfolio asset.** Gold is a pure macro instrument (real rates, dollar, VIX). No earnings, cash flows, or idiosyncratic risk. The 1-year gold return is fundamentally forecastable.
 15. **Macro features HURT equity forecasts at all horizons.** For SPY, adding any FRED/macro data crashes IC from positive to strongly negative. Macro variables are too correlated with 1-year equity returns, causing the model to overfit to spurious relationships.
+16. **The feature/horizon/model space is fully explored.** Adding more features, regime-switching, cross-ensembling, or interaction terms does not beat the best configs. GLD is saturated at vol_macro (IC=0.88), SPY at vol-only (IC=0.28), TLT at vol_rich (IC=0.29). No further ML improvement is possible from the available data.
 
 ---
 

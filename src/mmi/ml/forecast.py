@@ -384,6 +384,7 @@ def _compute_metrics(
         "direction_accuracy": direction_accuracy,
         "prediction_count": len(y_true),
         "predictions": y_pred,
+        "y_true": y_true,
         "dates": df.loc[valid, "date"],
         "sharpe": sharpe,
         "r2": r2,
