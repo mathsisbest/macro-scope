@@ -157,6 +157,10 @@ def inject_css() -> None:
             .leaderboard [data-testid="column"] {{
                 flex: 0 0 50% !important; min-width: 0 !important;
             }}
+            /* Sidebar: collapsed on mobile, expanded on desktop */
+            [data-testid="stSidebar"][aria-expanded="false"] {{
+                transform: translateX(-100%);
+            }}
         }}
         </style>
         """,
