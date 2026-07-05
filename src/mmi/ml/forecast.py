@@ -48,7 +48,7 @@ def _model_kwargs(model_name: str) -> dict:
             loss="squared_error", max_bins=128,
         )
     elif model_name == "lgb":
-        kw.update(n_estimators=150, max_depth=4, min_child_samples=20, num_leaves=15)
+        kw.update(n_estimators=150, max_depth=4, min_child_samples=20, num_leaves=15, verbose=-1)
     return kw
 
 
@@ -100,6 +100,7 @@ def evaluate_forecast(
     macro_df: pd.DataFrame | None = None,
     asset_dfs: dict[str, pd.DataFrame] | None = None,
     target_type: str = "raw",
+    target_horizon: int = 1,
     ensemble_method: str = "mean",
     use_all_train: bool = False,
     loss: str = "squared_error",
@@ -154,6 +155,11 @@ def evaluate_forecast(
         df = feat.make_features(df, feature_set="vol_medium")
     else:
         df = feat.make_features(df, feature_set=feature_set, macro_df=macro_df, asset_dfs=asset_dfs)
+
+    # Override target if target_horizon > 1: use cumulative N-day return
+    if target_horizon > 1:
+        df["target_next_ret"] = df["ret"].rolling(target_horizon).sum().shift(-target_horizon)
+
     df = df.dropna(subset=["target_next_ret"]).reset_index(drop=True)
 
     if len(df) < train_size + 1:
