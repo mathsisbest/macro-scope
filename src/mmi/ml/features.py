@@ -229,6 +229,8 @@ def make_features(
         out[f"roll_std{w}"] = out["ret"].rolling(w).std()
     out["target_next_ret"] = out["ret"].shift(-1)
 
+    if feature_set == "mom_rev":
+        out = _add_mom_rev_features(out)
     if feature_set in ("vol", "vol_macro", "vol_rich", "vol_medium"):
         out = _add_vol_features(out)
     if feature_set in ("vol_macro", "vol_rich", "vol_medium"):
@@ -237,6 +239,41 @@ def make_features(
         out = _add_rich_features(out, asset_dfs)
     if feature_set == "vol_medium":
         out = _add_medium_features(out)
+
+    return out
+
+
+def _add_mom_rev_features(out: pd.DataFrame) -> pd.DataFrame:
+    """Add momentum and mean-reversion features (all leakage-free)."""
+    ret = out["ret"]
+
+    # Momentum: cumulative returns
+    out["mom_21d"] = ret.rolling(21, min_periods=10).sum().shift(1)
+    out["mom_63d"] = ret.rolling(63, min_periods=30).sum().shift(1)
+    out["mom_126d"] = ret.rolling(126, min_periods=60).sum().shift(1)
+    out["mom_252d"] = ret.rolling(252, min_periods=120).sum().shift(1)
+    out["mom_accel"] = out["mom_63d"] - out["mom_63d"].shift(21)
+
+    # Mean-reversion: short-term reversals
+    out["rev_5d"] = -ret.rolling(5, min_periods=3).sum().shift(1)
+    out["rev_10d"] = -ret.rolling(10, min_periods=5).sum().shift(1)
+
+    # Z-scores
+    for w, name in [(20, "ret_zscore_20d"), (60, "ret_zscore_60d")]:
+        mean = ret.rolling(w, min_periods=w // 2).mean()
+        std = ret.rolling(w, min_periods=w // 2).std()
+        out[name] = ((ret - mean) / std.replace(0, np.nan)).shift(1)
+
+    # Distance from rolling mean
+    for w, name in [(20, "dist_from_mean_20d"), (60, "dist_from_mean_60d")]:
+        mean = ret.rolling(w, min_periods=w // 2).mean()
+        out[name] = (ret - mean).shift(1)
+
+    # Trend strength
+    for w, name in [(20, "trend_20d"), (60, "trend_60d")]:
+        mean = ret.rolling(w, min_periods=w // 2).mean()
+        std = ret.rolling(w, min_periods=w // 2).std()
+        out[name] = (mean.abs() / std.replace(0, np.nan)).shift(1)
 
     return out
 
