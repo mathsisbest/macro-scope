@@ -40,18 +40,22 @@ def feature_columns(feature_set: str = "default") -> list[str]:
         ``'default'`` — lagged returns + rolling stats.
         ``'vol'`` — default + Garman-Klass + HAR cascade + trailing RV.
         ``'vol_macro'`` — vol + yield curve + VIX + cross-asset vol.
+        ``'vol_medium'`` — vol + macro subset + key rich features (~27 total,
+                           fast enough for portfolio backtest).
         ``'vol_rich'`` — vol + macro + kurtosis/skewness + vol-of-vol + correlations
-                         + calendar effects.
+                         + calendar effects (50 features).
     """
     cols = [f"ret_lag{lag}" for lag in _LAGS]
     for w in _WINDOWS:
         cols += [f"roll_mean{w}", f"roll_std{w}"]
-    if feature_set in ("vol", "vol_macro", "vol_rich"):
+    if feature_set in ("vol", "vol_macro", "vol_rich", "vol_medium"):
         cols += _vol_feature_names()
-    if feature_set in ("vol_macro", "vol_rich"):
+    if feature_set in ("vol_macro", "vol_rich", "vol_medium"):
         cols += _MACRO_FEATURE_NAMES
     if feature_set == "vol_rich":
         cols += _RICH_FEATURE_NAMES
+    if feature_set == "vol_medium":
+        cols += _MEDIUM_FEATURE_NAMES
     return cols
 
 
@@ -101,6 +105,23 @@ _MACRO_FEATURE_NAMES: list[str] = [
     "tlt_vol_20d_lag1",
 ]
 
+# Medium feature names (added by feature_set='vol_medium' — fast, key predictors only).
+_MEDIUM_FEATURE_NAMES: list[str] = [
+    # Vol-of-vol term structure (key regime signal)
+    "vol_of_vol_5d",
+    "vol_of_vol_22d",
+    "vol_dispersion",
+    # Momentum + mean-reversion (return-prediction signals)
+    "ret_momentum_63d",
+    "ret_reversal_5d",
+    "ret_reversal_20d",
+    "ret_vol_ratio_5d_20d",
+    "ret_trend_strength",
+    # Interaction: VIX × yield curve
+    "vix_x_yc_slope",
+    "nfci_x_dollar_zscore",
+]
+
 # Rich feature names (added by feature_set='vol_rich').
 _RICH_FEATURE_NAMES: list[str] = [
     # Higher moments
@@ -128,6 +149,17 @@ _RICH_FEATURE_NAMES: list[str] = [
     "vol_disp_x_vol_of_vol",
     "nfci_x_dollar_zscore",
     "skew_x_vol_dispersion",
+    # Return-prediction features: momentum + mean-reversion + trend
+    "ret_momentum_63d",     # 3-month cumulative return (momentum signal)
+    "ret_momentum_126d",    # 6-month cumulative return (intermediate momentum)
+    "ret_momentum_252d",    # 12-month cumulative return (long-term momentum)
+    "ret_reversal_5d",      # 5-day cumulative return (short-term reversal)
+    "ret_reversal_20d",     # 20-day cumulative return (mean-reversion signal)
+    "ret_vol_ratio_5d_20d", # short-term vol / long-term vol (regime shift proxy)
+    "ret_trend_strength",   # |mean_20d| / std_20d (signal-to-noise ratio)
+    "ret_autocorr_20d",     # 20-day return autocorrelation (persistence signal)
+    "yc_slope_x_vix",       # yield curve slope × VIX level (macro regime)
+    "momentum_x_vol",       # 6m momentum × 20d vol (risk-adjusted momentum)
 ]
 
 
@@ -182,7 +214,7 @@ def make_features(
     df:
         Must be sorted by date or will be sorted internally.
     feature_set:
-        ``'default'``, ``'vol'``, or ``'vol_macro'``.
+        ``'default'``, ``'vol'``, ``'vol_macro'``, ``'vol_medium'``, or ``'vol_rich'``.
     macro_df:
         Optional macro dataframe (fct_market_macro) for ``vol_macro`` feature set.
     asset_dfs:
@@ -197,31 +229,26 @@ def make_features(
         out[f"roll_std{w}"] = out["ret"].rolling(w).std()
     out["target_next_ret"] = out["ret"].shift(-1)
 
-    if feature_set in ("vol", "vol_macro", "vol_rich"):
+    if feature_set in ("vol", "vol_macro", "vol_rich", "vol_medium"):
         out = _add_vol_features(out)
-    if feature_set in ("vol_macro", "vol_rich"):
+    if feature_set in ("vol_macro", "vol_rich", "vol_medium"):
         out = _add_macro_features(out, macro_df, asset_dfs)
     if feature_set == "vol_rich":
         out = _add_rich_features(out, asset_dfs)
+    if feature_set == "vol_medium":
+        out = _add_medium_features(out)
 
     return out
 
 
 def _add_vol_features(out: pd.DataFrame) -> pd.DataFrame:
     """Add Garman-Klass vol + HAR cascade + extra trailing RV windows (all leakage-free)."""
-    # Garman-Klass: uses same-day OHLC — row t features describe day-t's own price range.
-    # This is the conventional GK usage: today's intraday range proxy is known at close.
-    # The *target* for Wave-2 (forward RV) is always label = RV_{t+1..t+5} so no leakage.
     gk = _garman_klass_vol(out["open"], out["high"], out["low"], out["close"])
     out["gk_vol"] = gk
 
-    # HAR cascade — trailing rolling means of gk_vol; min_periods=1 so early rows aren't all NaN
     for w in _VOL_HAR_WINDOWS:
-        # shift(1) so that at row t we use only gk_vol from rows < t (strict past).
-        # For the daily lag (1d) this is just yesterday's GK vol.
         out[f"har_vol_{w}d"] = gk.shift(1).rolling(w, min_periods=1).mean()
 
-    # Longer trailing realized-vol windows (std of lagged GK vol)
     for w in _VOL_EXTRA_WINDOWS:
         out[f"rv_trail_{w}d"] = gk.shift(1).rolling(w, min_periods=1).std()
 
@@ -233,14 +260,9 @@ def _add_macro_features(
     macro_df: pd.DataFrame | None,
     asset_dfs: dict[str, pd.DataFrame] | None,
 ) -> pd.DataFrame:
-    """Add comprehensive macro/cross-asset features (all lagged by 1 day).
-
-    The macro_df is a wide-format DataFrame from fct_macro_indicator with columns for each
-    FRED series_id. We ASOF-merge onto SPY dates, then compute derived features.
-    """
+    """Add comprehensive macro/cross-asset features (all lagged by 1 day)."""
     out["date"] = pd.to_datetime(out["date"])
 
-    # ASOF-merge all FRED series onto SPY trading dates
     if macro_df is not None and not macro_df.empty and "date" in macro_df.columns:
         macro = macro_df.copy()
         macro["date"] = pd.to_datetime(macro["date"])
@@ -251,29 +273,24 @@ def _add_macro_features(
             direction="backward",
         )
 
-    # --- Yield curve features ---
     if "T10Y2Y" in out.columns:
         yc = out["T10Y2Y"]
         out["yc_10y2y_lag1"] = yc.shift(1)
         out["yc_10y2y_change_20d"] = yc.diff(20).shift(1)
-        # Z-score of yield curve slope (60-day rolling)
         yc_mean = yc.rolling(60, min_periods=20).mean()
         yc_std = yc.rolling(60, min_periods=20).std()
         out["yc_slope_zscore_60d"] = ((yc - yc_mean) / yc_std.replace(0, np.nan)).shift(1)
 
-    # --- Treasury yield features ---
     for sid, name in [("DGS10", "us_10y"), ("DGS2", "us_2y"), ("DGS3MO", "us_3m")]:
         if sid in out.columns:
             out[f"{name}_lag1"] = out[sid].shift(1)
     if "DGS10" in out.columns:
         out["us_10y_change_20d"] = out["DGS10"].diff(20).shift(1)
 
-    # --- Policy ---
     if "FEDFUNDS" in out.columns:
         out["fedfunds_lag1"] = out["FEDFUNDS"].shift(1)
         out["fedfunds_change_60d"] = out["FEDFUNDS"].diff(60).shift(1)
 
-    # --- VIX / risk ---
     if "VIXCLS" in out.columns:
         vix = out["VIXCLS"]
         out["vix_level_lag1"] = vix.shift(1)
@@ -282,30 +299,24 @@ def _add_macro_features(
         vix_std = vix.rolling(60, min_periods=20).std()
         out["vix_zscore_60d"] = ((vix - vix_mean) / vix_std.replace(0, np.nan)).shift(1)
 
-    # --- Oil ---
     if "DCOILWTICO" in out.columns:
         out["wti_change_20d"] = out["DCOILWTICO"].pct_change(20).shift(1)
 
-    # --- Dollar ---
     if "DTWEXBGS" in out.columns:
         out["dollar_change_20d"] = out["DTWEXBGS"].pct_change(20).shift(1)
 
-    # --- Employment (weekly) ---
     if "ICSA" in out.columns:
         claims_4w = out["ICSA"].rolling(4, min_periods=1).mean()
         out["claims_change_4w"] = claims_4w.diff(4).shift(1)
 
-    # --- Financial conditions ---
     if "NFCI" in out.columns:
         out["nfci_lag1"] = out["NFCI"].shift(1)
         out["nfci_change_20d"] = out["NFCI"].diff(20).shift(1)
 
-    # --- Forward-fill all macro features ---
     for col in _MACRO_FEATURE_NAMES:
         if col in out.columns:
             out[col] = out[col].ffill()
 
-    # --- Cross-asset vol: GLD and TLT ---
     if asset_dfs:
         for sym, label in [("GLD", "gld"), ("TLT", "tlt")]:
             if sym in asset_dfs and not asset_dfs[sym].empty:
@@ -323,8 +334,54 @@ def _add_macro_features(
                 if f"{label}_vol_20d" in out.columns:
                     out[f"{label}_vol_20d_lag1"] = out[f"{label}_vol_20d"].shift(1)
 
-    # Ensure all expected columns exist (filled with NaN if not computed)
     for col in _MACRO_FEATURE_NAMES:
+        if col not in out.columns:
+            out[col] = np.nan
+
+    return out
+
+
+def _add_medium_features(out: pd.DataFrame) -> pd.DataFrame:
+    """Add a fast subset of rich features for the vol_medium feature set.
+
+    Includes vol-of-vol term structure, momentum/reversal signals, trend strength,
+    and key interaction features. Cheap to compute (no per-symbol cross-asset corrs).
+    """
+    ret = out["ret"]
+
+    if "gk_vol" in out.columns:
+        gk = out["gk_vol"]
+        out["vol_of_vol_5d"] = gk.shift(1).rolling(5, min_periods=3).std()
+        out["vol_of_vol_22d"] = gk.shift(1).rolling(22, min_periods=10).std()
+        short_vol = gk.shift(1).rolling(5, min_periods=3).mean()
+        long_vol = gk.shift(1).rolling(22, min_periods=10).mean()
+        out["vol_dispersion"] = short_vol - long_vol
+
+    out["ret_momentum_63d"] = ret.rolling(63, min_periods=31).sum().shift(1)
+
+    for w, name in [(5, "ret_reversal_5d"), (20, "ret_reversal_20d")]:
+        out[name] = ret.rolling(w, min_periods=w).sum().shift(1)
+
+    vol_5d = ret.rolling(5, min_periods=3).std()
+    vol_20d = ret.rolling(20, min_periods=10).std()
+    out["ret_vol_ratio_5d_20d"] = (vol_5d / vol_20d.replace(0, np.nan)).shift(1)
+
+    ret_mean_20d = ret.rolling(20, min_periods=10).mean()
+    ret_std_20d = ret.rolling(20, min_periods=10).std()
+    out["ret_trend_strength"] = (ret_mean_20d.abs() / ret_std_20d.replace(0, np.nan)).shift(1)
+
+    if "DTWEXBGS" in out.columns and "dollar_zscore_60d" not in out.columns:
+        dollar = out["DTWEXBGS"]
+        d_mean = dollar.rolling(60, min_periods=20).mean()
+        d_std = dollar.rolling(60, min_periods=20).std()
+        out["dollar_zscore_60d"] = ((dollar - d_mean) / d_std.replace(0, np.nan)).shift(1)
+
+    if "vix_zscore_60d" in out.columns and "yc_slope_zscore_60d" in out.columns:
+        out["vix_x_yc_slope"] = out["vix_zscore_60d"] * out["yc_slope_zscore_60d"]
+    if "nfci_lag1" in out.columns and "dollar_zscore_60d" in out.columns:
+        out["nfci_x_dollar_zscore"] = out["nfci_lag1"] * out["dollar_zscore_60d"]
+
+    for col in _MEDIUM_FEATURE_NAMES:
         if col not in out.columns:
             out[col] = np.nan
 
@@ -335,18 +392,13 @@ def _add_rich_features(
     out: pd.DataFrame,
     asset_dfs: dict[str, pd.DataFrame] | None,
 ) -> pd.DataFrame:
-    """Add higher moments, vol-of-vol, cross-asset correlations, and calendar effects.
-
-    All features are strictly trailing (no look-ahead).
-    """
+    """Add higher moments, vol-of-vol, cross-asset correlations, and calendar effects."""
     ret = out["ret"]
 
-    # --- Higher moments (20d rolling) ---
     out["ret_kurt_20d"] = ret.rolling(20, min_periods=10).kurt()
     out["ret_skew_20d"] = ret.rolling(20, min_periods=10).skew()
     out["ret_max_20d"] = ret.rolling(20, min_periods=10).max()
 
-    # --- Vol-of-vol term structure ---
     if "gk_vol" in out.columns:
         gk = out["gk_vol"]
         out["vol_of_vol_5d"] = gk.shift(1).rolling(5, min_periods=3).std()
@@ -355,7 +407,6 @@ def _add_rich_features(
         long_vol = gk.shift(1).rolling(22, min_periods=10).mean()
         out["vol_dispersion"] = short_vol - long_vol
 
-    # --- Cross-asset correlations (20d rolling) ---
     for label in ["gld", "tlt"]:
         col_name = f"corr_spy_{label}_20d"
         if col_name not in out.columns:
@@ -376,8 +427,6 @@ def _add_rich_features(
                         .corr(combined[f"{label}_ret"])
                     )
 
-    # --- Cross-asset regime signals ---
-    # Correlation Z-scores: are correlations unusually high/low?
     for label in ["gld", "tlt"]:
         corr_col = f"corr_spy_{label}_20d"
         zscore_col = f"corr_spy_{label}_zscore_60d"
@@ -387,14 +436,12 @@ def _add_rich_features(
             c_std = c.rolling(60, min_periods=20).std()
             out[zscore_col] = ((c - c_mean) / c_std.replace(0, np.nan)).shift(1)
 
-    # Dollar Z-score
     if "DTWEXBGS" in out.columns:
         dollar = out["DTWEXBGS"]
         d_mean = dollar.rolling(60, min_periods=20).mean()
         d_std = dollar.rolling(60, min_periods=20).std()
         out["dollar_zscore_60d"] = ((dollar - d_mean) / d_std.replace(0, np.nan)).shift(1)
 
-    # Cross-asset dispersion: std of asset returns (measure of divergence)
     if asset_dfs:
         ret_cols = []
         for _sym, label in [("GLD", "gld"), ("TLT", "tlt")]:
@@ -404,34 +451,47 @@ def _add_rich_features(
             disp_raw = out[ret_cols].std(axis=1).rolling(20, min_periods=10).mean()
             out["cross_asset_dispersion_20d"] = disp_raw.shift(1)
 
-    # Equity-bond spread: SPY return minus TLT return (risk-on vs risk-off signal)
     if "tlt_ret" in out.columns:
         spread_raw = (ret - out["tlt_ret"]).rolling(20, min_periods=10).mean()
         out["equity_bond_spread_20d"] = spread_raw.shift(1)
 
-    # --- Macro regime: yield curve slope change (now in _add_macro_features) ---
-
-    # --- Calendar effects ---
     if "date" in out.columns:
         dates = pd.to_datetime(out["date"])
         out["day_of_week"] = dates.dt.dayofweek / 4.0
         out["month_of_year"] = dates.dt.month / 12.0
 
-    # --- Interaction features (cross-terms of strongest predictors) ---
-    # VIX × yield curve slope: the combination of risk level and curve shape
     if "vix_zscore_60d" in out.columns and "yc_slope_zscore_60d" in out.columns:
         out["vix_x_yc_slope"] = out["vix_zscore_60d"] * out["yc_slope_zscore_60d"]
-    # Vol dispersion × vol-of-vol: regime transition risk
     if "vol_dispersion" in out.columns and "vol_of_vol_22d" in out.columns:
         out["vol_disp_x_vol_of_vol"] = out["vol_dispersion"] * out["vol_of_vol_22d"]
-    # NFCI × dollar z-score: financial conditions interacting with currency
     if "nfci_lag1" in out.columns and "dollar_zscore_60d" in out.columns:
         out["nfci_x_dollar_zscore"] = out["nfci_lag1"] * out["dollar_zscore_60d"]
-    # Skewness × vol dispersion: tail risk interacting with regime shift
     if "ret_skew_20d" in out.columns and "vol_dispersion" in out.columns:
         out["skew_x_vol_dispersion"] = out["ret_skew_20d"] * out["vol_dispersion"]
 
-    # Forward-fill correlation features (available from GLD/TLT inception onward)
+    for w, name in [(63, "ret_momentum_63d"), (126, "ret_momentum_126d"), (252, "ret_momentum_252d")]:
+        out[name] = ret.rolling(w, min_periods=w // 2).sum().shift(1)
+
+    for w, name in [(5, "ret_reversal_5d"), (20, "ret_reversal_20d")]:
+        out[name] = ret.rolling(w, min_periods=w).sum().shift(1)
+
+    vol_5d = ret.rolling(5, min_periods=3).std()
+    vol_20d = ret.rolling(20, min_periods=10).std()
+    out["ret_vol_ratio_5d_20d"] = (vol_5d / vol_20d.replace(0, np.nan)).shift(1)
+
+    ret_mean_20d = ret.rolling(20, min_periods=10).mean()
+    ret_std_20d = ret.rolling(20, min_periods=10).std()
+    out["ret_trend_strength"] = (ret_mean_20d.abs() / ret_std_20d.replace(0, np.nan)).shift(1)
+
+    out["ret_autocorr_20d"] = ret.rolling(20, min_periods=15).apply(
+        lambda x: x.autocorr(lag=1) if len(x) > 5 else np.nan, raw=False
+    ).shift(1)
+
+    if "yc_slope_zscore_60d" in out.columns and "vix_level_lag1" in out.columns:
+        out["yc_slope_x_vix"] = out["yc_slope_zscore_60d"] * out["vix_level_lag1"]
+    if "ret_momentum_63d" in out.columns and "gk_vol" in out.columns:
+        out["momentum_x_vol"] = out["ret_momentum_63d"] * out["gk_vol"]
+
     for col in ["corr_spy_tlt_20d", "corr_spy_gld_20d", "yc_slope_change_20d"]:
         if col in out.columns:
             out[col] = out[col].ffill()
