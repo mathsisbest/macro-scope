@@ -388,6 +388,33 @@ def source_freshness() -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
 
     today = pd.Timestamp.now().normalize()
+    # US Federal Reserve holidays — FRED doesn't publish on these.
+    # Source: federalreserve.gov/aboutthefed/holiday-calendar
+    _fed_holidays = pd.to_datetime([
+        # New Year's Day
+        "2024-01-01", "2025-01-01", "2026-01-01", "2027-01-01",
+        # MLK Day (3rd Monday in January)
+        "2024-01-15", "2025-01-20", "2026-01-19", "2027-01-18",
+        # Presidents' Day (3rd Monday in February)
+        "2024-02-19", "2025-02-17", "2026-02-16", "2027-02-15",
+        # Memorial Day (last Monday in May)
+        "2024-05-27", "2025-05-26", "2026-05-25", "2027-05-31",
+        # Juneteenth
+        "2024-06-19", "2025-06-19", "2026-06-19", "2027-06-19",
+        # Independence Day
+        "2024-07-04", "2025-07-04", "2026-07-04", "2027-07-04",
+        # Labor Day (1st Monday in September)
+        "2024-09-02", "2025-09-01", "2026-09-07", "2027-09-06",
+        # Columbus Day (2nd Monday in October)
+        "2024-10-14", "2025-10-13", "2026-10-12", "2027-10-11",
+        # Veterans Day
+        "2024-11-11", "2025-11-11", "2026-11-11", "2027-11-11",
+        # Thanksgiving (4th Thursday in November)
+        "2024-11-28", "2025-11-27", "2026-11-26", "2027-11-25",
+        # Christmas
+        "2024-12-25", "2025-12-25", "2026-12-25", "2027-12-25",
+    ])
+
     rows = []
     for _, row in df.iterrows():
         sid = row["series_id"]
@@ -397,11 +424,16 @@ def source_freshness() -> pd.DataFrame:
             status = "unknown"
             days_since = None
         else:
-            # Count business days (weekdays only) between latest date and today.
-            # This accounts for weekends: a Friday publication is only 1 business day
-            # old on Monday, not 3 calendar days old.
-            bdays = len(pd.bdate_range(latest, today)) - 1  # -1 because bdate_range is inclusive
-            days_since = max(bdays, 0)
+            # Count business days excluding weekends AND US federal holidays.
+            # A Thursday publication before Thanksgiving is only 1 business day old
+            # on the following Monday, not 4 calendar days old.
+            bdays = len(pd.bdate_range(latest, today)) - 1
+            # Subtract holidays that fall on business days between latest and today
+            holidays_in_range = sum(
+                1 for h in _fed_holidays
+                if latest < h <= today and h.weekday() < 5
+            )
+            days_since = max(bdays - holidays_in_range, 0)
             status = "fresh" if days_since <= expected else "stale"
         rows.append(
             {
