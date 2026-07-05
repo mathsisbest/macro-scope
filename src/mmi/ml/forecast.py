@@ -48,7 +48,7 @@ def _model_kwargs(model_name: str) -> dict:
             loss="squared_error", max_bins=128,
         )
     elif model_name == "lgb":
-        kw.update(n_estimators=500, max_depth=3, min_child_samples=20, num_leaves=7)
+        kw.update(n_estimators=150, max_depth=4, min_child_samples=20, num_leaves=15)
     return kw
 
 
