@@ -4,6 +4,8 @@
 **Date:** 2026-07-05
 **Status:** Living document — updated as research continues
 
+> **Complete experiment log (every attempt, every result):** See [ML_FORECAST_EXPERIMENT_LOG.md](ML_FORECAST_EXPERIMENT_LOG.md)
+
 ---
 
 ## 1. Executive Summary
