@@ -103,9 +103,10 @@ def evaluate_forecast(
     ensemble_method: str = "mean",
     use_all_train: bool = False,
     loss: str = "squared_error",
+    single_split: bool = False,
     **model_kwargs,
 ) -> dict:
-    """Walk-forward out-of-sample forecast evaluation.
+    """Walk-forward or single-split out-of-sample forecast evaluation.
 
     Parameters
     ----------
@@ -114,7 +115,7 @@ def evaluate_forecast(
     train_size:
         Number of rows in the initial training window.
     test_size:
-        Number of rows per test window.
+        Number of rows per test window (or size of test split when ``single_split=True``).
     horizon:
         Number of days ahead to forecast (h-step return).
     model:
@@ -134,6 +135,9 @@ def evaluate_forecast(
         If True, train on all data before the test window (expanding window).
     loss:
         Loss function passed to GB: 'squared_error' (default) or 'huber'.
+    single_split:
+        If True, use a single train/test split (train on last ``train_size`` rows
+        before the test period) instead of walk-forward.  Much faster for research sweeps.
     **model_kwargs:
         Additional kwargs forwarded to the regressor constructor.
 
@@ -168,62 +172,97 @@ def evaluate_forecast(
     model_count: pd.Series = pd.Series(0, index=df.index, dtype=int)
     train_rows_list: list[int] = []
 
-    for start in range(0, n - train_size, test_size):
-        if use_all_train:
-            train_end = start + train_size
-        else:
-            train_end = start + train_size
-
-        train_end = min(train_end, n - 1)
-        test_end = min(train_end + test_size, n)
-
-        train_idx = list(range(start, train_end))
-        test_idx = list(range(train_end, test_end))
-        if not test_idx:
-            break
-
+    if single_split:
+        train_end = n - test_size
+        train_idx = list(range(0, train_end))
+        test_idx = list(range(train_end, n))
         df_train = df.iloc[train_idx]
         df_test = df.iloc[test_idx]
-
-        y_train = _build_target(df_train, target_type, "target_next_ret")
-        y_train = y_train.values.ravel()
+        y_train = _build_target(df_train, target_type, "target_next_ret").values.ravel()
         X_train = df_train[available_cols].values
         X_test = df_test[available_cols].values
-
-        # Drop constant features (std==0) — HistGB crashes on them
         train_std = np.nanstd(X_train, axis=0)
         non_const = train_std > 0
-        if non_const.sum() < 2:
-            continue
-        X_train = X_train[:, non_const]
-        X_test = X_test[:, non_const]
-
-        if len(y_train) < 50:
-            break
-
+        if non_const.sum() >= 2:
+            X_train = X_train[:, non_const]
+            X_test = X_test[:, non_const]
+        # Drop NaN in y_train (vol_adjusted/excess produce NaN for early rows)
+        valid_idx = ~np.isnan(y_train)
+        if valid_idx.sum() < 50:
+            return _empty_result(df, model, feature_set, target_type, ensemble_method, loss, horizon)
+        X_train = X_train[valid_idx]
+        y_train = y_train[valid_idx]
         try:
             model_cls = _MODELS[model]
         except KeyError:
             raise ValueError(f"Unknown model '{model}'; choose from {list(_MODELS)}")
-
         kw = {**_model_kwargs(model), **model_kwargs}
         if loss != "squared_error":
             kw["loss"] = loss
-
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=UserWarning, message=".*early_stopping.*")
             clf = model_cls(**kw)
             clf.fit(X_train, y_train)
-            preds = clf.predict(X_test)
+            all_preds.iloc[test_idx] = clf.predict(X_test)
+            model_count.iloc[test_idx] = 1
+            train_rows_list.append(len(y_train))
+    else:
+        for start in range(0, n - train_size, test_size):
+            if use_all_train:
+                train_end = start + train_size
+            else:
+                train_end = start + train_size
 
-        if ensemble_method == "mean":
-            all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
-        elif ensemble_method == "median":
-            all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
-        else:
-            all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
-        model_count.iloc[test_idx] += 1
-        train_rows_list.append(len(y_train))
+            train_end = min(train_end, n - 1)
+            test_end = min(train_end + test_size, n)
+
+            train_idx = list(range(start, train_end))
+            test_idx = list(range(train_end, test_end))
+            if not test_idx:
+                break
+
+            df_train = df.iloc[train_idx]
+            df_test = df.iloc[test_idx]
+
+            y_train = _build_target(df_train, target_type, "target_next_ret")
+            y_train = y_train.values.ravel()
+            X_train = df_train[available_cols].values
+            X_test = df_test[available_cols].values
+
+            # Drop constant features (std==0) — HistGB crashes on them
+            train_std = np.nanstd(X_train, axis=0)
+            non_const = train_std > 0
+            if non_const.sum() < 2:
+                continue
+            X_train = X_train[:, non_const]
+            X_test = X_test[:, non_const]
+
+            if len(y_train) < 50:
+                break
+
+            try:
+                model_cls = _MODELS[model]
+            except KeyError:
+                raise ValueError(f"Unknown model '{model}'; choose from {list(_MODELS)}")
+
+            kw = {**_model_kwargs(model), **model_kwargs}
+            if loss != "squared_error":
+                kw["loss"] = loss
+
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UserWarning, message=".*early_stopping.*")
+                clf = model_cls(**kw)
+                clf.fit(X_train, y_train)
+                preds = clf.predict(X_test)
+
+            if ensemble_method == "mean":
+                all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
+            elif ensemble_method == "median":
+                all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
+            else:
+                all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
+            model_count.iloc[test_idx] += 1
+            train_rows_list.append(len(y_train))
 
     return _compute_metrics(
         df, all_preds, model_count, available_cols, model, feature_set,
