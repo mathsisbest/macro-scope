@@ -123,6 +123,11 @@ _RICH_FEATURE_NAMES: list[str] = [
     # Calendar
     "day_of_week",
     "month_of_year",
+    # Interaction features (cross-terms of strongest predictors)
+    "vix_x_yc_slope",
+    "vol_disp_x_vol_of_vol",
+    "nfci_x_dollar_zscore",
+    "skew_x_vol_dispersion",
 ]
 
 
@@ -411,6 +416,20 @@ def _add_rich_features(
         dates = pd.to_datetime(out["date"])
         out["day_of_week"] = dates.dt.dayofweek / 4.0
         out["month_of_year"] = dates.dt.month / 12.0
+
+    # --- Interaction features (cross-terms of strongest predictors) ---
+    # VIX × yield curve slope: the combination of risk level and curve shape
+    if "vix_zscore_60d" in out.columns and "yc_slope_zscore_60d" in out.columns:
+        out["vix_x_yc_slope"] = out["vix_zscore_60d"] * out["yc_slope_zscore_60d"]
+    # Vol dispersion × vol-of-vol: regime transition risk
+    if "vol_dispersion" in out.columns and "vol_of_vol_22d" in out.columns:
+        out["vol_disp_x_vol_of_vol"] = out["vol_dispersion"] * out["vol_of_vol_22d"]
+    # NFCI × dollar z-score: financial conditions interacting with currency
+    if "nfci_lag1" in out.columns and "dollar_zscore_60d" in out.columns:
+        out["nfci_x_dollar_zscore"] = out["nfci_lag1"] * out["dollar_zscore_60d"]
+    # Skewness × vol dispersion: tail risk interacting with regime shift
+    if "ret_skew_20d" in out.columns and "vol_dispersion" in out.columns:
+        out["skew_x_vol_dispersion"] = out["ret_skew_20d"] * out["vol_dispersion"]
 
     # Forward-fill correlation features (available from GLD/TLT inception onward)
     for col in ["corr_spy_tlt_20d", "corr_spy_gld_20d", "yc_slope_change_20d"]:

@@ -175,13 +175,24 @@ def _walk_forward(
     n_splits: int,
     n_estimators: int,
     regime_aware: bool,
+    horizon: int = 1,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Walk-forward CV. Returns (all_preds, all_actuals, all_regimes)."""
+    """Walk-forward CV with embargo. Returns (all_preds, all_actuals, all_regimes).
+
+    The embargo drops the last ``horizon`` rows from each training fold to prevent
+    target leakage — for h>1, the test fold's targets overlap with training features.
+    """
     tscv = TimeSeriesSplit(n_splits=n_splits)
     preds_list, actuals_list, regime_list = [], [], []
 
     for train_idx, test_idx in tscv.split(x):
-        x_tr, y_tr, r_tr = x[train_idx], y[train_idx], regimes[train_idx]
+        # Embargo: drop last `horizon` rows from training to prevent leakage
+        embargo_end = max(0, len(train_idx) - horizon)
+        train_idx_embargoed = train_idx[:embargo_end]
+
+        x_tr = x[train_idx_embargoed]
+        y_tr = y[train_idx_embargoed]
+        r_tr = regimes[train_idx_embargoed]
         x_te, r_te = x[test_idx], regimes[test_idx]
 
         if regime_aware and len(np.unique(r_tr)) > 1:
@@ -295,7 +306,7 @@ def train_and_predict(
 
         # Walk-forward CV on dev
         preds, actuals, pred_regimes = _walk_forward(
-            x_dev, y_dev, r_dev, n_splits, n_estimators, regime_aware
+            x_dev, y_dev, r_dev, n_splits, n_estimators, regime_aware, horizon
         )
         h_metrics = _compute_metrics(preds, actuals, pred_regimes)
 
