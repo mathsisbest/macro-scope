@@ -397,7 +397,11 @@ def source_freshness() -> pd.DataFrame:
             status = "unknown"
             days_since = None
         else:
-            days_since = (today - latest).days
+            # Count business days (weekdays only) between latest date and today.
+            # This accounts for weekends: a Friday publication is only 1 business day
+            # old on Monday, not 3 calendar days old.
+            bdays = len(pd.bdate_range(latest, today)) - 1  # -1 because bdate_range is inclusive
+            days_since = max(bdays, 0)
             status = "fresh" if days_since <= expected else "stale"
         rows.append(
             {
