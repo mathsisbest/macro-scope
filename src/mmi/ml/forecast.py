@@ -17,6 +17,7 @@ Architecture
 
 from __future__ import annotations
 
+import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
@@ -43,6 +44,28 @@ def make_regressor(n_estimators: int = 200, seed: int = SEED) -> RandomForestReg
         max_features="sqrt",
         random_state=seed,
         n_jobs=-1,
+    )
+
+
+def _make_model(model_type: str, n_estimators: int = 200, seed: int = SEED):
+    """Factory: return RF or LightGBM regressor based on model_type."""
+    if model_type == "lgb":
+        return make_lgb_regressor(n_estimators=n_estimators, seed=seed)
+    return make_regressor(n_estimators=n_estimators, seed=seed)
+
+
+def make_lgb_regressor(n_estimators: int = 200, seed: int = SEED) -> lgb.LGBMRegressor:
+    """LightGBM regressor — faster and often more accurate than sklearn RF for tabular data."""
+    return lgb.LGBMRegressor(
+        n_estimators=n_estimators,
+        max_depth=5,
+        min_child_samples=20,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        learning_rate=0.05,
+        random_state=seed,
+        n_jobs=-1,
+        verbose=-1,
     )
 
 
@@ -89,13 +112,14 @@ def _train_per_regime(
     y_train: np.ndarray,
     regime_train: np.ndarray,
     n_estimators: int = 200,
-) -> dict[int, RandomForestRegressor]:
-    """Train separate RF models per regime. Returns {regime_int: model}."""
+    model_type: str = "rf",
+) -> dict[int, object]:
+    """Train separate models per regime. Returns {regime_int: model}."""
     models = {}
     for r in np.unique(regime_train):
         mask = regime_train == r
         if mask.sum() >= _MIN_REGIME_ROWS:
-            model = make_regressor(n_estimators=n_estimators)
+            model = _make_model(model_type, n_estimators)
             model.fit(x_train[mask], y_train[mask])
             models[int(r)] = model
     return models
@@ -176,6 +200,7 @@ def _walk_forward(
     n_estimators: int,
     regime_aware: bool,
     horizon: int = 1,
+    model_type: str = "rf",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Walk-forward CV with embargo. Returns (all_preds, all_actuals, all_regimes).
 
@@ -196,12 +221,12 @@ def _walk_forward(
         x_te, r_te = x[test_idx], regimes[test_idx]
 
         if regime_aware and len(np.unique(r_tr)) > 1:
-            regime_models = _train_per_regime(x_tr, y_tr, r_tr, n_estimators)
-            global_model = make_regressor(n_estimators)
+            regime_models = _train_per_regime(x_tr, y_tr, r_tr, n_estimators, model_type)
+            global_model = _make_model(model_type, n_estimators)
             global_model.fit(x_tr, y_tr)
             pred = _predict_per_regime(x_te, r_te, regime_models, global_model)
         else:
-            model = make_regressor(n_estimators)
+            model = _make_model(model_type, n_estimators)
             model.fit(x_tr, y_tr)
             pred = model.predict(x_te)
 
@@ -227,6 +252,7 @@ def train_and_predict(
     regime_aware: bool = True,
     macro_df: pd.DataFrame | None = None,
     asset_dfs: dict[str, pd.DataFrame] | None = None,
+    model_type: str = "rf",
 ) -> tuple[dict, list[dict]]:
     """Multi-horizon, regime-aware return forecaster.
 
@@ -306,7 +332,14 @@ def train_and_predict(
 
         # Walk-forward CV on dev
         preds, actuals, pred_regimes = _walk_forward(
-            x_dev, y_dev, r_dev, n_splits, n_estimators, regime_aware, horizon
+            x_dev,
+            y_dev,
+            r_dev,
+            n_splits,
+            n_estimators,
+            regime_aware,
+            horizon,
+            model_type=model_type,
         )
         h_metrics = _compute_metrics(preds, actuals, pred_regimes)
 
@@ -318,12 +351,12 @@ def train_and_predict(
 
             if len(y_hold) > 0:
                 if regime_aware and len(np.unique(r_dev)) > 1:
-                    r_models = _train_per_regime(x_dev, y_dev, r_dev, n_estimators)
-                    g_model = make_regressor(n_estimators)
+                    r_models = _train_per_regime(x_dev, y_dev, r_dev, n_estimators, model_type)
+                    g_model = _make_model(model_type, n_estimators)
                     g_model.fit(x_dev, y_dev)
                     hold_preds = _predict_per_regime(x_hold, r_hold, r_models, g_model)
                 else:
-                    model = make_regressor(n_estimators)
+                    model = _make_model(model_type, n_estimators)
                     model.fit(x_dev, y_dev)
                     hold_preds = model.predict(x_hold)
 
@@ -340,14 +373,14 @@ def train_and_predict(
         r_full = h_regimes
 
         if regime_aware and len(np.unique(r_full)) > 1:
-            r_models = _train_per_regime(x_full, y_full, r_full, n_estimators)
-            g_model = make_regressor(n_estimators)
+            r_models = _train_per_regime(x_full, y_full, r_full, n_estimators, model_type)
+            g_model = _make_model(model_type, n_estimators)
             g_model.fit(x_full, y_full)
             x_last = feat_h[cols].iloc[[-1]].to_numpy()
             r_last = h_regimes[[-1]]
             predicted = float(_predict_per_regime(x_last, r_last, r_models, g_model)[0])
         else:
-            model = make_regressor(n_estimators)
+            model = _make_model(model_type, n_estimators)
             model.fit(x_full, y_full)
             x_last = feat_h[cols].iloc[[-1]].to_numpy()
             predicted = float(model.predict(x_last)[0])
@@ -363,7 +396,7 @@ def train_and_predict(
                 "horizon": horizon,
                 "predicted_return": predicted,
                 "daily_mu": daily_mu,
-                "model": "return_rf_regime" if regime_aware else "return_rf",
+                "model": f"return_{model_type}_regime" if regime_aware else f"return_{model_type}",
                 "dir_acc": h_metrics["dir_acc"],
                 "r2": h_metrics["r2"],
             }
