@@ -11,6 +11,8 @@
 | # | Experiment | Session | Result | Verdict |
 |---|-----------|---------|--------|---------|
 | 27 | Portfolio integration — ML-tilted strategy | S4 | +5.36% annual, Sharpe 0.21 vs -0.10 | **Portfolio works** |
+| 28-34 | Multi-asset sweep (GLD/SPY/TLT) | S4 | GLD IC=0.876, SPY IC=0.282, TLT IC=0.291 | Asset-specific best configs |
+| 35 | Momentum + mean-reversion features | S4 | IC=0.058 (marginal), momentum regime IC=0.140 | Key regime finding |
 | 28 | Multi-asset long-horizon sweep (SPY/TLT/GLD, 21d-252d) | S4 | SPY h=252 LGB/vol_m: IC=0.35, DA=0.78; GLD h=252 GB/vol_m: IC=0.49, R²=+0.12 | **Best ever** |
 | 29 | GLD h=252 walk-forward validation | S4 | IC=0.488, DA=0.723, R²=+0.118 — first config with positive R² | **Breakthrough** |
 | 30 | ALL feature sets (5 sets × 3 assets × 2 models) at long horizons | S4 | GLD vol_macro: IC=0.677, R²=+0.456; SPY vol: IC=0.333; vol_macro hurts SPY | **Asset-specific** |
@@ -640,6 +642,40 @@
 - Default LGB is robust — the signal is strong enough that HPs don't matter
 
 **Verdict:** **ML forecasting phase is complete.** The portfolio has production-ready forecasts for GLD and useful forecasts for SPY/TLT.
+
+---
+
+### Experiment 35: Momentum and Mean-Reversion Features
+
+**Date:** 2026-07-05 (Session 4)
+**Approach:** Added 13 momentum/mean-reversion features to `features.py`. New `mom_rev` feature set.
+
+**Features:**
+- Momentum: mom_21d, mom_63d, mom_126d, mom_252d, mom_accel
+- Reversal: rev_5d, rev_10d
+- Z-score: ret_zscore_20d, ret_zscore_60d
+- Distance: dist_from_mean_20d, dist_from_mean_60d
+- Trend: trend_20d, trend_60d
+
+**Results (63d target, rolling window, train=250):**
+
+| Config | IC | Dir Acc | Sharpe |
+|--------|-----|---------|--------|
+| Default (10 features) | 0.054 | 0.610 | 0.41 |
+| Default + mom_accel | 0.058 | 0.596 | 0.38 |
+| Default + zscore20 | 0.055 | 0.610 | 0.42 |
+
+**Key finding — Momentum regime:**
+
+| Regime | IC | Dir Acc | Sharpe |
+|--------|-----|---------|--------|
+| momentum > 0 | -0.011 | 0.600 | 0.38 |
+| **momentum < 0** | **0.140** | **0.626** | **0.54** |
+| All | 0.054 | 0.607 | 0.43 |
+
+**Verdict:** Marginal IC improvement from features. But the momentum regime finding is valuable: the model works **3x better** during negative momentum (bearish/mean-reverting periods). This is because mean-reversion is more predictable than momentum.
+
+**Commit:** Merged as PR #48.
 
 ---
 
