@@ -227,7 +227,7 @@ def compute_portfolio_returns(
     window: str = "",
     asset_daily_full: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Compute portfolio returns: equal-weight baseline + ML-tilted strategy."""
+    """Compute portfolio returns: equal-weight + ML-tilted + regime-aware ML."""
     panel = asset_daily.pivot_table(index="date", columns="symbol", values="daily_return")
     panel = panel.sort_index().dropna(how="all")
 
@@ -244,36 +244,83 @@ def compute_portfolio_returns(
     result["cumulative_return"] = (1 + result["daily_return"]).cumprod() - 1
     frames.append(result)
 
-    # 2. ML-tilted strategy: overweight assets with positive predicted returns
-    if ml_mu_panel is not None and not ml_mu_panel.empty:
-        ml_pivot = ml_mu_panel.pivot_table(index="date", columns="symbol", values="mu")
-        # Find common dates
-        common_dates = panel.index.intersection(ml_pivot.index)
-        if len(common_dates) > 0:
-            ml_tilt = panel.loc[common_dates].copy()
-            for date in common_dates:
-                if date in ml_pivot.index:
-                    signals = ml_pivot.loc[date]
-                    # Normalize signals to weights: positive signals get more weight
-                    pos_signals = signals[signals > 0]
-                    if len(pos_signals) > 0:
-                        weights = pos_signals / pos_signals.sum()
-                        ml_tilt.loc[date] = panel.loc[date] * weights.reindex(panel.columns, fill_value=0)
-                    else:
-                        # If no positive signals, fall back to equal weight
-                        ml_tilt.loc[date] = panel.loc[date] / len(panel.columns)
+    if ml_mu_panel is None or ml_mu_panel.empty:
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
-            ml_ret = ml_tilt.sum(axis=1)
-            result_ml = pd.DataFrame({
-                "window_id": window,
-                "strategy": "ml_tilt",
-                "date": common_dates,
-                "daily_return": ml_ret.values,
-            })
-            result_ml["cumulative_return"] = (1 + result_ml["daily_return"]).cumprod() - 1
-            frames.append(result_ml)
+    ml_pivot = ml_mu_panel.pivot_table(index="date", columns="symbol", values="mu")
+    common_dates = panel.index.intersection(ml_pivot.index)
 
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if len(common_dates) == 0:
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    # 2. ML-tilted strategy (uniform weight on positive signals)
+    ml_tilt = panel.loc[common_dates].copy()
+    for date in common_dates:
+        if date in ml_pivot.index:
+            signals = ml_pivot.loc[date]
+            pos_signals = signals[signals > 0]
+            if len(pos_signals) > 0:
+                weights = pos_signals / pos_signals.sum()
+                ml_tilt.loc[date] = panel.loc[date] * weights.reindex(panel.columns, fill_value=0)
+            else:
+                ml_tilt.loc[date] = panel.loc[date] / len(panel.columns)
+
+    ml_ret = ml_tilt.sum(axis=1)
+    result_ml = pd.DataFrame({
+        "window_id": window,
+        "strategy": "ml_tilt",
+        "date": common_dates,
+        "daily_return": ml_ret.values,
+    })
+    result_ml["cumulative_return"] = (1 + result_ml["daily_return"]).cumprod() - 1
+    frames.append(result_ml)
+
+    # 3. Regime-aware ML: size up during negative momentum, size down during positive
+    # Momentum regime: 63d rolling return of the equal-weight portfolio
+    ew_series = panel.loc[common_dates].mean(axis=1)
+    mom_63d = ew_series.rolling(63, min_periods=20).mean()
+
+    ml_regime = panel.loc[common_dates].copy()
+    for date in common_dates:
+        if date in ml_pivot.index and date in mom_63d.index:
+            signals = ml_pivot.loc[date]
+            mom = mom_63d.loc[date]
+
+            if pd.isna(mom):
+                # No regime data yet — use equal weight
+                ml_regime.loc[date] = panel.loc[date] / len(panel.columns)
+                continue
+
+            # Regime multiplier: 2x during negative momentum, 0.5x during positive
+            if mom < 0:
+                regime_mult = 2.0  # Size up when model is more accurate
+            else:
+                regime_mult = 0.5  # Size down when model is less accurate
+
+            pos_signals = signals[signals > 0]
+            if len(pos_signals) > 0:
+                # Apply regime multiplier to position sizing
+                raw_weights = pos_signals / pos_signals.sum()
+                # Scale up: increase concentration during negative momentum
+                adjusted_weights = raw_weights * regime_mult
+                # Normalize to sum to 1 (cap at 3x any single position)
+                adjusted_weights = adjusted_weights.clip(upper=1.0 / len(pos_signals) * 3)
+                adjusted_weights = adjusted_weights / adjusted_weights.sum()
+                ml_regime.loc[date] = panel.loc[date] * adjusted_weights.reindex(panel.columns, fill_value=0)
+            else:
+                ml_regime.loc[date] = panel.loc[date] / len(panel.columns)
+
+    regime_ret = ml_regime.sum(axis=1)
+    result_regime = pd.DataFrame({
+        "window_id": window,
+        "strategy": "ml_regime",
+        "date": common_dates,
+        "daily_return": regime_ret.values,
+    })
+    result_regime["cumulative_return"] = (1 + result_regime["daily_return"]).cumprod() - 1
+    frames.append(result_regime)
+
+    return pd.concat(frames, ignore_index=True)
 
 
 def compute_attribution(
