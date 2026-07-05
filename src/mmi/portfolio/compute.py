@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from mmi.ml.forecast_panel import walk_forward_mu
+from mmi.ml.forecast_panel import walk_forward_mu, walk_forward_mu_ensemble
 from mmi.portfolio import windows
 from mmi.portfolio.backtest import (
     FIXED_WEIGHT,
@@ -168,10 +168,11 @@ def build_ml_mu_panel(
         .reset_index()
         .melt(id_vars=["date"], var_name="symbol", value_name="daily_return")
     )
-    mu_fc_df, _skill = walk_forward_mu(
+    # Multi-horizon ensemble: combine 5d/10d/20d forecasts with decay weighting
+    mu_fc_df, _skill = walk_forward_mu_ensemble(
         long,
         rebals,
-        horizon=horizon,
+        horizons=[5, 10, 20],
         feature_set=feature_set,
         regime_aware=regime_aware,
         con=con,

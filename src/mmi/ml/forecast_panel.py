@@ -174,3 +174,79 @@ def walk_forward_mu(
 
     log.info("forecast panel: %d mu rows, %d assets scored", len(mu_rows), len(skill_rows))
     return pd.DataFrame(mu_rows), pd.DataFrame(skill_rows)
+
+
+def walk_forward_mu_ensemble(
+    asset_daily: pd.DataFrame,
+    rebalance_dates,
+    *,
+    horizons: list[int] | None = None,
+    weights: list[float] | None = None,
+    min_train: int = 120,
+    n_estimators: int = 100,
+    seed: int = 0,
+    feature_set: str = "default",
+    regime_aware: bool = True,
+    con=None,
+    macro_df: pd.DataFrame | None = None,
+    asset_dfs: dict[str, pd.DataFrame] | None = None,
+    asset_daily_full: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Multi-horizon ensemble: combine forecasts from multiple horizons with decay weighting.
+
+    Runs walk_forward_mu for each horizon, then blends the daily-equivalent mu predictions
+    with weights that decay by horizon length (shorter horizons get more weight because
+    they capture more recent signals).
+
+    Returns the same (mu_panel, skill) format as walk_forward_mu.
+    """
+    if horizons is None:
+        horizons = [5, 10, 20]
+    if weights is None:
+        # Decay weighting: shorter horizons get more weight (inverse of horizon)
+        raw = [1.0 / h for h in horizons]
+        total = sum(raw)
+        weights = [w / total for w in raw]
+
+    all_mu: list[pd.DataFrame] = []
+    all_skill: list[pd.DataFrame] = []
+
+    for h, w in zip(horizons, weights):
+        mu, skill = walk_forward_mu(
+            asset_daily, rebalance_dates,
+            horizon=h, min_train=min_train, n_estimators=n_estimators,
+            seed=seed, feature_set=feature_set, regime_aware=regime_aware,
+            con=con, macro_df=macro_df, asset_dfs=asset_dfs,
+            asset_daily_full=asset_daily_full,
+        )
+        if not mu.empty:
+            mu["mu_weighted"] = mu["mu"] * w
+            all_mu.append(mu)
+        if not skill.empty:
+            skill["horizon"] = h
+            skill["weight"] = w
+            all_skill.append(skill)
+
+    if not all_mu:
+        return pd.DataFrame(), pd.DataFrame()
+
+    # Combine: for each (date, symbol), average the weighted mu across horizons
+    combined = pd.concat(all_mu)
+    ensemble = (
+        combined.groupby(["date", "symbol"])["mu_weighted"]
+        .sum()
+        .reset_index()
+        .rename(columns={"mu_weighted": "mu"})
+    )
+
+    # Aggregate skill across horizons
+    skill_combined = pd.concat(all_skill) if all_skill else pd.DataFrame()
+
+    log.info(
+        "ensemble: %d mu rows, %d assets, horizons=%s, weights=%s",
+        len(ensemble),
+        ensemble["symbol"].nunique() if not ensemble.empty else 0,
+        horizons,
+        [f"{w:.3f}" for w in weights],
+    )
+    return ensemble, skill_combined
