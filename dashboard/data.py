@@ -461,3 +461,71 @@ def pipeline_summary() -> pd.DataFrame:
     col_map = {"status": "last_status", "rows": "last_rows", "finished_at": "last_run"}
     latest = latest.rename(columns=col_map)
     return latest[["source", "last_status", "last_rows", "last_run"]]
+
+
+def asset_universe() -> pd.DataFrame:
+    """Asset universe breakdown: symbol, asset_class, row count, date range."""
+    return query(
+        "select symbol, asset_class, count(*) as rows, "
+        "cast(min(date) as varchar) as first_date, "
+        "cast(max(date) as varchar) as last_date "
+        "from marts.fct_asset_daily "
+        "group by symbol, asset_class "
+        "order by asset_class, symbol"
+    )
+
+
+def pipeline_flow() -> pd.DataFrame:
+    """Data pipeline flow: source → stage → mart dependencies."""
+    return pd.DataFrame(
+        [
+            {
+                "source": "Yahoo Finance",
+                "stage": "raw.asset_prices",
+                "mart": "fct_asset_daily",
+                "assets": "SPY, QQQ, VEA, TLT, TIP, GLD, BTC, EURUSD, GBPUSD",
+            },
+            {
+                "source": "FRED",
+                "stage": "raw.macro_series",
+                "mart": "fct_macro_indicator",
+                "assets": "21 series (yields, VIX, CPI, etc.)",
+            },
+            {
+                "source": "FRED",
+                "stage": "raw.macro_series",
+                "mart": "fct_market_macro",
+                "assets": "SPY + yields (ASOF join)",
+            },
+            {
+                "source": "FRED",
+                "stage": "raw.macro_series",
+                "mart": "fct_recession_risk",
+                "assets": "Yield-curve model",
+            },
+            {
+                "source": "dbt",
+                "stage": "fct_asset_daily",
+                "mart": "fct_regime",
+                "assets": "Vol terciles per symbol",
+            },
+            {
+                "source": "dbt",
+                "stage": "fct_asset_daily",
+                "mart": "model_metrics",
+                "assets": "ML skill metrics",
+            },
+            {
+                "source": "dbt",
+                "stage": "fct_asset_daily",
+                "mart": "ml_forecast",
+                "assets": "Return + vol forecasts",
+            },
+            {
+                "source": "dbt",
+                "stage": "fct_asset_daily",
+                "mart": "market_brief",
+                "assets": "AI narrative",
+            },
+        ]
+    )

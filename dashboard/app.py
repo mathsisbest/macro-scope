@@ -169,6 +169,25 @@ with st.sidebar:
             for _, row in mart.iterrows():
                 st.caption(f"{row['table']}: {row['rows']:,} rows")
 
+    with st.expander("🔗 Data lineage", expanded=False):
+        flow = data.pipeline_flow()
+        if not flow.empty:
+            st.caption("**Source → Mart**")
+            for src in flow["source"].unique():
+                subset = flow[flow["source"] == src]
+                st.markdown(f"**{src}**")
+                for _, row in subset.iterrows():
+                    st.caption(f"  → {row['mart']}")
+                    st.caption(f"    {row['assets']}")
+            st.divider()
+            st.caption("**Asset universe**")
+            assets = data.asset_universe()
+            if not assets.empty:
+                for cls in assets["asset_class"].unique():
+                    syms = assets[assets["asset_class"] == cls]
+                    sym_list = ", ".join(syms["symbol"].tolist())
+                    st.caption(f"**{cls.title()}**: {sym_list}")
+
     with st.expander("📊 Source freshness", expanded=False):
         freshness = data.source_freshness()
         if not freshness.empty:
