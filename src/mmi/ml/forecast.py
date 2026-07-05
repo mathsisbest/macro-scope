@@ -150,8 +150,9 @@ def evaluate_forecast(
     """
     df = df.copy()
 
-    # Fast path for vol_medium: compute features directly (no cross-asset joins needed)
-    if feature_set == "vol_medium":
+    if feature_set == "vol_medium" and macro_df is not None:
+        df = feat.make_features(df, feature_set=feature_set, macro_df=macro_df, asset_dfs=asset_dfs)
+    elif feature_set == "vol_medium":
         df = feat.make_features(df, feature_set="vol_medium")
     else:
         df = feat.make_features(df, feature_set=feature_set, macro_df=macro_df, asset_dfs=asset_dfs)
