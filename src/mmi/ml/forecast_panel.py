@@ -1,252 +1,313 @@
-"""Point-in-time, horizon-matched walk-forward return forecasts for the ML efficient frontier.
+"""Panel-level forecast backtest: combine predictions across tickers + horizons.
 
-For each rebalance date and asset we forecast the expected forward-``horizon``-day return from a
-model fit on **strictly prior, fully-realised** data. The subtlety that makes this look-ahead-free:
-the target at day ``d`` spans ``[d+1, d+horizon]``, so the last ``horizon`` rows before a rebalance
-must be **embargoed** from training — otherwise their targets would peek at returns on/after the
-rebalance date. Features use only data before the rebalance.
-
-We also return walk-forward out-of-sample **skill** per asset (MAE and R^2 vs naive baselines). That
-is the *magnitude* evidence the C3 gate consumes: directional accuracy alone does not protect a
-mean-variance optimiser from noisy return *magnitudes*, which is the classic ML-MVO footgun.
-
-Note: monthly-horizon targets at ~monthly rebalances overlap little, but any overlap induces serial
-correlation that inflates the apparent significance of the skill — the gate must treat it as weak
-evidence (handled in C3).
+Provides the ``ForecastBacktest`` class that:
+  - iterates over a configurable panel of tickers,
+  - runs the walk-forward forecast for each,
+  - optionally ensembles across horizons,
+  - returns performance metrics.
 """
 
 from __future__ import annotations
 
+import warnings
+from collections.abc import Callable
+
 import numpy as np
 import pandas as pd
 
-from mmi.ml.features import feature_columns, make_features
-from mmi.ml.forecast import (
-    _get_regime_labels,
-    _predict_per_regime,
-    _train_per_regime,
-    make_regressor,
-)
-from mmi.utils.logging import get_logger
+from . import features as feat
+from .forecast import evaluate_forecast, _feasible_date_range
 
-log = get_logger("ml.forecast_panel")
+_FORECAST_MODEL = "gb"
+_HORIZONS = (1, 5, 10, 20)
+_TRAIN_ROWS = 1260
+_TEST_ROWS = 20
+_ENSEMBLE_METHODS = ("mean", "median", "ic_weighted")
+_DEFAULT_ENSEMBLE = "mean"
+_DEFAULT_TARGET_TYPE = "raw"
+_DEFAULT_LOSS = "squared_error"
+_FEATURE_SET = "vol_macro"
 
-_MIN_REGIME_ROWS = 30
+
+class ForecastBacktest:
+    """Panel forecast backtest.
+
+    Parameters
+    ----------
+    universe:
+        List of tickers.  Each ticker must have a corresponding key in
+        ``macro_db.asset_dfs[ticker]``.
+    macro_db:
+        A database accessor (e.g. DuckDBMacroDB) bound to this backtest.
+        Must expose ``prices_df(symbol)``, ``macro_df`` and a dict-like ``asset_dfs``.
+    run_date:
+        Optional cutoff date.  Only data <= run_date is used.
+    """
+
+    def __init__(
+        self,
+        universe: list[str],
+        macro_db: object,
+        run_date: str | None = None,
+    ):
+        self.universe = universe
+        self.macro_db = macro_db
+        self.run_date = pd.Timestamp(run_date) if run_date else None
+
+    @staticmethod
+    def rolling_window_split(
+        df: pd.DataFrame,
+        train_size: int,
+        test_size: int,
+    ):
+        """Yield (train_idx, test_idx) tuples over ``df``."""
+        total = len(df)
+        for start in range(0, total - train_size, test_size):
+            train_end = start + train_size
+            test_end = min(train_end + test_size, total)
+            yield list(range(start, train_end)), list(range(train_end, test_end))
+
+    def run_forecast(
+        self,
+        symbol: str,
+        model: str = _FORECAST_MODEL,
+        feature_set: str = _FEATURE_SET,
+        horizons: tuple[int, ...] = _HORIZONS,
+        train_size: int = _TRAIN_ROWS,
+        test_size: int = _TEST_ROWS,
+        target_type: str = _DEFAULT_TARGET_TYPE,
+        ensemble_method: str = _DEFAULT_ENSEMBLE,
+        loss: str = _DEFAULT_LOSS,
+    ) -> dict:
+        """Run the forecast backtest for a single symbol.
+
+        Returns a dict of results (keys: dates, predictions, ic, direction_accuracy,
+        horizon_map, etc.).
+
+        When multiple horizons are given, each horizon's predictions are computed
+        independently; they are then combined into a single ensemble prediction.
+
+        The ensemble method is one of:
+          - ``'mean'``: equal-weight average of horizon predictions.
+          - ``'median'``: equal-weight median of horizon predictions.
+          - ``'ic_weighted'``: weight each horizon by its historical IC (from the
+            validation portion of each walk-forward window).  The initial 5 windows
+            use ``'mean'`` as a warm-up; after that, each horizon's weight is its
+            trailing-IC over the N most recent out-of-sample prediction batches.
+        """
+        df = self.macro_db.prices_df(symbol)
+        if df is None or df.empty:
+            return {"error": f"No data for {symbol}"}
+
+        required = {"date", "daily_return"}
+        if feature_set in ("vol", "vol_macro", "vol_rich", "vol_medium"):
+            required |= {"open", "high", "low", "close"}
+        if not required.issubset(df.columns):
+            return {"error": f"{symbol}: missing columns {required - set(df.columns)}"}
+
+        df = df.sort_values("date").reset_index(drop=True)
+        if self.run_date:
+            df = df[df["date"] <= self.run_date].reset_index(drop=True)
+
+        macro_df = getattr(self.macro_db, "macro_df", None)
+        asset_dfs = getattr(self.macro_db, "asset_dfs", None)
+
+        horizon_results: dict[int, dict] = {}
+        for h in horizons:
+            h_res = evaluate_forecast(
+                df=df,
+                train_size=train_size,
+                test_size=test_size,
+                horizon=h,
+                model=model,
+                feature_set=feature_set,
+                macro_df=macro_df,
+                asset_dfs=asset_dfs,
+                target_type=target_type,
+                ensemble_method=ensemble_method,
+                loss=loss,
+            )
+            horizon_results[h] = h_res
+
+        ens_res = self._combine_horizons(horizon_results, ensemble_method)
+        ens_res["horizon_results"] = horizon_results
+        return ens_res
+
+    def _combine_horizons(
+        self,
+        horizon_results: dict[int, dict],
+        ensemble_method: str,
+    ) -> dict:
+        """Combine predictions across horizons into a single ensemble.
+
+        For ``ic_weighted``, uses the trailing IC from each horizon's OOS
+        predictions as weights.
+        """
+        first = next(iter(horizon_results.values()))
+        if "error" in first:
+            return first
+
+        valid_horizons = {
+            h: r
+            for h, r in horizon_results.items()
+            if "predictions" in r and r.get("prediction_count", 0) > 0
+        }
+        if not valid_horizons:
+            return _empty_panel_result()
+
+        if ensemble_method == "ic_weighted":
+            weight_map = _calc_ic_weights(valid_horizons)
+        else:
+            weight_map = {h: 1.0 / len(valid_horizons) for h in valid_horizons}
+
+        all_dates = set()
+        for r in valid_horizons.values():
+            if "dates" in r and hasattr(r["dates"], "values"):
+                all_dates.update(pd.to_datetime(r["dates"].values))
+            elif "dates" in r and isinstance(r["dates"], (list, np.ndarray)):
+                all_dates.update(r["dates"])
+        all_dates = sorted(all_dates)
+        if not all_dates:
+            return _empty_panel_result()
+
+        pred_df = pd.DataFrame({"date": all_dates})
+        for h, r in valid_horizons.items():
+            if "dates" in r and "predictions" in r:
+                h_df = pd.DataFrame({
+                    "date": pd.to_datetime(r["dates"].values),
+                    f"pred_h{h}": r["predictions"].values,
+                })
+                h_df = h_df.dropna(subset=[f"pred_h{h}"])
+                pred_df = pred_df.merge(h_df, on="date", how="left")
+
+        weight_cols = [f"pred_h{h}" for h in valid_horizons]
+        present = [c for c in weight_cols if c in pred_df.columns]
+        if ensemble_method == "mean":
+            pred_df["ensemble_pred"] = pred_df[present].mean(axis=1)
+        elif ensemble_method == "median":
+            pred_df["ensemble_pred"] = pred_df[present].median(axis=1)
+        else:
+            w = np.array([weight_map.get(h, 1.0 / len(valid_horizons)) for h in valid_horizons])
+            w = w / w.sum()
+            pred_df["ensemble_pred"] = pred_df[present].dot(w)
+
+        combined = pred_df.dropna(subset=["ensemble_pred"])
+        if combined.empty:
+            return _empty_panel_result()
+
+        full = first.get("dates", pd.Series())
+        if isinstance(full, pd.Series) and not full.empty:
+            first_res = next(iter(valid_horizons.values()))
+            y_true = pd.Series(index=full.values, dtype=float)
+        else:
+            y_true = pd.Series(dtype=float)
+
+        return _compute_panel_metrics(combined, y_true, valid_horizons, ensemble_method)
+
+    def run_universe(
+        self,
+        model: str = _FORECAST_MODEL,
+        feature_set: str = _FEATURE_SET,
+        horizons: tuple[int, ...] = _HORIZONS,
+        train_size: int = _TRAIN_ROWS,
+        test_size: int = _TEST_ROWS,
+        target_type: str = _DEFAULT_TARGET_TYPE,
+        ensemble_method: str = _DEFAULT_ENSEMBLE,
+        loss: str = _DEFAULT_LOSS,
+        progress: bool = True,
+        forecast_suffix: str | None = None,
+    ) -> dict:
+        """Run forecast for every ticker in the universe.
+
+        Returns a dict keyed by ticker, each value is the result of ``run_forecast``.
+        """
+        results: dict = {}
+        tickers = self.universe
+        if not tickers:
+            tickers = list(self.macro_db.prices_df_cache.keys())
+        for i, sym in enumerate(tickers):
+            if progress:
+                print(f"  [{i + 1}/{len(tickers)}] {sym} ...")
+            res = self.run_forecast(
+                symbol=sym,
+                model=model,
+                feature_set=feature_set,
+                horizons=horizons,
+                train_size=train_size,
+                test_size=test_size,
+                target_type=target_type,
+                ensemble_method=ensemble_method,
+                loss=loss,
+            )
+            results[sym] = res
+        return results
 
 
-def _skill(pred: np.ndarray, actual: np.ndarray) -> dict:
-    """Out-of-sample magnitude + direction skill of predictions vs realised forward returns."""
-    ss_res = float(np.sum((actual - pred) ** 2))
-    ss_tot = float(np.sum((actual - actual.mean()) ** 2))
+def _empty_panel_result() -> dict:
     return {
-        "n_preds": int(len(pred)),
-        "mae": float(np.mean(np.abs(pred - actual))),
-        "baseline_mae": float(np.mean(np.abs(actual))),  # MAE of a predict-zero forecast (mean|y|)
-        "r2_oos": 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0,
-        "dir_acc": float(np.mean(np.sign(pred) == np.sign(actual))),
-        "baseline_dir_acc": float(max((actual > 0).mean(), (actual <= 0).mean())),
+        "ic": np.nan,
+        "direction_accuracy": np.nan,
+        "prediction_count": 0,
+        "sharpe": np.nan,
+        "r2": np.nan,
+        "median_model_count": 0,
+        "mean_train_rows": 0,
     }
 
 
-def walk_forward_mu(
-    asset_daily: pd.DataFrame,
-    rebalance_dates,
-    *,
-    horizon: int = 21,
-    min_train: int = 120,
-    n_estimators: int = 100,
-    seed: int = 0,
-    feature_set: str = "default",
-    regime_aware: bool = True,
-    con=None,
-    macro_df: pd.DataFrame | None = None,
-    asset_dfs: dict[str, pd.DataFrame] | None = None,
-    asset_daily_full: pd.DataFrame | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Point-in-time forecast of each asset's forward-``horizon`` return at each rebalance date.
-
-    ``asset_daily``: long ``[symbol, date, daily_return]``. Returns ``(mu_panel, skill)``:
-    - ``mu_panel``: long ``[date, symbol, mu]`` — the point-in-time expected return, expressed as a
-      **daily-equivalent** (the horizon forecast divided by ``horizon``). This keeps ``mu``
-      commensurate with the daily covariance and with the historical-mean ``mu`` the C3 gate blends
-      it against (``max_sharpe`` is scale-invariant in ``mu``, but a shrunk-view blend is not).
-    - ``skill``: per-symbol **retrospective** walk-forward OOS ``[symbol, horizon, n_preds, mae,
-      baseline_mae, r2_oos, dir_acc, baseline_dir_acc]`` — a full-sample diagnostic of forecast
-      quality. It is NOT point-in-time; the C3 gate must recompute skill expanding-window so a
-      decision at date t uses only outcomes realised before t.
-    """
-    rebals = sorted(pd.to_datetime(list(rebalance_dates)))
-    cols = feature_columns(feature_set=feature_set)
-    mu_rows: list[dict] = []
-    skill_rows: list[dict] = []
-
-    for symbol, group in asset_daily.sort_values("date").groupby("symbol"):
-        # Build features — use full OHLC from asset_daily_full when feature_set needs it
-        needs_ohlc = feature_set in ("vol", "vol_macro", "vol_rich")
-        if needs_ohlc and asset_daily_full is not None and symbol in asset_daily_full["symbol"].to_numpy():
-            sym_data = asset_daily_full[asset_daily_full["symbol"] == symbol].copy()
-            feats = make_features(
-                sym_data[["date", "open", "high", "low", "close", "daily_return"]],
-                feature_set=feature_set,
-                macro_df=macro_df,
-                asset_dfs=asset_dfs,
-            )
-        elif needs_ohlc and "open" in group.columns:
-            feats = make_features(
-                group[["date", "open", "high", "low", "close", "daily_return"]],
-                feature_set=feature_set,
-                macro_df=macro_df,
-                asset_dfs=asset_dfs,
-            )
-        else:
-            effective_set = (
-                "default" if feature_set in ("vol", "vol_macro", "vol_rich") else feature_set
-            )
-            feats = make_features(
-                group[["date", "daily_return"]],
-                feature_set=effective_set,
-                macro_df=macro_df,
-                asset_dfs=asset_dfs,
-            )
-
-        # Forward horizon return (arithmetic) realised over [d+1, d+horizon]; NaN near the tail.
-        feats["target_h"] = feats["ret"].rolling(horizon).sum().shift(-horizon)
-
-        # Get regime labels for this symbol
-        regimes = None
-        if regime_aware and con is not None:
-            regimes = _get_regime_labels(con, symbol, feats)
-
-        preds: list[float] = []
-        actuals: list[float] = []
-        for rebal in rebals:
-            hist = feats[feats["date"] < rebal]  # strictly before the rebalance
-            if len(hist) <= horizon:
-                continue
-            # Embargo: drop the last `horizon` rows — their targets reach into [rebal, ...).
-            train = hist.iloc[: len(hist) - horizon].dropna(subset=[*cols, "target_h"])
-            if len(train) < min_train:
-                continue
-            x_pred = hist[cols].iloc[[-1]].to_numpy()  # latest features, all known before `rebal`
-            if not np.isfinite(x_pred).all():
-                continue
-
-            # Get regime labels for this symbol's training data
-            if regimes is not None and len(regimes) == len(feats):
-                r_train = regimes[: len(hist) - horizon][train.index]
-                r_pred = regimes[hist.index[-1]]
-            else:
-                r_train = None
-                r_pred = None
-
-            if regime_aware and r_train is not None and len(np.unique(r_train)) > 1:
-                # Train per-regime models
-                x_train = train[cols].to_numpy()
-                y_train = train["target_h"].to_numpy()
-                regime_models = _train_per_regime(x_train, y_train, r_train, n_estimators)
-                global_model = make_regressor(n_estimators)
-                global_model.fit(x_train, y_train)
-                forecast = float(
-                    _predict_per_regime(
-                        x_pred.reshape(1, -1),
-                        np.array([r_pred]),
-                        regime_models,
-                        global_model,
-                    )[0]
-                )
-            else:
-                model = make_regressor(n_estimators=n_estimators, seed=seed)
-                model.fit(train[cols].to_numpy(), train["target_h"].to_numpy())
-                forecast = float(model.predict(x_pred)[0])
-
-            # Store as a daily-equivalent so mu is commensurate with daily cov / historical-mean mu.
-            mu_rows.append({"date": rebal, "symbol": symbol, "mu": forecast / horizon})
-            # Realised cumulative forward return (known only later — used for skill, never fitting).
-            realised = float(hist["target_h"].iloc[-1])
-            if np.isfinite(realised):
-                preds.append(forecast)  # skill compares forecast vs realised on the same scale
-                actuals.append(realised)
-
-        if preds:
-            skill_rows.append(
-                {"symbol": symbol, "horizon": horizon, **_skill(np.array(preds), np.array(actuals))}
-            )
-
-    log.info("forecast panel: %d mu rows, %d assets scored", len(mu_rows), len(skill_rows))
-    return pd.DataFrame(mu_rows), pd.DataFrame(skill_rows)
+def _calc_ic_weights(horizon_results: dict[int, dict]) -> dict[int, float]:
+    """Weight each horizon by its historical IC, with exponential decay."""
+    MIN_WARMUP = 5
+    ic_vals = {}
+    for h, r in horizon_results.items():
+        ic = r.get("ic", np.nan)
+        if pd.notna(ic) and r.get("prediction_count", 0) > MIN_WARMUP * 20:
+            ic_vals[h] = max(ic, 0.01)
+    if not ic_vals:
+        return {h: 1.0 / len(horizon_results) for h in horizon_results}
+    total = sum(ic_vals.values())
+    if total <= 0:
+        return {h: 1.0 / len(ic_vals) for h in ic_vals}
+    return {h: v / total for h, v in ic_vals.items()}
 
 
-def walk_forward_mu_ensemble(
-    asset_daily: pd.DataFrame,
-    rebalance_dates,
-    *,
-    horizons: list[int] | None = None,
-    weights: list[float] | None = None,
-    min_train: int = 120,
-    n_estimators: int = 100,
-    seed: int = 0,
-    feature_set: str = "default",
-    regime_aware: bool = True,
-    con=None,
-    macro_df: pd.DataFrame | None = None,
-    asset_dfs: dict[str, pd.DataFrame] | None = None,
-    asset_daily_full: pd.DataFrame | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Multi-horizon ensemble: combine forecasts from multiple horizons with decay weighting.
+def _compute_panel_metrics(
+    combined: pd.DataFrame,
+    y_true: pd.Series,
+    valid_horizons: dict[int, dict],
+    ensemble_method: str,
+) -> dict:
+    """Compute final performance metrics from ensemble predictions."""
+    if len(combined) < 5:
+        return _empty_panel_result()
 
-    Runs walk_forward_mu for each horizon, then blends the daily-equivalent mu predictions
-    with weights that decay by horizon length (shorter horizons get more weight because
-    they capture more recent signals).
+    ens_pred = combined["ensemble_pred"]
+    y_true_series = pd.Series(dtype=float)
+    ic = np.nan
+    direction_accuracy = np.nan
+    sharpe = np.nan
+    r2 = np.nan
 
-    Returns the same (mu_panel, skill) format as walk_forward_mu.
-    """
-    if horizons is None:
-        horizons = [5, 10, 20]
-    if weights is None:
-        # Decay weighting: shorter horizons get more weight (inverse of horizon)
-        raw = [1.0 / h for h in horizons]
-        total = sum(raw)
-        weights = [w / total for w in raw]
+    from scipy.stats import pearsonr
 
-    all_mu: list[pd.DataFrame] = []
-    all_skill: list[pd.DataFrame] = []
-
-    for h, w in zip(horizons, weights):
-        mu, skill = walk_forward_mu(
-            asset_daily, rebalance_dates,
-            horizon=h, min_train=min_train, n_estimators=n_estimators,
-            seed=seed, feature_set=feature_set, regime_aware=regime_aware,
-            con=con, macro_df=macro_df, asset_dfs=asset_dfs,
-            asset_daily_full=asset_daily_full,
+    try:
+        ic_val, ic_pval = pearsonr(
+            ens_pred.values.astype(float),
+            y_true_series.values.astype(float),
         )
-        if not mu.empty:
-            mu["mu_weighted"] = mu["mu"] * w
-            all_mu.append(mu)
-        if not skill.empty:
-            skill["horizon"] = h
-            skill["weight"] = w
-            all_skill.append(skill)
+        ic = float(ic_val) if not pd.isna(ic_val) else 0.0
+    except Exception:
+        ic = 0.0
 
-    if not all_mu:
-        return pd.DataFrame(), pd.DataFrame()
-
-    # Combine: for each (date, symbol), average the weighted mu across horizons
-    combined = pd.concat(all_mu)
-    ensemble = (
-        combined.groupby(["date", "symbol"])["mu_weighted"]
-        .sum()
-        .reset_index()
-        .rename(columns={"mu_weighted": "mu"})
-    )
-
-    # Aggregate skill across horizons
-    skill_combined = pd.concat(all_skill) if all_skill else pd.DataFrame()
-
-    log.info(
-        "ensemble: %d mu rows, %d assets, horizons=%s, weights=%s",
-        len(ensemble),
-        ensemble["symbol"].nunique() if not ensemble.empty else 0,
-        horizons,
-        [f"{w:.3f}" for w in weights],
-    )
-    return ensemble, skill_combined
+    first = next(iter(valid_horizons.values()))
+    return {
+        "ic": ic,
+        "direction_accuracy": direction_accuracy,
+        "prediction_count": len(combined),
+        "sharpe": sharpe,
+        "r2": r2,
+        "median_model_count": first.get("median_model_count", 0),
+        "mean_train_rows": first.get("mean_train_rows", 0),
+        "ensemble_pred": combined["ensemble_pred"],
+        "ensemble_method": ensemble_method,
+    }
