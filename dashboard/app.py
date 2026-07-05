@@ -152,6 +152,27 @@ with st.sidebar:
             st.caption("Mixed or unrecorded data provenance.")
         else:
             st.caption("No data yet — run `make demo` or `mmi ingest`.")
+    with st.expander("📊 Source freshness", expanded=False):
+        freshness = data.source_freshness()
+        if not freshness.empty:
+            stale = freshness[freshness["status"] == "stale"]
+            fresh = freshness[freshness["status"] == "fresh"]
+            unknown = freshness[freshness["status"] == "unknown"]
+
+            if not stale.empty:
+                st.warning(f"{len(stale)} series stale")
+                for _, row in stale.iterrows():
+                    st.caption(
+                        f"⚠️ {row['series_id']}: {row['days_since']}d old "
+                        f"(expected ≤{row['expected_days']}d)"
+                    )
+            if not fresh.empty:
+                st.success(f"{len(fresh)} series fresh")
+            if not unknown.empty:
+                st.caption(f"{len(unknown)} series (no frequency defined)")
+        else:
+            st.caption("No freshness data available.")
+
     st.divider()
     st.caption(f"`{settings.storage_label()}`")
     st.caption(f"LLM provider · `{settings.llm_provider}`")

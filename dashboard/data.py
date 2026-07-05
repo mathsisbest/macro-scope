@@ -338,3 +338,74 @@ def macro_source_caption(is_sample: bool | None) -> str:
     if is_sample is True:
         return "⚠️ Synthetic sample data — not from FRED (live data is sourced from FRED)."
     return ""  # mixed / unknown provenance → make no source claim
+
+
+# ---------------------------------------------------------------------------
+# Source freshness
+# ---------------------------------------------------------------------------
+
+# Expected update frequency per FRED series (in days).
+# Daily series should update within 3 business days; weekly within 10; monthly within 45.
+_FREQUENCY_DAYS = {
+    "DGS10": 3,
+    "DGS2": 3,
+    "DGS3MO": 3,
+    "T10Y2Y": 3,  # daily Treasury yields
+    "VIXCLS": 3,  # daily VIX
+    "DCOILWTICO": 3,  # daily oil
+    "DTWEXBGS": 5,  # daily dollar (发布稍晚)
+    "ICSA": 10,  # weekly initial claims
+    "NFCI": 10,  # weekly financial conditions
+    "UNRATE": 45,  # monthly unemployment
+    "CPIAUCSL": 45,  # monthly CPI
+    "PCEPILFE": 45,  # monthly core PCE
+    "FEDFUNDS": 45,  # monthly Fed funds
+    "INDPRO": 45,  # monthly industrial production
+    "PAYEMS": 45,  # monthly payrolls
+    "M2SL": 45,  # monthly M2
+    "WALCL": 45,  # monthly Fed balance sheet
+    "UMCSENT": 45,  # monthly consumer sentiment
+    "SAHMREALTIME": 45,  # monthly Sahm rule
+    "RSAFS": 45,  # monthly retail sales
+    "A191RL1Q225SBEA": 120,  # quarterly GDP
+    "GFDEGDQ188S": 120,  # quarterly debt/GDP
+}
+
+
+def source_freshness() -> pd.DataFrame:
+    """Per-series freshness status: latest observation date, expected interval, days stale.
+
+    Returns a DataFrame with columns: series_id, latest_date, expected_days, days_since, status.
+    Status is 'fresh', 'stale', or 'unknown' (no data or no frequency defined).
+    """
+    df = query(
+        "select series_id, max(date) as latest_date "
+        "from marts.fct_macro_indicator "
+        "group by series_id"
+    )
+    if df.empty:
+        cols = ["series_id", "latest_date", "expected_days", "days_since", "status"]
+        return pd.DataFrame(columns=cols)
+
+    today = pd.Timestamp.now().normalize()
+    rows = []
+    for _, row in df.iterrows():
+        sid = row["series_id"]
+        latest = pd.Timestamp(row["latest_date"])
+        expected = _FREQUENCY_DAYS.get(sid)
+        if expected is None:
+            status = "unknown"
+            days_since = None
+        else:
+            days_since = (today - latest).days
+            status = "fresh" if days_since <= expected else "stale"
+        rows.append(
+            {
+                "series_id": sid,
+                "latest_date": latest.strftime("%Y-%m-%d"),
+                "expected_days": expected,
+                "days_since": days_since,
+                "status": status,
+            }
+        )
+    return pd.DataFrame(rows)

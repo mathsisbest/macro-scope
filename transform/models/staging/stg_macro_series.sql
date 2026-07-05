@@ -5,6 +5,7 @@ select
     series_id,
     cast(date as date)   as date,
     cast(value as double) as value,
-    source
+    source,
+    loaded_at
 from source
 where value is not null
