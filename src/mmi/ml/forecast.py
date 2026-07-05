@@ -237,6 +237,11 @@ def evaluate_forecast(
             X_train = X_train[:, non_const]
             X_test = X_test[:, non_const]
 
+            # Drop NaN in y (vol_adjusted/excess targets produce NaN for early rows)
+            valid = ~np.isnan(y_train)
+            X_train = X_train[valid]
+            y_train = y_train[valid]
+
             if len(y_train) < 50:
                 break
 
