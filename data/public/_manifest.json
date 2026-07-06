@@ -40,7 +40,7 @@
       "rows": 56062
     },
     "market_brief": {
-      "rows": 7
+      "rows": 8
     },
     "ml_forecast": {
       "rows": 2
@@ -49,5 +49,5 @@
       "rows": 16
     }
   },
-  "generated_at": "2026-07-06T12:12:21.005704+00:00"
+  "generated_at": "2026-07-06T12:22:09.202103+00:00"
 }
