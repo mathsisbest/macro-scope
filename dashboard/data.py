@@ -283,10 +283,16 @@ def regimes(symbol: str, start: str | None = None) -> pd.DataFrame:
 
 
 def latest_brief() -> pd.DataFrame:
-    return query(
-        "select created_at, engine, brief, data_date "
-        "from marts.market_brief order by created_at desc limit 1"
-    )
+    try:
+        return query(
+            "select created_at, engine, brief, data_date "
+            "from marts.market_brief order by created_at desc limit 1"
+        )
+    except Exception:
+        return query(
+            "select created_at, engine, brief "
+            "from marts.market_brief order by created_at desc limit 1"
+        )
 
 
 def pipeline_runs() -> pd.DataFrame:
