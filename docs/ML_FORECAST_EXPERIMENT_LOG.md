@@ -745,6 +745,36 @@
 
 ---
 
+### Experiment 38: Rolling Window Length Sweep
+
+**Date:** 2026-07-06 (Session 4)
+**Approach:** Swept train_size from 63 to 1008 (0.2 to 4 years) with 63d target.
+
+**Results:**
+
+| Train Size | Years | IC | Dir Acc | Sharpe |
+|------------|-------|-----|---------|--------|
+| 63 | 0.2 | 0.011 | 0.636 | 0.19 |
+| 126 | 0.5 | 0.082 | 0.639 | 0.33 |
+| **160** | **0.6** | **0.106** | **0.658** | **0.39** |
+| 252 | 1.0 | 0.079 | 0.631 | 0.47 |
+| 504 | 2.0 | 0.045 | 0.618 | 0.39 |
+| 1008 | 4.0 | 0.012 | 0.607 | 0.40 |
+
+**Portfolio results (ex_btc_2002 window):**
+
+| Config | Strategy | Annual | Sharpe |
+|--------|----------|--------|--------|
+| **train=160/h=252** | **ml_tilt** | **+3.44%** | **0.51** |
+| train=160/h=63 | ml_tilt | +1.63% | 0.10 |
+| train=250/h=63 (old) | ml_tilt | +1.43% | 0.15 |
+
+**Verdict:** **Best portfolio result.** train=160 (0.6 years) + 252d target gives Sharpe=0.51 — 2.4x better than previous best. The 0.6-year window captures recent regime without overfitting to stale data.
+
+**Commit:** Pushed to main.
+
+---
+
 ### Experiment 37: vol_rich_plus Feature Set Sweep
 
 **Date:** 2026-07-05 (Session 5)
@@ -820,6 +850,7 @@
 11. **ML signal works for portfolio allocation.** Even with IC=0.10, the ML forecast improves portfolio returns by ~5% annualized when used for asset weighting. The signal is asset-specific (GLD IC=0.301, SPY IC=0.101, TLT IC=-0.122).
 12. **Regime sizing needs high IC.** At IC=0.10, sizing up/down doesn't help — noise amplification cancels signal amplification. Would need IC > 0.20 for regime sizing to add value.
 13. **Rolling beats expanding — no ensemble benefit.** Expanding window has near-zero IC across all horizons. Old data doesn't predict current returns. Rolling window is strictly better. Don't ensemble them.
+14. **0.6-year rolling window is optimal.** train=160 (0.6 years) beats both shorter (63d) and longer (252d) windows. Shorter = too noisy, longer = stale data.
 11. **Multi-asset forecasting reveals asset-specific predictability.** Gold is the most predictable (structural macro drivers), SPY is predictable (cycle-driven), TLT is not (rate path is a random walk).
 12. **Positive R² IS achievable.** GLD h=252 vol_macro achieves R²=+0.568 — the model explains 57% of 1-year gold return variance. The previous dogma ("returns have near-zero R²") was horizon-limited AND asset-limited, not fundamental.
 13. **Feature engineering is ASSET-SPECIFIC.** Gold needs macro features (vol_macro). SPY needs only vol features (no macro — causes overfitting). TLT is unpredictable regardless of features. One-size-fits-all feature engineering is worse than doing nothing.
