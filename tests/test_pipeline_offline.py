@@ -137,6 +137,6 @@ def test_seed_brief_columns_match_contract_g(monkeypatch, tmp_path):
             ).fetchall()
         ]
 
-    assert cols == ["created_at", "engine", "brief"], (
-        f"market_brief columns must be [created_at, engine, brief], got {cols}"
+    assert cols == ["created_at", "engine", "brief", "data_date"], (
+        f"market_brief columns must be [created_at, engine, brief, data_date], got {cols}"
     )

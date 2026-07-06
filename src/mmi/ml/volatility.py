@@ -45,6 +45,8 @@ skip is logged at INFO.  This keeps the small CI/sample data working.
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingRegressor
@@ -487,7 +489,7 @@ def train_and_backtest_vol(
                     x_dev,
                     y_dev,
                     x_hold,
-                    regime_labels,
+                    cast(np.ndarray, regime_labels),
                     hold_regime,
                 )
             else:

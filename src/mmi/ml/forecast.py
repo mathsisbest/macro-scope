@@ -96,7 +96,7 @@ def evaluate_forecast(
     df: pd.DataFrame,
     train_size: int = 250,
     test_size: int = 20,
-    horizon: int = 1,
+    horizon: int | None = 1,
     model: str = "gb",
     feature_set: str = "default",
     macro_df: pd.DataFrame | None = None,
@@ -312,7 +312,7 @@ def _empty_result(
     target_type: str,
     ensemble_method: str,
     loss: str,
-    horizon: int,
+    horizon: int | None,
 ) -> dict:
     return {
         "horizon": horizon,
@@ -349,7 +349,7 @@ def _compute_metrics(
     target_type: str,
     ensemble_method: str,
     loss: str,
-    horizon: int,
+    horizon: int | None,
     n: int,
     train_size: int,
     test_size: int,

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import itertools
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -132,7 +133,7 @@ def run_sweep(
     r2, mean_train_rows.
     """
     if con is None:
-        con = connect(db_path)
+        con = connect(Path(db_path) if db_path else None)
 
     df = _spy_df(con)
     if df is None or df.empty:
@@ -183,7 +184,7 @@ def run_sweep(
 
         try:
             needs_macro = fset in ("vol", "vol_macro", "vol_medium", "vol_rich")
-            kwargs = {"max_iter": ntree, "n_estimators": ntree}
+            kwargs: dict = {"max_iter": ntree, "n_estimators": ntree}
             res = evaluate_forecast(
                 df=df,
                 train_size=train_size,
@@ -300,6 +301,6 @@ if __name__ == "__main__":
         min_rows=args.min_rows,
         output_path=args.output,
     )
-    con.close()
+    con.close()  # type: ignore[attr-defined]
     if not results_df.empty:
         summarize(results_df)
