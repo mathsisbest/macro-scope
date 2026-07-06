@@ -296,7 +296,11 @@ def is_sample_data() -> bool | None:
     a mixed set (a partial cron ingest leaving some symbols `"sample"`), OR any unrecorded
     (null/blank) source — is deliberately `None`: never claim "all sample" or "all live" unless
     every row genuinely is."""
-    df = query("select distinct source from marts.fct_asset_daily")
+    # In snapshot mode, fct_asset_daily may not have a 'source' column
+    try:
+        df = query("select distinct source from marts.fct_asset_daily")
+    except Exception:
+        return None  # snapshot mode — no source column
     if df.empty:
         return None
     col = df["source"]
