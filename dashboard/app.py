@@ -123,8 +123,8 @@ if not data.db_exists():
     st.stop()
 
 # --------------------------------------------------------------------------- data provenance
-# Honest "data as of <date> · sample/live" badge. Both signals come from the marts, so they are
-# correct in BOTH live and snapshot (public Parquet) mode — raw.pipeline_runs isn't snapshotted.
+# Honest "data as of <date> · sample/live/snapshot" badge. Both signals come from the marts, so they
+# are correct in BOTH live and snapshot (public Parquet) mode — raw.pipeline_runs isn't snapshotted.
 as_of = data.data_as_of()
 is_sample = data.is_sample_data()
 provenance = [f"📅 Data as of **{as_of}**"] if as_of else []
@@ -132,8 +132,13 @@ if is_sample is True:
     provenance.append("🧪 sample data (synthetic — run `mmi ingest` for live)")
 elif is_sample is False:
     provenance.append("🟢 live data")
-elif as_of:
-    provenance.append("⚠️ mixed/unrecorded data provenance")
+else:
+    manifest = data.snapshot_manifest()
+    if manifest and "generated_at" in manifest:
+        gen = manifest["generated_at"].replace("T", " ").split("+")[0].split(".")[0]
+        provenance.append(f"📦 public snapshot generated {gen} UTC")
+    elif as_of:
+        provenance.append("⚠️ mixed/unrecorded data provenance")
 if provenance:
     st.caption(" · ".join(provenance))
 
@@ -503,7 +508,7 @@ with tab_ml:
         )
 
         # Display per-horizon forecasts from ml_forecast
-        return_fc = fc[fc["model"].str.contains("return_rf", na=False)] if not fc.empty else fc
+        return_fc = fc[fc["model"].str.startswith("return_", na=False)] if not fc.empty else fc
         if not return_fc.empty:
             for _, row in return_fc.iterrows():
                 h = int(row["horizon"])
@@ -516,7 +521,9 @@ with tab_ml:
                 )
 
             # Per-horizon metrics
-            rm = metrics[metrics["model"] == "return_rf"].set_index("metric")["value"]
+            rm = metrics[metrics["model"].str.startswith("return_", na=False)].set_index("metric")[
+                "value"
+            ]
             if not rm.empty:
                 with st.expander("Model performance by horizon", expanded=False):
                     for h in [1, 5, 10, 20]:
@@ -678,7 +685,7 @@ with tab_portfolio:
                         "Sharpe (252d)": "{:.2f}",
                     }
                 ),
-                use_container_width=True,
+                width="stretch",
             )
 
         # Risk-adjusted scorecard: full-sample Sharpe + bootstrap CIs + pairwise distinguishability.
@@ -692,7 +699,7 @@ with tab_portfolio:
                 with sc1:
                     st.dataframe(
                         charts.portfolio_scorecard(stats).style.format("{:.2f}"),
-                        use_container_width=True,
+                        width="stretch",
                     )
                 with sc2:
                     if not pairs.empty:
@@ -700,7 +707,7 @@ with tab_portfolio:
                             charts.portfolio_pairs_table(pairs).style.format(
                                 {"Δ Sharpe": "{:.2f}", "CI low": "{:.2f}", "CI high": "{:.2f}"}
                             ),
-                            use_container_width=True,
+                            width="stretch",
                         )
                 st.caption(
                     f"Stationary block-bootstrap ({stats['n_boot'].iloc[0]:,} resamples, "

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -65,6 +66,25 @@ def query(sql: str, params: tuple | None = None) -> pd.DataFrame:
         return pd.DataFrame()
     finally:
         con.close()
+
+
+def snapshot_manifest() -> dict | None:
+    """Read the snapshot manifest if in snapshot mode, else ``None``.
+
+    ``_manifest.json`` is written by ``mmi snapshot`` alongside the Parquet files.
+    It contains ``generated_at`` and per-table ``rows`` counts, so the dashboard can
+    display honest provenance even when ``raw.pipeline_runs`` is absent.
+    """
+    if not settings.snapshot_mode:
+        return None
+    manifest_path = settings.snapshot_dir / "_manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        with open(manifest_path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 # Date-range presets for the global chart range selector (Google-Finance style).
