@@ -23,7 +23,6 @@ def compute_all_predictions(
     model: str = "gb",
     feature_set: str = "default",
     target_horizon: int = 252,
-    target_horizon: int = 63,
     target_type: str = "raw",
     ensemble_method: str = "mean",
     loss: str = "squared_error",
