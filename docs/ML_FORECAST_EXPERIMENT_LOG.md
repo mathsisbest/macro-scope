@@ -771,6 +771,14 @@
 
 **Verdict:** **Best portfolio result.** train=160 (0.6 years) + 252d target gives Sharpe=0.51 — 2.4x better than previous best. The 0.6-year window captures recent regime without overfitting to stale data.
 
+**Full dataset verification (53295 rows, 1993-2026):**
+
+| Strategy | Annual | Vol | Sharpe | n_days |
+|----------|--------|-----|--------|--------|
+| equal_weight | -2.60% | 27.31% | -0.10 | 5457 |
+| ml_tilt | +3.44% | 6.72% | 0.51 | 5277 |
+| ml_regime | +3.38% | 6.90% | 0.49 | 5277 |
+
 **Commit:** Pushed to main.
 
 ---
