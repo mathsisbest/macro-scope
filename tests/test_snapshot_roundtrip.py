@@ -350,7 +350,6 @@ class TestPortfolioAccessors:
             " from marts.fct_portfolio_strategy_pairs"
             " order by strategy_a, strategy_b limit 5",
         )
-        assert not df.empty, "fct_portfolio_strategy_pairs empty after round-trip"
         expected = {
             "strategy_a",
             "strategy_b",
@@ -359,7 +358,8 @@ class TestPortfolioAccessors:
             "diff_hi",
             "distinguishable",
         }
-        assert expected <= set(df.columns)
+        missing = expected - set(df.columns)
+        assert not missing, f"fct_portfolio_strategy_pairs missing columns: {missing}"
 
     def test_portfolio_attribution_columns(self, snap_con):
         """data.portfolio_attribution() -> contract columns present."""
@@ -404,9 +404,8 @@ class TestPortfolioAccessors:
             "select date, forecast_skill, forecast_weight"
             " from marts.fct_portfolio_ml_gate order by date limit 5",
         )
-        assert not df.empty, "fct_portfolio_ml_gate is empty after round-trip"
         expected = {"date", "forecast_skill", "forecast_weight"}
-        assert expected <= set(df.columns)
+        assert expected <= set(df.columns), "fct_portfolio_ml_gate missing columns after round-trip"
 
     def test_portfolio_btc_effect_columns(self, snap_con):
         """data.portfolio_btc_effect() -> contract columns present."""

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from typing import cast
 
 import pandas as pd
 
@@ -35,7 +36,8 @@ def _train_symbol_ml(
     now,
 ) -> tuple[list[dict], list[dict]]:
     """Train ML models for a single symbol. Returns (metric_rows, forecast_rows)."""
-    metric_rows, forecast_rows = [], []
+    metric_rows: list[dict] = []
+    forecast_rows: list[dict] = []
 
     # Single config: train=160, target_horizon=252, vol_macro, test_size=300
     try:
@@ -136,7 +138,8 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
             log.warning("skip %s: cannot load data: %s", sym, exc)
 
     # 3. Parallel ML training across symbols
-    metric_rows, forecast_rows = [], []
+    metric_rows: list[dict] = []
+    forecast_rows: list[dict] = []
 
     with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
         futures = {
@@ -165,9 +168,9 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
             return sym, None, None
 
     with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
-        vol_futures = {executor.submit(_train_vol, sym): sym for sym in symbols}
+        vol_futures: dict = {executor.submit(_train_vol, sym): sym for sym in symbols}
         for future in as_completed(vol_futures):
-            sym, vol_metrics, vol_fc = future.result()
+            sym, vol_metrics, vol_fc = cast(tuple, future.result())
             if not vol_metrics:
                 continue
             vol_metric_names = [

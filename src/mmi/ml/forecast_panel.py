@@ -91,7 +91,7 @@ class ForecastBacktest:
             use ``'mean'`` as a warm-up; after that, each horizon's weight is its
             trailing-IC over the N most recent out-of-sample prediction batches.
         """
-        df = self.macro_db.prices_df(symbol)
+        df = self.macro_db.prices_df(symbol)  # type: ignore[attr-defined]
         if df is None or df.empty:
             return {"error": f"No data for {symbol}"}
 
@@ -156,13 +156,13 @@ class ForecastBacktest:
         else:
             weight_map = {h: 1.0 / len(valid_horizons) for h in valid_horizons}
 
-        all_dates = set()
+        date_set: set = set()
         for r in valid_horizons.values():
             if "dates" in r and hasattr(r["dates"], "values"):
-                all_dates.update(pd.to_datetime(r["dates"].values))
+                date_set.update(pd.to_datetime(r["dates"].values))
             elif "dates" in r and isinstance(r["dates"], (list, np.ndarray)):
-                all_dates.update(r["dates"])
-        all_dates = sorted(all_dates)
+                date_set.update(r["dates"])
+        all_dates = sorted(date_set)
         if not all_dates:
             return _empty_panel_result()
 
@@ -221,7 +221,7 @@ class ForecastBacktest:
         results: dict = {}
         tickers = self.universe
         if not tickers:
-            tickers = list(self.macro_db.prices_df_cache.keys())
+            tickers = list(self.macro_db.prices_df_cache.keys())  # type: ignore[attr-defined]
         for i, sym in enumerate(tickers):
             if progress:
                 print(f"  [{i + 1}/{len(tickers)}] {sym} ...")

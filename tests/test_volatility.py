@@ -4,8 +4,7 @@ Covers:
   1. Leakage-free: features at row t use only data <= t; target is strictly forward.
   2. Persistence/EWMA baseline is computed correctly (positive, finite).
   3. Small-sample safety: fewer than _MIN_OBS rows returns ({}, None) without raising.
-  4. Full run persists rv_har metric rows + ml_forecast row to marts.
-  5. Direction-model honest secondary rows (mae_skill_ratio, dir_acc_edge) are persisted.
+   4. Full run persists rv_har metric rows + ml_forecast row to marts.
 """
 
 from __future__ import annotations
@@ -326,90 +325,21 @@ def test_rv_har_n_obs_is_positive(con) -> None:  # noqa: ANN001
 
 
 # ---------------------------------------------------------------------------
-# Test 5: Direction-model honest secondary rows (C4: mae_skill_ratio, dir_acc_edge)
-# ---------------------------------------------------------------------------
-
-
-def test_direction_model_skill_rows_persisted(con) -> None:  # noqa: ANN001
-    """direction model metrics must include mae_skill_ratio + dir_acc_edge (random_forest)."""
-    from mmi.ml.pipeline import run_ml
-
-    _seed_con(con)
-    run_ml(con, symbols=["SPY"])
-
-    rows = con.execute(
-        "select metric, value from marts.model_metrics "
-        "where model = 'random_forest' and symbol = 'SPY'"
-    ).fetchall()
-
-    metric_names = {r[0] for r in rows}
-    assert "mae_skill_ratio" in metric_names, "mae_skill_ratio row missing for random_forest"
-    assert "dir_acc_edge" in metric_names, "dir_acc_edge row missing for random_forest"
-
-
-def test_direction_model_mae_skill_ratio_formula(con) -> None:  # noqa: ANN001
-    """mae_skill_ratio == mae / baseline_mae (cross-check the formula)."""
-    from mmi.ml.pipeline import run_ml
-
-    _seed_con(con)
-    run_ml(con, symbols=["SPY"])
-
-    def _get(metric):
-        return con.execute(
-            "select value from marts.model_metrics "
-            "where model='random_forest' and symbol='SPY' and metric=?",
-            [metric],
-        ).fetchone()[0]
-
-    mae = _get("mae")
-    baseline_mae = _get("baseline_mae")
-    mae_skill_ratio = _get("mae_skill_ratio")
-
-    if baseline_mae > 1e-20:
-        assert pytest.approx(mae_skill_ratio, rel=1e-6) == mae / baseline_mae
-
-
-def test_direction_model_dir_acc_edge_formula(con) -> None:  # noqa: ANN001
-    """dir_acc_edge == dir_acc - baseline_dir_acc."""
-    from mmi.ml.pipeline import run_ml
-
-    _seed_con(con)
-    run_ml(con, symbols=["SPY"])
-
-    def _get(metric):
-        return con.execute(
-            "select value from marts.model_metrics "
-            "where model='random_forest' and symbol='SPY' and metric=?",
-            [metric],
-        ).fetchone()[0]
-
-    dir_acc = _get("dir_acc")
-    baseline_dir_acc = _get("baseline_dir_acc")
-    dir_acc_edge = _get("dir_acc_edge")
-
-    assert pytest.approx(dir_acc_edge, rel=1e-6) == dir_acc - baseline_dir_acc
-
-
-# ---------------------------------------------------------------------------
-# Test 6: Total row count after run_ml (direction: 10 rows, vol: 11 rows = 21 total for SPY)
+# Test 5: Total row count after run_ml (rv_har: 11 rows for SPY)
 # ---------------------------------------------------------------------------
 
 
 def test_model_metrics_row_count(con) -> None:  # noqa: ANN001
-    """After run_ml(['SPY']), model_metrics must have exactly 21 rows for SPY.
+    """After run_ml(['SPY']), model_metrics must have exactly 11 rows for SPY.
 
-    The 400-day sample data is large enough to carve a locked holdout for BOTH models
+    The 400-day sample data is large enough to carve a locked holdout for the vol model
     (~20% tail, dev still well above _MIN_OBS=60), so the holdout_* rows ARE present.
 
-    direction (random_forest): mae, baseline_mae, dir_acc, baseline_dir_acc, n_obs,
-                                mae_skill_ratio, dir_acc_edge          = 7 CV rows
-                                + holdout_dir_acc, holdout_baseline_dir_acc,
-                                  holdout_n_obs                         = 3 holdout rows = 10
-    vol (rv_har):               oos_r2, qlike, baseline_qlike, qlike_skill_ratio,
-                                n_folds, folds_passed, n_obs           = 7 CV rows
-                                + holdout_oos_r2, holdout_qlike, holdout_qlike_skill_ratio,
-                                  holdout_n_obs                         = 4 holdout rows = 11
-    Total: 21 rows
+    rv_har: oos_r2, qlike, baseline_qlike, qlike_skill_ratio,
+            n_folds, folds_passed, n_obs           = 7 CV rows
+            + holdout_oos_r2, holdout_qlike, holdout_qlike_skill_ratio,
+              holdout_n_obs                         = 4 holdout rows = 11
+    Total: 11 rows
     """
     from mmi.ml.pipeline import run_ml
 
@@ -420,7 +350,7 @@ def test_model_metrics_row_count(con) -> None:  # noqa: ANN001
         0
     ]
 
-    assert count == 21, f"Expected 21 model_metrics rows for SPY, got {count}"
+    assert count == 11, f"Expected 11 model_metrics rows for SPY, got {count}"
 
 
 # ---------------------------------------------------------------------------

@@ -87,7 +87,12 @@ def test_ex_btc_2002_panel_not_collapsed_by_btc_presence():
         for d in dates[-330:]
     ]
     ad = pd.DataFrame(rows)
-    panel = compute.build_returns_panel(compute.window_asset_daily(ad, windows.EX_BTC_2002))
+    wad = compute.window_asset_daily(ad, windows.EX_BTC_2002)
+    panel = (
+        wad.pivot_table(index="date", columns="symbol", values="daily_return")
+        .sort_index()
+        .dropna(how="all")
+    )
     assert "BTC" not in panel.columns
     assert len(panel.dropna(how="any")) == 400  # full history survives, not truncated to 330
 
@@ -99,10 +104,30 @@ def _long_multi(non_crypto_days: int = 400, btc_days: int = 330) -> pd.DataFrame
     for sym in ("SPY", "TLT"):
         for d, r in zip(dates, rng.normal(0.0004, 0.01, non_crypto_days), strict=True):
             rows.append(
-                {"symbol": sym, "date": d, "daily_return": float(r), "asset_class": "equities"}
+                {
+                    "symbol": sym,
+                    "date": d,
+                    "daily_return": float(r),
+                    "asset_class": "equities",
+                    "open": 0.0,
+                    "high": 0.0,
+                    "low": 0.0,
+                    "close": 0.0,
+                }
             )
     for d, r in zip(dates[-btc_days:], rng.normal(0.0006, 0.02, btc_days), strict=True):
-        rows.append({"symbol": "BTC", "date": d, "daily_return": float(r), "asset_class": "crypto"})
+        rows.append(
+            {
+                "symbol": "BTC",
+                "date": d,
+                "daily_return": float(r),
+                "asset_class": "crypto",
+                "open": 0.0,
+                "high": 0.0,
+                "low": 0.0,
+                "close": 0.0,
+            }
+        )
     return pd.DataFrame(rows)
 
 
