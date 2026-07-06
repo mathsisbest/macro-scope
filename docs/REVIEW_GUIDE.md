@@ -9,7 +9,7 @@ introduced subtle bugs. Be critical, specific, and evidence-based.
 - `CLAUDE.md` — project brief, constraints, conventions, the dev workflow.
 - `PLAN.md` — design + **implementation status** (what's built vs roadmap).
 - `docs/adr/` — locked architecture decisions. Don't re-litigate; flag violations.
-- GitHub **issue #1** — Codex's standing review + the agreed P0/P1 plan and refinements.
+- GitHub **issue #1** — Fast-follow: refine HAR vol model to clear the skill gate honestly
 - The PR description, its linked issue, and the author's "Questions".
 
 ## 2. Hard constraints — breaking any of these is an automatic request-changes
@@ -20,7 +20,7 @@ introduced subtle bugs. Be critical, specific, and evidence-based.
   dashboard UI. `MOTHERDUCK_TOKEN` flows via env only.
 - **CI gate.** `make ci` runs locally (the author's pre-flight) **and** on every PR via GitHub
   Actions (`ci.yml`, which mirrors `make ci`). CI must be green. Flag any change that enables the
-  scheduled `ingest.yml` cron without owner say-so, or that lets `ci.yml` drift from `make ci`.
+  scheduled `daily.yml` / `weekly.yml` cron without owner say-so, or that lets `ci.yml` drift from `make ci`.
 - **Storage:** DuckDB local (dev/CI) + MotherDuck (deployed). No `.duckdb` binary committed.
 - **Honest docs.** README/PLAN must not present unbuilt features as done.
 

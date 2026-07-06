@@ -67,14 +67,14 @@ Markets and macro combine into one narrative:
 | Source | Data | Auth | Cadence we pull | Free limits (verified Jun 2026) |
 |---|---|---|---|---|
 | **Yahoo** (v8 chart) | Daily *adjusted* close for equities/ETFs/bonds/commodities/FX + daily BTC | None | Daily | Unofficial endpoint (browser UA); the working price source |
-| **Stooq** *(dormant)* | Daily OHLC — replaced by Yahoo; free CSV now returns a JS challenge | None | — | Out of `EXTRACTORS`, untested |
+| **Stooq** *(removed)* | Was Daily OHLC — free CSV now returns a JS challenge | — | — | Removed from `EXTRACTORS` |
 | **FRED** (St. Louis Fed) | US macro: CPI, rates, unemployment, yield curve, M2 | Free API key | Daily check (data is monthly) | Generous; no hard public cap |
 | **World Bank** | Cross-country GDP, inflation, indicators | None | Weekly | None |
 | **DBnomics** | Aggregator over ECB/Eurostat/IMF/OECD | None | Weekly | None |
 | *(optional)* **The Odds API** | Sports odds & line movement | Free key | 2–3×/day | 500 credits/month |
 
 > **Implemented today:** **Yahoo** (price history incl. daily BTC), FRED, World Bank.
-> **Dormant:** Stooq (free CSV endpoint now returns a JS challenge — out of `EXTRACTORS`).
+> **Removed:** Stooq (free CSV endpoint returned a JS challenge — extractor deleted).
 > **Roadmap:** DBnomics is part of the design but not yet implemented.
 
 ### 3.2 The "streaming" strategy on £0
@@ -83,9 +83,9 @@ True always-on streaming (Kafka/Kinesis) costs money and is overkill for this da
 professional, free-tier-appropriate pattern is **scheduled micro-batch ingestion** with
 incremental, idempotent loads — which is how most real analytics platforms actually run:
 
-- **Scheduler:** GitHub Actions `schedule:` cron. Private repos get **2,000 free Linux
-  minutes/month** — the shipped default is a ~60-second job every 6h (~120 min/month), well
-  inside the quota.
+- **Scheduler:** GitHub Actions `schedule:` cron. Public repos get **unlimited free Linux
+  minutes/month** — the shipped default comprises `daily.yml` (weekdays 06:00 UTC) and
+  `weekly.yml` (Mon 04:00 UTC), well within any quota.
 - **Idempotency:** each extractor upserts on a natural key (`symbol + timestamp`) so re-runs
   never duplicate. *(Implemented.)* True per-source incremental watermarks are **roadmap** —
   today's loads are a full scheduled refresh (see the source-specific policy in §7.1).
@@ -160,9 +160,9 @@ tested SQL.
 | ML | **scikit-learn, statsmodels** | Classic, explainable, no GPU needed |
 | Experiment tracking | **JSON metrics + DuckDB `model_metrics` table** | Free, no MLflow server needed (MLflow optional later) |
 | GenAI | **Provider-agnostic client** → default **Google Gemini free** (1,500 req/day) or **Groq free**; **Claude** as a drop-in | Truly free default; Claude optional (see honesty note §10) |
-| Dashboard | **Streamlit** | Code-defined UI + charts; **free Community Cloud** hosting that deploys from **private** repos |
+| Dashboard | **Streamlit** | Code-defined UI + charts; **free Community Cloud** hosting that deploys from **public** repos |
 | Charts | **Plotly** | Fully code-driven, interactive, themeable |
-| Orchestration | **GitHub Actions** | 2,000 free private-repo minutes/month |
+| Orchestration | **GitHub Actions** | Unlimited free public-repo minutes/month |
 | Quality | **ruff, pytest, pre-commit, mypy** | All free, all standard |
 | CI | **GitHub Actions** (lint + test on PR) | Same free quota |
 | Config/secrets | **pydantic-settings + .env + GH Actions secrets / Streamlit secrets** | No secret-manager cost |
@@ -184,7 +184,8 @@ markets-macro-intelligence/
 │
 ├── .github/workflows/
 │   ├── ci.yml                     # lint + type-check + tests on every PR
-│   ├── ingest.yml                 # CRON: the "stream" — scheduled ingestion + dbt + ML
+│   ├── daily.yml                  # weekdays 06:00 UTC — price/macro refresh + snapshot
+│   ├── weekly.yml                 # Mon 04:00 UTC — full pipeline incl. ML + GenAI brief
 │   └── deploy-note.md             # how Streamlit Cloud auto-deploys on push
 │
 ├── config/
@@ -195,7 +196,6 @@ markets-macro-intelligence/
 │   ├── ingestion/                 # ── DATA ENGINEERING ──
 │   │   ├── base.py                # Extractor ABC: fetch→validate→load, idempotent
 │   │   ├── yahoo.py
-│   │   ├── stooq.py
 │   │   ├── fred.py
 │   │   ├── worldbank.py
 │   │   └── loader.py              # DuckDB upsert + watermark + audit log
@@ -224,14 +224,12 @@ markets-macro-intelligence/
 │   ├── components/                # KPI tiles, chart builders, AI panel
 │   └── data.py                    # cached DuckDB reads of marts
 │
-├── data/                          # DuckDB file + Parquet (gitignored except samples)
-│   └── samples/                   # tiny committed sample so the repo runs out-of-the-box
+├── data/                          # DuckDB file + Parquet (gitignored)
 │
 ├── tests/                         # pytest: unit (extractors, features) + dbt build smoke
-├── docs/
-│   ├── architecture.md
-│   └── adr/                       # Architecture Decision Records (e.g. "why DuckDB")
-└── notebooks/                     # exploratory only, not in the critical path
+└── docs/
+    ├── architecture.md
+    └── adr/                       # Architecture Decision Records (e.g. "why DuckDB")
 ```
 
 ---
@@ -303,10 +301,10 @@ markets-macro-intelligence/
 
 ## 9. Deployment (all free)
 
-1. **Code & CI:** private GitHub repo. The gate is local `make ci` — GitHub Actions CI is `workflow_dispatch`-only to preserve the free tier, and the ingest workflow runs on demand (its 6-hourly `schedule:` is commented out until `MOTHERDUCK_TOKEN` is configured).
+1. **Code & CI:** public GitHub repo. CI runs automatically on every PR — `daily.yml` and `weekly.yml` handle scheduled ingestion.
 2. **Data:** the scheduled cron writes to **MotherDuck** (free tier) and the dashboard reads from
    it — the `.duckdb` binary is **not** committed to git. Local dev/CI use a local DuckDB file.
-3. **Dashboard:** **Streamlit Community Cloud**, connected to the private repo. It sets a
+3. **Dashboard:** **Streamlit Community Cloud**, connected to the public repo. It sets a
    webhook, so **every push auto-redeploys**. Secrets (API keys) go in Streamlit's encrypted
    secrets box, not the repo.
 4. **LLM:** Gemini/Groq free API key stored as a GH Actions secret + Streamlit secret.
@@ -318,7 +316,7 @@ markets-macro-intelligence/
 | Item | Service | Cost |
 |---|---|---|
 | Source data | Yahoo / FRED / World Bank | £0 |
-| Compute / scheduling | GitHub Actions (2,000 min/mo private) | £0 |
+| Compute / scheduling | GitHub Actions (unlimited min/mo public) | £0 |
 | Storage | DuckDB (local) + MotherDuck free tier (deployed) | £0 |
 | Transform | dbt-core (OSS) | £0 |
 | Dashboard hosting | Streamlit Community Cloud | £0 |
@@ -329,7 +327,7 @@ markets-macro-intelligence/
 > subscription covers chat, not API calls. So the GenAI layer is built provider-agnostic and
 > **defaults to a free model (Gemini/Groq)** to keep the project at £0. Switching to Claude is a
 > single env change (`LLM_PROVIDER=claude`). Also note Streamlit
-> free tier allows **one app from a private repo** and ~1 GB RAM — fine for this, worth knowing.
+> free tier allows **unlimited apps from public repos** and ~1 GB RAM — fine for this, worth knowing.
 
 ---
 
@@ -342,7 +340,7 @@ markets-macro-intelligence/
 | **2 — Analytics Engineering** | Full dbt staging→marts + tests + freshness + docs | `dbt build` green, lineage screenshot |
 | **3 — ML/AI** | Forecast + regime models, backtest, tracked metrics | Metrics table + forecast in dashboard |
 | **4 — GenAI** | Provider-agnostic narrative layer | Daily brief auto-generated & shown |
-| **5 — Polish** | README screenshots, ADRs, coverage badge, deploy to Streamlit Cloud | Public-quality private repo + live URL |
+| **5 — Polish** | README screenshots, ADRs, coverage badge, deploy to Streamlit Cloud | Public repo + live URL |
 | **6 — Optional** | Sports-odds module / real Kafka demo | See §13 |
 | **7 — Portfolio backtesting (capstone)** | Look-ahead-free allocation backtest (equal-wt / inverse-vol / true risk-parity; ML max-Sharpe frontier as a *measured* experiment), tested portfolio marts, bootstrap CIs, regime-conditional analysis, AI commentary | See **issue #7** + its critical review; built in sub-phases 0–D, **after** P1–P3 |
 
@@ -380,5 +378,5 @@ quota can't sustain frequent "streaming."
 
 1. Review this plan; tweak the asset list in `config/assets.yml`.
 2. Get free API keys: **FRED** (api.stlouisfed.org), **Gemini** (ai.google.dev).
-3. Create the private GitHub repo and push the scaffold (commands provided on delivery).
+3. Create the public GitHub repo and push the scaffold (commands provided on delivery).
 4. Work the roadmap phase by phase — each phase is a clean, self-contained set of PRs.

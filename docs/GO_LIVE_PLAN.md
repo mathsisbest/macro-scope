@@ -134,7 +134,7 @@ the same wave.
 
 ### Contract F — theme tokens & Streamlit config
 - `theme.PALETTE` is the single colour source; existing keys + hexes **immutable**, additions only. Every
-  figure goes through `style_fig()`; no inline hex. `.streamlit/config.toml [theme]` mirrors PALETTE;
+  figure goes through `style_fig()`; no inline hex. `.streamlit/config.toml [theme]` mirrors PALETTE (planned — not yet created);
   `[client] showErrorDetails` off (no stack traces in the public app). WCAG-AA documented.
 
 ### Contract G — brief record, timestamp, redaction
@@ -180,7 +180,7 @@ G=#50 hygiene · H=snapshot/bootstrap · O=owner go-live.
 | id | ws | kind | task | owns | deps |
 |---|---|---|---|---|---|
 | A1b | A | code | Wire app-render smoke into `.github/workflows/ci.yml` | `ci.yml` | A1 |
-| B2 | B | code | `.streamlit/config.toml` mirroring PALETTE + hide error details | `.streamlit/config.toml` | B1, A1 |
+| B2 | B | code | `.streamlit/config.toml` mirroring PALETTE + hide error details (planned — not yet created) | `.streamlit/config.toml` | B1, A1 |
 | B3 | B | code | Chart styling polish via `style_fig` | `dashboard/components/charts.py` | B1, A1 |
 | B4 | B | code | KPI card refine (empty/oversized guards, theme delta colours) | `dashboard/components/kpi.py` | B1, A1 |
 | B5 | B | code | App shell: hero + methodology expander + per-source attribution + "not investment advice" + favicon + per-tab empty states + **bond-return note (E/t61)** | `dashboard/app.py`, `dashboard/assets/favicon.png` | B1, A1 |
@@ -190,7 +190,7 @@ G=#50 hygiene · H=snapshot/bootstrap · O=owner go-live.
 | D7 | D | code | Snapshot manifest + per-file atomicity + daily-cron preservation test | `src/mmi/cli.py`(*serialize*), `tests/test_cli_snapshot.py` | H0 |
 | E2 | E | code | `fct_recession_risk` mart (Estrella-Mishkin probit from 10Y–3M) + `recession_risk()` accessor | `transform/models/marts/fct_recession_risk.sql`, `dashboard/data.py`, `tests/...` | E1 |
 | G4 | C | code | Brief honest "data as of" (data date in body) | `src/mmi/ai/narrative.py`, `tests/test_ai_narrative.py` | H0 |
-| D2 | D | code | Re-enable **daily** cron only; **delete** weekly schedule; `timeout-minutes:15`; FULL only via dispatch | `.github/workflows/ingest.yml` | — |
+| D2 | D | code | Re-enable **daily** cron only (`daily.yml`, weekdays 06:00 UTC); **delete** weekly schedule (`weekly.yml`, Mon 04:00 UTC); `timeout-minutes:15`; FULL only via dispatch | `.github/workflows/daily.yml`, `.github/workflows/weekly.yml` | — |
 | DOC1 | D | code | README live-demo + `docs/RUNBOOK.md` (GUI go-live click-paths) | `README.md`, `docs/RUNBOOK.md` | — |
 
 ### Wave 3 — honesty surfaces, tests, experiment
@@ -207,7 +207,7 @@ G=#50 hygiene · H=snapshot/bootstrap · O=owner go-live.
 | H3 | H | code | ML-marts round-trip test (incl. `rv_har` rows) | `tests/test_ml_snapshot_roundtrip.py` | C4 |
 | B7 | B | code | ML-tab honest **vol-skill** render (OOS R² vs persistence, regime prob, SPY scope) | `dashboard/components/charts.py`(*serialize*), `scripts/dashboard_smoke.py` | B3, C5 |
 | E3 | E | code | Macro-tab recession-risk panel (probability + caveats: term-premium + 2022–23 false positive) | `dashboard/components/charts.py`(*serialize*) | E2, C5 |
-| D3 | D | code | Keep FULL-branch `mmi ai` offline-safe; daily path never invokes `mmi ai` | `.github/workflows/ingest.yml`(*serialize*) | D2 |
+| D3 | D | code | Keep FULL-branch `mmi ai` offline-safe (`weekly.yml`); daily path never invokes `mmi ai` (`daily.yml`) | `.github/workflows/daily.yml`(*serialize*), `.github/workflows/weekly.yml`(*serialize*) | D2 |
 | D4 | D/G | code | Warn-only `dbt source freshness` in the daily cron + prune unenforced config (#50 item 4) | `ingest.yml`(*serialize*), `transform/models/staging/_sources.yml` | D3 |
 | F1 | F | code | 12-month TSMOM overlay as a **gated experiment** strategy (must beat 1/N + buy-and-hold on bootstrap CI; labelled experiment otherwise) | `src/mmi/portfolio/compute.py`, `src/mmi/portfolio/backtest.py`, `dashboard/app.py`(*serialize*), `tests/...` | — |
 
@@ -266,7 +266,7 @@ tasks in the same wave own the same file:
 - `dashboard/components/charts.py`: **B3 → B7 → E3** (one per wave)
 - `src/mmi/ai/narrative.py`: **G4 → GB → C7 → GC**
 - `src/mmi/ml/forecast.py`: **C1 → C4 → C8** ; `src/mmi/ml/pipeline.py`: **C3 → C4**
-- `.github/workflows/ingest.yml`: **D2 → D3 → D4**
+- `.github/workflows/daily.yml`: **D2** ; `.github/workflows/weekly.yml`: **D3 → D4**
 - `data/public/`: **H6 (sample) → O4 (real)** — single owner only.
 
 ---
