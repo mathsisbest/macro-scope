@@ -1,0 +1,58 @@
+name: Daily snapshot (fast)
+
+# Lightweight daily refresh: ingest → build → snapshot. ~2 min.
+# Skips ML training and portfolio backtest — those run weekly.
+# The committed Parquet from the last weekly run is preserved untouched.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1-5"  # WEEKDAYS 06:00 UTC
+
+permissions:
+  contents: write
+
+concurrency:
+  group: snapshot-daily
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MMI_DUCKDB_PATH: ${{ github.workspace }}/data/mmi.duckdb
+      MMI_MOTHERDUCK_DATABASE: ""
+      MOTHERDUCK_TOKEN: ""
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'gemini' }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml,portfolio,transform]"
+      - name: Refresh data and snapshot
+        run: |
+          set -euo pipefail
+          mmi ingest
+          dbt build --project-dir transform --profiles-dir transform --target dev \
+            --exclude tag:portfolio --indirect-selection cautious
+          mmi snapshot
+      - name: Commit snapshot
+        run: |
+          set -euo pipefail
+          git config user.name "mathsisbest"
+          git config user.email "33107428+mathsisbest@users.noreply.github.com"
+          git add data/public
+          if git diff --staged --quiet; then
+            echo "No changes."
+          else
+            git commit -m "chore(data): daily snapshot [skip ci]"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push
+          fi
