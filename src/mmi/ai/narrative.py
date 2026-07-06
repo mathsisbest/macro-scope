@@ -517,9 +517,9 @@ def generate_brief(con) -> str:
 
     try:
         data_date = (
-            con.execute(
-                "select cast(max(date) as varchar) from marts.fct_asset_daily"
-            ).fetchone()[0]
+            con.execute("select cast(max(date) as varchar) from marts.fct_asset_daily").fetchone()[
+                0
+            ]
             or ""
         )
     except Exception:
