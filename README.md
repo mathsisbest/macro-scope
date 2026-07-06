@@ -3,7 +3,7 @@
 ### Markets & Macro Intelligence
 
 [![CI](https://github.com/mathsisbest/macro-scope/actions/workflows/ci.yml/badge.svg)](https://github.com/mathsisbest/macro-scope/actions/workflows/ci.yml)
-[![Ingest](https://github.com/mathsisbest/macro-scope/actions/workflows/ingest.yml/badge.svg)](https://github.com/mathsisbest/macro-scope/actions/workflows/ingest.yml)
+[![Weekly refresh](https://github.com/mathsisbest/macro-scope/actions/workflows/weekly.yml/badge.svg)](https://github.com/mathsisbest/macro-scope/actions/workflows/weekly.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230)](https://github.com/astral-sh/ruff)
 [![Cost](https://img.shields.io/badge/cost-%C2%A30%2Fmo-brightgreen)](#cost)
@@ -30,10 +30,10 @@ A **zero-cost, code-first** data platform that streams live markets + macro data
 The deployed app runs entirely from **committed Parquet snapshots** — no MotherDuck token, no API
 keys, no live database connection. The pipeline works as follows:
 
-1. Two GitHub Actions cron schedules (`ingest.yml`) pull prices, macro, and crypto from free-tier
-   APIs into an **ephemeral local DuckDB**, run `dbt build`, and call `mmi snapshot` to export the
-   marts to `data/public/*.parquet`. A **daily** run does the cheap refresh (prices/macro/crypto/ML);
-   a **weekly** run additionally runs the heavy portfolio backtest + the GenAI brief.
+1. Two GitHub Actions cron workflows (`daily.yml` / `weekly.yml`) pull prices, macro, and crypto
+   from free-tier APIs into an **ephemeral local DuckDB**, run `dbt build`, and call `mmi snapshot`
+   to export the marts to `data/public/*.parquet`. A **daily** run does the cheap refresh (prices/
+   macro); a **weekly** run additionally runs ML, the portfolio backtest, and the GenAI brief.
 2. The Action commits the Parquet files back to the repo. Streamlit Community Cloud detects the
    push and auto-redeploys.
 3. The public Streamlit app reads those committed Parquet files in-process. It **auto-detects**

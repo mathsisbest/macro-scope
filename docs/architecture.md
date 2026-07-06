@@ -12,7 +12,7 @@ free APIs ──▶ ingestion (src/mmi/ingestion) ──▶ DuckDB raw schema
             forecast + regimes        GenAI market brief             Streamlit + Plotly
                         └───────────── all read/write marts ─────────────┘
                                                     ▲
-                              GitHub Actions cron (ingest.yml) orchestrates the loop
+                               GitHub Actions cron (daily.yml / weekly.yml) orchestrates the loop
 ```
 
 ## Layers
