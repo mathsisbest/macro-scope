@@ -78,6 +78,7 @@ def cmd_ingest(_: argparse.Namespace) -> int:
     (DuckDB doesn't support concurrent writes).
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from mmi.ingestion import EXTRACTORS, DuckDBLoader
 
     required_failures = 0
@@ -101,10 +102,14 @@ def cmd_ingest(_: argparse.Namespace) -> int:
                 except Exception as exc:
                     if getattr(extractor, "required", True):
                         required_failures += 1
-                        log.error("REQUIRED source %s fetch failed: %s", extractor.source, str(exc)[:100])
+                        log.error(
+                            "REQUIRED source %s fetch failed: %s", extractor.source, str(exc)[:100]
+                        )
                     else:
                         optional_failures += 1
-                        log.warning("optional source %s fetch failed: %s", extractor.source, str(exc)[:100])
+                        log.warning(
+                            "optional source %s fetch failed: %s", extractor.source, str(exc)[:100]
+                        )
 
         # Phase 2: Sequential load (DuckDB writes)
         for extractor, df in fetch_results.items():
@@ -125,10 +130,14 @@ def cmd_ingest(_: argparse.Namespace) -> int:
             except Exception as exc:
                 if getattr(extractor, "required", True):
                     required_failures += 1
-                    log.error("REQUIRED source %s load failed: %s", extractor.source, str(exc)[:100])
+                    log.error(
+                        "REQUIRED source %s load failed: %s", extractor.source, str(exc)[:100]
+                    )
                 else:
                     optional_failures += 1
-                    log.warning("optional source %s load failed: %s", extractor.source, str(exc)[:100])
+                    log.warning(
+                        "optional source %s load failed: %s", extractor.source, str(exc)[:100]
+                    )
 
     if optional_failures:
         log.warning("%d optional source(s) failed; run still successful", optional_failures)
@@ -137,7 +146,6 @@ def cmd_ingest(_: argparse.Namespace) -> int:
 
 def _fetch_extractor(extractor):
     """Fetch data from an extractor (network I/O bound — safe to parallelize)."""
-    from mmi.utils.redact import redact
     reason = extractor.skip_reason()
     if reason:
         raise RuntimeError(f"skipped: {reason}")
@@ -397,8 +405,11 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
             ml_gate = pd.DataFrame(columns=["date", "forecast_skill", "forecast_weight"])
         else:
             ml_mu_panel, ml_gate = compute.compute_ml_mu_panel(
-                wad, window=window_id, asset_daily_full=wad,
-                macro_df=macro_wide, asset_dfs=asset_dfs_macro,
+                wad,
+                window=window_id,
+                asset_daily_full=wad,
+                macro_df=macro_wide,
+                asset_dfs=asset_dfs_macro,
             )
         results = compute.compute_portfolio_returns(
             wad, ml_mu_panel=ml_mu_panel, window=window_id, asset_daily_full=wad
@@ -427,7 +438,8 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         reset_portfolio_raw_tables(con)
         # Pull the WHOLE daily panel incl. BTC; each window filters its own universe in Python.
         asset_daily = con.execute(
-            "select symbol, date, open, high, low, close, daily_return, asset_class from marts.fct_asset_daily"
+            "select symbol, date, open, high, low, close, "
+            "daily_return, asset_class from marts.fct_asset_daily"
         ).df()
 
         # Load macro data for vol_macro features
@@ -437,9 +449,13 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
             ).df()
             if not macro_raw.empty:
                 macro_raw["date"] = pd.to_datetime(macro_raw["date"]).astype("datetime64[ns]")
-                macro_wide = macro_raw.pivot_table(
-                    index="date", columns="series_id", values="value", aggfunc="first"
-                ).reset_index().sort_values("date")
+                macro_wide = (
+                    macro_raw.pivot_table(
+                        index="date", columns="series_id", values="value", aggfunc="first"
+                    )
+                    .reset_index()
+                    .sort_values("date")
+                )
                 for col in macro_wide.columns:
                     if col != "date":
                         macro_wide[col] = macro_wide[col].ffill()
@@ -474,7 +490,26 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         ran: list[str] = []
         results_by_window: dict[str, pd.DataFrame] = {}
 
-        # Pre-compute ML panels for all windows in parallel
+        # Pre-compute ML panel for 2015 windows using the widest (inc_btc) universe so
+        # common_dates is identical for both — required by the period-alignment test.
+        ml_mu_2015: pd.DataFrame | None = None
+        if btc_floor is not None:
+            wad_wide = compute.window_asset_daily(
+                asset_daily,
+                windows.INC_BTC_2015,
+                btc_floor=btc_floor,
+                btc_aligned=btc_aligned,
+            )
+            if not wad_wide.empty:
+                ml_mu_2015, _ = compute.compute_ml_mu_panel(
+                    wad_wide,
+                    window=windows.INC_BTC_2015,
+                    asset_daily_full=wad_wide,
+                    macro_df=macro_wide,
+                    asset_dfs=asset_dfs_macro,
+                )
+
+        # Pre-compute ML panels for the 2002 window in parallel
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         window_data = {}
@@ -487,16 +522,22 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
             if not wad.empty:
                 window_data[window_id] = wad
 
-        ml_panels = {}
+        ml_panels: dict[str, tuple[pd.DataFrame, pd.DataFrame]] = {}
+
         def _compute_ml_panel(wid, wad):
             return wid, compute.compute_ml_mu_panel(
-                wad, window=wid, asset_daily_full=wad,
-                macro_df=macro_wide, asset_dfs=asset_dfs_macro,
+                wad,
+                window=wid,
+                asset_daily_full=wad,
+                macro_df=macro_wide,
+                asset_dfs=asset_dfs_macro,
             )
 
         with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = {executor.submit(_compute_ml_panel, wid, wad): wid
-                      for wid, wad in window_data.items()}
+            futures = {
+                executor.submit(_compute_ml_panel, wid, wad): wid
+                for wid, wad in window_data.items()
+            }
             for future in as_completed(futures):
                 wid = futures[future]
                 try:
@@ -507,15 +548,16 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         # Sequential portfolio backtests (DuckDB writes)
         for window_id in window_data:
             wad = window_data[window_id]
-            override = ml_panels.get(window_id)
-            if override:
-                _, (ml_mu_panel, ml_gate) = override
+            if window_id in (windows.EX_BTC_2015, windows.INC_BTC_2015) and ml_mu_2015 is not None:
+                override = ml_mu_2015
             else:
-                ml_mu_panel = None
-                ml_gate = pd.DataFrame()
+                result = ml_panels.get(window_id)
+                override = result[0] if result else None
             n, n_strategies, results = run_window(
-                loader, window_id, wad,
-                ml_mu_override=ml_mu_panel if ml_mu_panel is not None else None,
+                loader,
+                window_id,
+                wad,
+                ml_mu_override=override,
             )
             results_by_window[window_id] = results
             log.info("portfolio[%s]: %s rows / %s strategies", window_id, n, n_strategies)
