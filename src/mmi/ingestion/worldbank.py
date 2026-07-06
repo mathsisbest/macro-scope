@@ -23,7 +23,7 @@ class WorldBankExtractor(Extractor):
         """Probe World Bank API with a single-row request."""
         get_json(self.probe_url, params={"format": "json", "per_page": 1})
 
-    def fetch(self) -> pd.DataFrame:
+    def fetch(self, start_after: str | None = None) -> pd.DataFrame:
         frames = [self._fetch_indicator(i["id"]) for i in load_assets()["worldbank"]]
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
