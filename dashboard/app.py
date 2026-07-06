@@ -57,7 +57,7 @@ inject_css()
 def _chart(fig, **kwargs):
     """Thin wrapper so every chart gets the mobile-safe config (no scroll-zoom, no modebar)."""
     kwargs.setdefault("config", PLOTLY_CONFIG)
-    st.plotly_chart(fig, use_container_width=True, **kwargs)
+    st.plotly_chart(fig, width="stretch", **kwargs)
 
 
 # --------------------------------------------------------------------------- hero / header
@@ -508,38 +508,109 @@ with tab_ml:
             "relative signals, not absolute return predictions."
         )
 
-        # Display per-horizon forecasts from ml_forecast
-        return_fc = fc[fc["model"].str.startswith("return_", na=False)] if not fc.empty else fc
+        return_fc = charts.return_forecast_table(fc)
         if not return_fc.empty:
-            for _, row in return_fc.iterrows():
-                h = int(row["horizon"])
-                pred = row["predicted_return"]
-                direction = "↑" if pred > 0 else "↓" if pred < 0 else "→"
-                st.metric(
-                    f"{row['symbol']} · {h}-day forecast",
-                    f"{direction} {pred * 100:+.2f}%",
-                    f"{row['daily_mu'] * 100:+.3f}%/day",
+            st.caption(
+                "Sorted by forecast return; each card uses the latest available row per asset."
+            )
+            for chunk_start in range(0, len(return_fc), 3):
+                chunk = return_fc.iloc[chunk_start : chunk_start + 3]
+                cols = st.columns(len(chunk))
+                for col, row in zip(cols, chunk.itertuples(index=False), strict=True):
+                    pred = float(row.predicted_return)
+                    daily_mu = float(row.daily_mu) if pd.notna(row.daily_mu) else None
+                    daily_label = f"{daily_mu * 100:+.3f}%/day" if daily_mu is not None else "n/a"
+                    direction = "↑" if pred > 0 else "↓" if pred < 0 else "→"
+                    color = charts.leaderboard_return_color(pred)
+                    with col:
+                        st.markdown(
+                            f"""
+                            <div class="forecast-card">
+                              <div class="forecast-card__top">
+                                <span class="forecast-card__symbol">{row.symbol}</span>
+                                <span class="forecast-card__horizon">{int(row.horizon)}d</span>
+                              </div>
+                              <div class="forecast-card__value" style="color:{color}">
+                                {direction} {pred * 100:+.2f}%
+                              </div>
+                              <div class="forecast-card__meta">
+                                {daily_label} · as of {pd.to_datetime(row.as_of).date()}
+                              </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+            with st.expander("Forecast table", expanded=False):
+                st.dataframe(
+                    return_fc.assign(
+                        predicted_return=lambda d: d["predicted_return"].map(lambda v: f"{v:.2%}"),
+                        daily_mu=lambda d: d["daily_mu"].map(lambda v: f"{v:.3%}"),
+                        horizon=lambda d: d["horizon"].astype("Int64"),
+                    ),
+                    hide_index=True,
+                    width="stretch",
                 )
 
-            # Per-horizon metrics
-            rm = metrics[metrics["model"].str.startswith("return_", na=False)].set_index("metric")[
-                "value"
-            ]
-            if not rm.empty:
-                with st.expander("Model performance by horizon", expanded=False):
-                    for h in [1, 5, 10, 20]:
-                        da = rm.get(f"dir_acc_h{h}", 0)
-                        r2 = rm.get(f"r2_h{h}", 0)
-                        ic = rm.get(f"ic_h{h}", 0)
-                        st.caption(f"**{h}d**: dir_acc={da:.1%}, R²={r2:.3f}, IC={ic:.3f}")
+            perf = charts.return_performance_table(metrics)
+            if not perf.empty:
+                st.divider()
+                st.subheader("Return model performance")
+                st.caption(
+                    "Per-asset diagnostics from `marts.model_metrics`: IC, R², direction "
+                    "accuracy, Sharpe, and observation count."
+                )
+                _chart(charts.return_performance_chart(perf, height=320))
+                st.dataframe(
+                    perf.assign(
+                        ic=lambda d: d["ic"].map(lambda v: "" if pd.isna(v) else f"{v:.3f}"),
+                        direction_accuracy=lambda d: d["direction_accuracy"].map(
+                            lambda v: "" if pd.isna(v) else f"{v:.1%}"
+                        ),
+                        r2=lambda d: d["r2"].map(lambda v: "" if pd.isna(v) else f"{v:.3f}"),
+                        sharpe=lambda d: d["sharpe"].map(
+                            lambda v: "" if pd.isna(v) else f"{v:.2f}"
+                        ),
+                        n_obs=lambda d: d["n_obs"].map(lambda v: "" if pd.isna(v) else f"{v:,.0f}"),
+                    ).rename(
+                        columns={
+                            "symbol": "Asset",
+                            "ic": "IC",
+                            "direction_accuracy": "Direction accuracy",
+                            "r2": "R²",
+                            "sharpe": "Sharpe",
+                            "n_obs": "Obs",
+                        }
+                    ),
+                    hide_index=True,
+                    width="stretch",
+                )
 
-            # Regime breakdown
-            if not rm.empty:
-                with st.expander("Regime breakdown (5-day)", expanded=False):
-                    for regime in ["low", "medium", "high"]:
-                        key = f"dir_acc_{regime}_h5"
-                        if key in rm:
-                            st.caption(f"**{regime.title()} vol**: {rm[key]:.1%}")
+            st.divider()
+            st.subheader("Regime breakdown")
+            regime_perf = charts.return_regime_breakdown_table(metrics)
+            if regime_perf.empty:
+                st.info(
+                    "Regime-specific return metrics are not present in the current public "
+                    "snapshot. The app can render them once the ML pipeline persists "
+                    "`direction_accuracy_<regime>` rows by asset."
+                )
+            else:
+                st.dataframe(
+                    regime_perf.assign(
+                        direction_accuracy=lambda d: d["direction_accuracy"].map(
+                            lambda v: "" if pd.isna(v) else f"{v:.1%}"
+                        )
+                    ).rename(
+                        columns={
+                            "symbol": "Asset",
+                            "regime": "Regime",
+                            "direction_accuracy": "Direction accuracy",
+                        }
+                    ),
+                    hide_index=True,
+                    width="stretch",
+                )
         else:
             st.info("No return forecasts available. Run `mmi ml` to generate predictions.")
 
@@ -575,8 +646,9 @@ with tab_ml:
         with fc_col1:
             if pred_vol is not None:
                 st.metric(
-                    f"{vol_symbol} predicted next-week vol (annualised)",
+                    f"{vol_symbol} next-week vol forecast",
                     f"{pred_vol * 100:.2f}%",
+                    "annualised",
                 )
             else:
                 st.caption(f"No {vol_symbol} volatility forecast available yet.")

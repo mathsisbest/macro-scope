@@ -274,3 +274,76 @@ def test_vol_forecast_none_when_value_is_infinite():
     # keeps it out of the headline.
     fc = _forecast([["SPY", "2026-06-20", float("inf"), "rv_har"]])
     assert charts.vol_forecast_value(fc, symbol="SPY") is None
+
+
+def test_return_forecast_table_sorts_return_rows_by_predicted_return():
+    fc = pd.DataFrame(
+        [
+            {
+                "symbol": "SPY",
+                "as_of": "2026-07-01",
+                "horizon": 252,
+                "predicted_return": 0.10,
+                "daily_mu": 0.0004,
+                "model": "return_gb",
+            },
+            {
+                "symbol": "BTC",
+                "as_of": "2026-07-01",
+                "horizon": 252,
+                "predicted_return": 0.30,
+                "daily_mu": 0.0012,
+                "model": "return_gb",
+            },
+            {
+                "symbol": "SPY",
+                "as_of": "2026-07-01",
+                "horizon": 5,
+                "predicted_return": 0.02,
+                "daily_mu": None,
+                "model": "rv_har",
+            },
+        ]
+    )
+
+    out = charts.return_forecast_table(fc)
+
+    assert out["symbol"].tolist() == ["BTC", "SPY"]
+    assert out["predicted_return"].tolist() == [0.30, 0.10]
+    assert "model" not in out.columns
+
+
+def test_return_performance_table_pivots_asset_metrics():
+    metrics = pd.DataFrame(
+        [
+            ["return_gb", "SPY", "ic", 0.2],
+            ["return_gb", "SPY", "direction_accuracy", 0.61],
+            ["return_gb", "SPY", "r2", -0.4],
+            ["return_gb", "BTC", "ic", 0.5],
+            ["return_gb", "BTC", "direction_accuracy", 0.55],
+            ["rv_har", "SPY", "ic", 0.99],
+        ],
+        columns=["model", "symbol", "metric", "value"],
+    )
+
+    out = charts.return_performance_table(metrics)
+
+    assert out["symbol"].tolist() == ["BTC", "SPY"]
+    assert out.loc[out["symbol"] == "SPY", "r2"].iloc[0] == -0.4
+    assert "sharpe" in out.columns
+
+
+def test_return_regime_breakdown_table_reads_persisted_regime_metrics():
+    metrics = pd.DataFrame(
+        [
+            ["return_gb", "SPY", "direction_accuracy_low", 0.52],
+            ["return_gb", "SPY", "direction_accuracy_high", 0.58],
+            ["return_gb", "SPY", "direction_accuracy", 0.55],
+        ],
+        columns=["model", "symbol", "metric", "value"],
+    )
+
+    out = charts.return_regime_breakdown_table(metrics)
+
+    assert set(out["regime"]) == {"low", "high"}
+    assert out.loc[out["regime"] == "high", "direction_accuracy"].iloc[0] == 0.58

@@ -14,6 +14,7 @@ from dashboard.theme import (
     SERIES_ALT,
     SERIES_PRICE,
     SERIES_RETURN,
+    SERIES_RISK,
     SERIES_VOL,
     SERIES_YIELD,
     asset_class_color,
@@ -554,6 +555,104 @@ ML_SCOPE_CAPTION: str = (
     "Models: cross-asset return forecaster (gradient boosting) + realised-volatility forecaster "
     "(HAR/EWMA baseline check)"
 )
+
+
+def return_forecast_table(fc: pd.DataFrame) -> pd.DataFrame:
+    """One row per asset for the return forecast card grid/table."""
+    needed = {"symbol", "model", "horizon", "predicted_return", "daily_mu", "as_of"}
+    if fc.empty or not needed <= set(fc.columns):
+        return pd.DataFrame(columns=["symbol", "as_of", "horizon", "predicted_return", "daily_mu"])
+    rows = fc[fc["model"].str.startswith("return_", na=False)].copy()
+    if rows.empty:
+        return pd.DataFrame(columns=["symbol", "as_of", "horizon", "predicted_return", "daily_mu"])
+    rows["predicted_return"] = pd.to_numeric(rows["predicted_return"], errors="coerce")
+    rows["daily_mu"] = pd.to_numeric(rows["daily_mu"], errors="coerce")
+    rows["horizon"] = pd.to_numeric(rows["horizon"], errors="coerce")
+    rows = rows.dropna(subset=["symbol", "predicted_return"])
+    return rows.sort_values("predicted_return", ascending=False)[
+        ["symbol", "as_of", "horizon", "predicted_return", "daily_mu"]
+    ].reset_index(drop=True)
+
+
+def return_performance_table(metrics: pd.DataFrame) -> pd.DataFrame:
+    """Wide per-asset return-model metrics: IC, direction accuracy, R², Sharpe and n_obs."""
+    needed = {"model", "symbol", "metric", "value"}
+    if metrics.empty or not needed <= set(metrics.columns):
+        return pd.DataFrame(columns=["symbol", "ic", "direction_accuracy", "r2", "sharpe", "n_obs"])
+    rows = metrics[metrics["model"].str.startswith("return_", na=False)]
+    if rows.empty:
+        return pd.DataFrame(columns=["symbol", "ic", "direction_accuracy", "r2", "sharpe", "n_obs"])
+    wide = (
+        rows.pivot_table(index="symbol", columns="metric", values="value", aggfunc="last")
+        .reset_index()
+        .rename_axis(None, axis=1)
+    )
+    for col in ["ic", "direction_accuracy", "r2", "sharpe", "n_obs"]:
+        if col not in wide.columns:
+            wide[col] = pd.NA
+        wide[col] = pd.to_numeric(wide[col], errors="coerce")
+    return wide[["symbol", "ic", "direction_accuracy", "r2", "sharpe", "n_obs"]].sort_values(
+        ["ic", "direction_accuracy"], ascending=[False, False], na_position="last"
+    )
+
+
+def return_performance_chart(perf: pd.DataFrame, height: int = HEIGHT_MEDIUM) -> go.Figure:
+    """Grouped bars for the main per-asset return-model diagnostics."""
+    if perf.empty:
+        return style_fig(go.Figure(), height=height)
+    fig = go.Figure()
+    fig.add_bar(
+        x=perf["symbol"],
+        y=perf["ic"],
+        name="IC",
+        marker_color=SERIES_RETURN,
+    )
+    fig.add_bar(
+        x=perf["symbol"],
+        y=perf["r2"],
+        name="R²",
+        marker_color=SERIES_RISK,
+    )
+    fig.add_scatter(
+        x=perf["symbol"],
+        y=perf["direction_accuracy"],
+        name="Dir. accuracy",
+        mode="lines+markers",
+        line=dict(color=SERIES_PRICE, width=2),
+        yaxis="y2",
+    )
+    fig.add_hline(y=0, line_color=PALETTE["grid"], line_width=1)
+    fig.update_layout(
+        title=dict(text="Return model diagnostics by asset", font=_TITLE_FONT),
+        barmode="group",
+        yaxis=dict(title="IC / R²"),
+        yaxis2=dict(
+            title="Direction accuracy",
+            overlaying="y",
+            side="right",
+            tickformat=".0%",
+            range=[0, 1],
+            showgrid=False,
+        ),
+    )
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=height)
+
+
+def return_regime_breakdown_table(metrics: pd.DataFrame) -> pd.DataFrame:
+    """Return persisted regime-specific direction metrics, when the snapshot contains them."""
+    needed = {"model", "symbol", "metric", "value"}
+    if metrics.empty or not needed <= set(metrics.columns):
+        return pd.DataFrame(columns=["symbol", "regime", "direction_accuracy"])
+    rows = metrics[
+        metrics["model"].str.startswith("return_", na=False)
+        & metrics["metric"].str.startswith("direction_accuracy_", na=False)
+    ].copy()
+    if rows.empty:
+        return pd.DataFrame(columns=["symbol", "regime", "direction_accuracy"])
+    rows["regime"] = rows["metric"].str.replace("direction_accuracy_", "", regex=False)
+    rows["direction_accuracy"] = pd.to_numeric(rows["value"], errors="coerce")
+    return rows[["symbol", "regime", "direction_accuracy"]].sort_values(["symbol", "regime"])
 
 
 def vol_skill_r2_chart(
