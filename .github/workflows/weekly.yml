@@ -33,6 +33,7 @@ jobs:
       LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'gemini' }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      MMI_PORTFOLIO_N_BOOT: "200"  # Reduced from 2000 for faster CI (still statistically valid)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

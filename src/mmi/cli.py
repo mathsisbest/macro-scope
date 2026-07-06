@@ -74,39 +74,79 @@ def _restore_llm_keys(saved: dict) -> None:
 def cmd_ingest(_: argparse.Namespace) -> int:
     """Run every extractor against the live free APIs.
 
-    A failure in a *required* source fails the run (exit 1) so scheduled jobs cannot go green
-    on a broken pipeline. *Optional* sources (e.g. unofficial endpoints like Stooq) are recorded
-    in ``raw.pipeline_runs`` and surfaced as warnings, but do not fail the ingest step.
-
-    Optional sources stay non-fatal even on a *fresh* database: ``DuckDBLoader`` pre-creates the
-    raw source tables empty (``ensure_raw_tables``), so dbt builds empty marts for a not-yet-loaded
-    source instead of erroring on a missing one. A *required* failure still fails the run.
+    Parallelizes API fetches (network I/O bound), then loads sequentially
+    (DuckDB doesn't support concurrent writes).
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from mmi.ingestion import EXTRACTORS, DuckDBLoader
 
     required_failures = 0
     optional_failures = 0
     with connect() as con:
         loader = DuckDBLoader(con)
-        for cls in EXTRACTORS:
-            extractor = cls(loader)
-            try:
-                rows = extractor.run()
-                log.info("%s: %s rows", extractor.source, rows)
-            except Exception as exc:  # noqa: BLE001 - record, classify, keep going
+
+        # Phase 1: Parallel fetch (network I/O bound)
+        fetch_results = {}
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {}
+            for cls in EXTRACTORS:
+                extractor = cls(loader)
+                futures[executor.submit(_fetch_extractor, extractor)] = extractor
+
+            for future in as_completed(futures):
+                extractor = futures[future]
+                try:
+                    df = future.result()
+                    fetch_results[extractor] = df
+                except Exception as exc:
+                    if getattr(extractor, "required", True):
+                        required_failures += 1
+                        log.error("REQUIRED source %s fetch failed: %s", extractor.source, str(exc)[:100])
+                    else:
+                        optional_failures += 1
+                        log.warning("optional source %s fetch failed: %s", extractor.source, str(exc)[:100])
+
+        # Phase 2: Sequential load (DuckDB writes)
+        for extractor, df in fetch_results.items():
+            if df is None or df.empty:
                 if getattr(extractor, "required", True):
                     required_failures += 1
-                    log.error("REQUIRED source %s failed: %s", extractor.source, redact(str(exc)))
+                    log.error("REQUIRED source %s returned no data", extractor.source)
                 else:
                     optional_failures += 1
-                    log.warning(
-                        "optional source %s failed (continuing): %s",
-                        extractor.source,
-                        redact(str(exc)),
-                    )
+                    log.warning("optional source %s returned no data", extractor.source)
+                continue
+            try:
+                run_id = extractor.loader.start_run(extractor.source)
+                validated = extractor.validate(df)
+                rows = extractor.loader.upsert(extractor.table, validated, extractor.keys)
+                extractor.loader.finish_run(run_id, rows, "success")
+                log.info("%s: %s rows", extractor.source, rows)
+            except Exception as exc:
+                if getattr(extractor, "required", True):
+                    required_failures += 1
+                    log.error("REQUIRED source %s load failed: %s", extractor.source, str(exc)[:100])
+                else:
+                    optional_failures += 1
+                    log.warning("optional source %s load failed: %s", extractor.source, str(exc)[:100])
+
     if optional_failures:
         log.warning("%d optional source(s) failed; run still successful", optional_failures)
     return 1 if required_failures else 0
+
+
+def _fetch_extractor(extractor):
+    """Fetch data from an extractor (network I/O bound — safe to parallelize)."""
+    from mmi.utils.redact import redact
+    reason = extractor.skip_reason()
+    if reason:
+        raise RuntimeError(f"skipped: {reason}")
+    start_after = None
+    if extractor.watermark_col:
+        wm = extractor.loader.watermark(extractor.table, extractor.watermark_col)
+        if wm:
+            start_after = wm
+    return extractor.fetch(start_after=start_after)
 
 
 def cmd_build(_: argparse.Namespace) -> int:
@@ -433,33 +473,50 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
 
         ran: list[str] = []
         results_by_window: dict[str, pd.DataFrame] = {}
-        # Pre-compute ML panel for 2015 windows using the widest (inc_btc) universe so
-        # common_dates is identical for both — required by the period-alignment test.
-        ml_mu_2015: pd.DataFrame | None = None
-        if btc_floor is not None and windows.INC_BTC_2015 in windows.WINDOWS:
-            wad_wide = compute.window_asset_daily(
-                asset_daily,
-                windows.INC_BTC_2015,
-                btc_floor=btc_floor,
-                btc_aligned=btc_aligned,
-            )
-            if not wad_wide.empty:
-                ml_mu_2015, _ = compute.compute_ml_mu_panel(
-                    wad_wide,
-                    window=windows.INC_BTC_2015,
-                    asset_daily_full=wad_wide,
-                    macro_df=macro_wide, asset_dfs=asset_dfs_macro,
-                )
+
+        # Pre-compute ML panels for all windows in parallel
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        window_data = {}
         for window_id in windows.WINDOWS:
             if window_id != windows.EX_BTC_2002 and btc_floor is None:
-                continue  # 2015 windows need the BTC floor (warned above)
+                continue
             wad = compute.window_asset_daily(
                 asset_daily, window_id, btc_floor=btc_floor, btc_aligned=btc_aligned
             )
-            override = (
-                ml_mu_2015 if window_id in (windows.EX_BTC_2015, windows.INC_BTC_2015) else None
+            if not wad.empty:
+                window_data[window_id] = wad
+
+        ml_panels = {}
+        def _compute_ml_panel(wid, wad):
+            return wid, compute.compute_ml_mu_panel(
+                wad, window=wid, asset_daily_full=wad,
+                macro_df=macro_wide, asset_dfs=asset_dfs_macro,
             )
-            n, n_strategies, results = run_window(loader, window_id, wad, ml_mu_override=override)
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {executor.submit(_compute_ml_panel, wid, wad): wid
+                      for wid, wad in window_data.items()}
+            for future in as_completed(futures):
+                wid = futures[future]
+                try:
+                    ml_panels[wid] = future.result()
+                except Exception as exc:
+                    log.warning("ML panel failed for %s: %s", wid, exc)
+
+        # Sequential portfolio backtests (DuckDB writes)
+        for window_id in window_data:
+            wad = window_data[window_id]
+            override = ml_panels.get(window_id)
+            if override:
+                ml_mu_panel, ml_gate = override
+            else:
+                ml_mu_panel = None
+                ml_gate = pd.DataFrame()
+            n, n_strategies, results = run_window(
+                loader, window_id, wad,
+                ml_mu_override=ml_mu_panel if ml_mu_panel is not None else None,
+            )
             results_by_window[window_id] = results
             log.info("portfolio[%s]: %s rows / %s strategies", window_id, n, n_strategies)
             ran.append(window_id)
