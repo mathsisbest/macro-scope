@@ -134,14 +134,68 @@ def inject_css() -> None:
             padding: 14px 16px; border-radius: 12px;
         }}
         [data-testid="stMetricLabel"] {{ color: {PALETTE["muted"]}; }}
+        .forecast-card {{
+            background: {PALETTE["panel"]};
+            border: 1px solid {PALETTE["grid"]};
+            border-radius: 8px;
+            padding: 14px 16px;
+            min-height: 124px;
+            margin-bottom: 0.75rem;
+        }}
+        .forecast-card__top {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            color: {PALETTE["muted"]};
+            font-size: 0.82rem;
+        }}
+        .forecast-card__symbol {{
+            color: {PALETTE["text"]};
+            font-size: 1rem;
+            font-weight: 700;
+        }}
+        .forecast-card__horizon {{
+            border: 1px solid {PALETTE["grid"]};
+            border-radius: 999px;
+            padding: 2px 8px;
+            white-space: nowrap;
+        }}
+        .forecast-card__value {{
+            font-size: 1.6rem;
+            font-weight: 750;
+            line-height: 1.1;
+            margin-top: 0.8rem;
+        }}
+        .forecast-card__meta {{
+            color: {PALETTE["muted"]};
+            font-size: 0.82rem;
+            margin-top: 0.55rem;
+            line-height: 1.35;
+        }}
+        [data-testid="stDataFrame"] {{
+            max-width: 100%;
+            overflow-x: auto;
+        }}
 
         /* ---- Mobile responsive ---- */
         @media (max-width: 768px) {{
             .block-container {{ padding-top: 2rem; padding-left: 1rem; padding-right: 1rem; }}
-            [data-testid="stMetric"] {{ padding: 10px 12px; }}
+            h1 {{ font-size: 1.8rem !important; }}
+            h2 {{ font-size: 1.35rem !important; }}
+            h3 {{ font-size: 1.1rem !important; }}
+            [data-testid="stMetric"] {{ padding: 10px 12px; min-height: 96px; }}
+            [data-testid="stMetricValue"] {{ font-size: 1.35rem; }}
             /* Tab bar: scroll horizontally with momentum on iOS */
-            [data-testid="stHorizontalBlock"] {{
-                overflow-x: auto; -webkit-overflow-scrolling: touch;
+            [data-baseweb="tab-list"] {{
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: thin;
+            }}
+            [data-baseweb="tab"] {{
+                flex: 0 0 auto;
+                padding-left: 0.75rem;
+                padding-right: 0.75rem;
             }}
             /* Segmented controls: smaller font + scroll so options don't clip */
             [data-testid="stSegmentedControl"] {{
@@ -157,9 +211,31 @@ def inject_css() -> None:
             .leaderboard [data-testid="column"] {{
                 flex: 0 0 50% !important; min-width: 0 !important;
             }}
+            .forecast-card {{
+                padding: 12px 13px;
+                min-height: 112px;
+            }}
+            .forecast-card__value {{
+                font-size: 1.35rem;
+            }}
+            .js-plotly-plot, .plotly, .plot-container {{
+                max-width: 100% !important;
+            }}
+            [data-testid="stDataFrame"] {{
+                font-size: 0.8rem;
+            }}
             /* Sidebar: collapsed on mobile, expanded on desktop */
             [data-testid="stSidebar"][aria-expanded="false"] {{
                 transform: translateX(-100%);
+            }}
+        }}
+        @media (max-width: 480px) {{
+            .block-container {{ padding-left: 0.75rem; padding-right: 0.75rem; }}
+            .leaderboard [data-testid="column"] {{
+                flex: 0 0 100% !important;
+            }}
+            .forecast-card__top {{
+                align-items: flex-start;
             }}
         }}
         </style>

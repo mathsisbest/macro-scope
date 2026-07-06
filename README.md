@@ -10,8 +10,8 @@
 
 **Live demo: <https://macro-scope.streamlit.app>** &nbsp;·&nbsp; _free, public, auto-refreshing (see [docs/RUNBOOK.md](./docs/RUNBOOK.md))_
 
-> **Desktop layout only.** The dashboard is optimised for a laptop or wider screen;
-> narrow/mobile viewports are not supported.
+> **Responsive dashboard.** The Streamlit app is designed for laptop, tablet, and phone
+> viewports, with horizontally scrollable controls where dense financial tables need them.
 
 > **Not investment advice.** Nothing here constitutes financial advice or a
 > recommendation to buy, sell, or hold any security.
