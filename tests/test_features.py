@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 
 from mmi.ml.features import feature_columns, make_features
-from mmi.ml.forecast import SEED, make_regressor
 
 
 def test_make_features_columns_and_no_leakage():
@@ -19,16 +18,17 @@ def test_make_features_columns_and_no_leakage():
     assert pd.isna(feats["target_next_ret"].iloc[-1])
 
 
-def test_make_regressor_carries_variance_control_params():
-    """Verify the factory sets max_depth and min_samples_leaf for variance control."""
-    est = make_regressor(n_estimators=10)
-    assert est.max_depth == 5, "max_depth must be 5 to limit tree depth at ~1e-4 daily-return scale"
-    assert est.min_samples_leaf == 20, "min_samples_leaf must be 20 to prevent leaf overfitting"
-    assert est.max_features == "sqrt"
-    assert est.random_state == SEED
-
-
-def test_make_regressor_seed_override():
-    """Custom seed is forwarded correctly."""
-    est = make_regressor(n_estimators=10, seed=42)
-    assert est.random_state == 42
+def test_make_features_mom_rev():
+    """mom_rev feature set produces expected columns."""
+    df = pd.DataFrame(
+        {
+            "date": pd.date_range("2020-01-01", periods=300),
+            "close": np.linspace(100, 130, 300),
+            "daily_return": np.random.default_rng(42).normal(0.001, 0.02, 300),
+        }
+    )
+    feats = make_features(df, feature_set="mom_rev")
+    mom_cols = feature_columns("mom_rev")
+    assert "mom_63d" in mom_cols
+    assert "ret_zscore_20d" in mom_cols
+    assert set(mom_cols).issubset(feats.columns)

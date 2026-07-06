@@ -60,6 +60,8 @@ def feature_columns(feature_set: str = "default") -> list[str]:
         cols += _MEDIUM_FEATURE_NAMES
     if feature_set == "vol_rich_plus":
         cols += _EXTENDED_FEATURE_NAMES
+    if feature_set == "mom_rev":
+        cols += _MOM_REV_FEATURE_NAMES
     return cols
 
 
@@ -287,6 +289,15 @@ def make_features(
         out = _add_extended_features(out, asset_dfs)
 
     return out
+
+
+_MOM_REV_FEATURE_NAMES: list[str] = [
+    "mom_21d", "mom_63d", "mom_126d", "mom_252d", "mom_accel",
+    "rev_5d", "rev_10d",
+    "ret_zscore_20d", "ret_zscore_60d",
+    "dist_from_mean_20d", "dist_from_mean_60d",
+    "trend_20d", "trend_60d",
+]
 
 
 def _add_mom_rev_features(out: pd.DataFrame) -> pd.DataFrame:
