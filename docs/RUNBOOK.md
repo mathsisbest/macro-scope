@@ -41,9 +41,10 @@ brief require the optional keys. Add them once; the Action picks them up automat
 
 ## Step B — Run the local heavy refresh and commit data/public
 
-The portfolio backtest (24 years × 3 windows × MVO + 2 000 bootstrap draws) exceeds the
-60-minute GitHub Actions cap, so it runs **locally** on your uncapped machine. The daily cron
-**preserves** the committed output but never regenerates it — you must seed it once.
+The portfolio backtest (24 years × 3 windows × MVO + bootstrap draws) uses `n_boot=200` in CI
+(`weekly.yml`) to stay within the 60-minute timeout. For a full `n_boot=2000` run, use the
+local path instead. The daily cron **preserves** the committed output but never regenerates it —
+you must seed the weekly output first.
 
 1. Make sure your `.env` holds real API keys:
    ```
@@ -54,10 +55,10 @@ The portfolio backtest (24 years × 3 windows × MVO + 2 000 bootstrap draws) ex
    ```bash
    make refresh-full
    ```
-   This command (once built in Wave 6 task D5) runs: ingest → dbt build → portfolio backtest →
-   ML train → AI brief → `mmi snapshot`. It will write Parquet files to `data/public/`.
+This runs: `mmi ingest` → `mmi build` → `mmi portfolio` → `mmi ml` → `mmi ai` →
+`mmi snapshot`. It will write Parquet files to `data/public/`.
 
-   While `make refresh-full` is being built, you can run the steps manually:
+To run the steps individually:
    ```bash
    mmi ingest
    mmi build
@@ -137,8 +138,8 @@ solo repo.
 
 After Steps A–D are complete, verify the automation end-to-end:
 
-1. Go to **Actions → Refresh public snapshot → Run workflow** (leave **full** unticked for the
-   cheap daily path).
+1. Go to **Actions → Daily snapshot (fast) → Run workflow** for the cheap daily path, or
+   **Weekly full refresh (ML + portfolio) → Run workflow** for the full run.
 2. Watch the run (~3–5 minutes). It should end green.
 3. Check that a new commit appeared on `main` with updated timestamps on `data/public/*.parquet`.
 4. Open the Streamlit URL. The provenance badge should advance: the **"Data as of"** date should

@@ -32,22 +32,22 @@
 
 The first time, trigger a **manual full run** to seed the portfolio backtest and brief:
 
-1. Go to **Actions → Refresh public snapshot (scheduled) → Run workflow**
+1. Go to **Actions → Weekly full refresh (ML + portfolio) → Run workflow**
 2. Check **Full refresh incl. the portfolio backtest**
 3. Click **Run workflow**
 
 This runs the full pipeline in CI (~5–15 min on the 6-hour cap):
 
 ```
-mmi ingest → dbt build → mmi portfolio → dbt build → mmi ml → mmi ml-gate (STRICT) → mmi ai → mmi snapshot
+mmi ingest → dbt build → mmi ml → mmi ml-gate --warn-only → mmi portfolio → dbt build → mmi ai → mmi snapshot
 ```
 
-The **`mmi ml-gate` STRICT** step sits between `mmi ml` and `mmi snapshot`: the HAR
+The **`mmi ml-gate --warn-only`** step sits between `mmi ml` and `mmi portfolio`: the HAR
 realized-volatility model must clear the minimum skill threshold (OOS R² ≥ 0.10 **and**
-QLIKE-ratio < 0.99 **and** ≥ 3/5 walk-forward folds) before a snapshot can be produced. If it
-**fails**, the run exits non-zero and no snapshot is committed — and the honest response is **not**
-to re-tune to pass: either ship with the baseline-only state active (the ML tab then truthfully
-shows *"no demonstrated out-of-sample edge"*) or keep refining the features locally.
+QLIKE-ratio < 0.99 **and** ≥ 3/5 walk-forward folds) to contribute to the ML-tilted portfolio. If
+it **fails**, the run continues with a warning (the portfolio falls back to equal-weight). The ML
+tab then truthfully shows *"no demonstrated out-of-sample edge"* — the honest response it not to
+re-tune to pass.
 
 After the run completes, confirm `data/public/` holds one `.parquet` per mart (including
 `fct_portfolio_returns.parquet` and `market_brief.parquet`). The push auto-redeploys Streamlit.
@@ -59,44 +59,44 @@ After the run completes, confirm `data/public/` holds one `.parquet` per mart (i
 
 ## Step 3 — Automated cron schedules
 
-Both schedules are active in `ingest.yml`:
+Both schedules are active in their respective workflow files:
 
-| Schedule | Path | What it does |
+| Schedule | Workflow | What it does |
 |---|---|---|
-| **Weekdays 06:00 UTC** | Cheap daily | Refreshes prices, macro, crypto, ML, and regenerates the brief. **Preserves** the committed portfolio Parquet. |
-| **Monday 04:00 UTC** | Full weekly | Full refresh including the portfolio backtest (`n_boot=2000`). |
+| **Weekdays 06:00 UTC** | `daily.yml` | Refreshes prices and macro. **Preserves** the committed ML / portfolio / brief Parquet from weekly. |
+| **Monday 04:00 UTC** | `weekly.yml` | Full refresh: ingest → build → ML → portfolio → build → AI brief → snapshot. |
 
-Each schedule runs in its own concurrency slot (`snapshot-<schedule>`) so they never block each
- other.
+Each schedule runs in its own concurrency slot (`snapshot-daily` / `snapshot-weekly`) so they never
+block each other.
 
-### Daily (weekdays) — cheap path
-
-```
-mmi ingest → dbt build --exclude tag:portfolio → mmi ml → mmi ai → mmi snapshot
-```
-
-- Refreshes prices, macro series, crypto, ML, and the AI brief.
-- **Does not** run the portfolio backtest.
-- **Preserves** any `fct_portfolio_returns.parquet` and `market_brief.parquet` already committed
-  to `data/public/` — `mmi snapshot` exports only marts present in the ephemeral DuckDB, and the
-  portfolio marts were excluded from the build, so they are absent from the DB and therefore left
-  untouched on disk.
-
-### Weekly (Monday) — full path
+### Daily (weekdays) — cheap path (`daily.yml`)
 
 ```
-mmi ingest → dbt build → mmi portfolio → dbt build → mmi ml → mmi ml-gate --warn-only → mmi ai → mmi snapshot
+mmi ingest → dbt build --exclude tag:portfolio --indirect-selection cautious → mmi snapshot
 ```
 
-- Full refresh including the portfolio backtest.
-- Runs with `timeout-minutes: 300` (well under the 6-hour public-repo cap).
+- Refreshes prices and macro series only.
+- **Does not** run ML, AI, or the portfolio backtest.
+- **Preserves** the committed `fct_portfolio_returns.parquet`, `model_metrics.parquet`, and
+  `market_brief.parquet` from the last weekly run — `mmi snapshot` exports only marts present in
+  the ephemeral DuckDB.
+
+### Weekly (Monday) — full path (`weekly.yml`)
+
+```
+mmi ingest → dbt build → mmi ml → mmi ml-gate --warn-only → mmi portfolio → dbt build → mmi ai → mmi snapshot
+```
+
+- Full refresh: ingest, dbt build, ML training (forecast + regimes), portfolio backtest, AI brief.
+- Runs with `timeout-minutes: 60` (well under the 6-hour public-repo cap).
 
 ### Secrets (all optional)
 
 | Secret name | Purpose | Required? |
 |---|---|---|
 | `FRED_API_KEY` | Real macro data (FRED) | Recommended |
-| `GEMINI_API_KEY` | AI brief (else deterministic offline template) | Optional |
+| `GEMINI_API_KEY` | AI brief via Gemini (else deterministic offline template) | Optional |
+| `GROQ_API_KEY` | AI brief via Groq (else deterministic offline template) | Optional |
 
 The job has `contents: write` permission to push the snapshot commit. No branch protection is
 configured; if it is added later, allow `github-actions[bot]` to push under

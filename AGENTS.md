@@ -1,4 +1,4 @@
-# CLAUDE.md — project context & handoff
+# AGENTS.md — project context & handoff
 
 > Read this first. Full design detail is in **PLAN.md**; architecture decisions in **docs/adr/**.
 > Keep this file lean — the hard rules + what isn't derivable from the repo. Push rationale, specs,
