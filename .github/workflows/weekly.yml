@@ -1,7 +1,8 @@
 name: Weekly full refresh (ML + portfolio)
 
-# Full pipeline: ingest → build → ml → portfolio → build → ai → snapshot. ~25 min.
-# Runs weekly on Mondays. Includes ML training and portfolio backtest.
+# Full pipeline: ingest → build → ml → portfolio → build → ai → snapshot. ~20 min.
+# Optimized: ml runs before portfolio (doesn't need portfolio marts), eliminating one dbt build.
+# Runs weekly on Mondays.
 
 on:
   workflow_dispatch:
@@ -45,15 +46,15 @@ jobs:
           set -euo pipefail
           # 1. Ingest fresh data
           mmi ingest
-          # 2. Build marts (creates fct_asset_daily for portfolio)
+          # 2. Build marts (creates fct_asset_daily — needed by both ml and portfolio)
           dbt build --project-dir transform --profiles-dir transform --target dev
-          # 3. Portfolio backtest (heavy — ~15 min)
-          mmi portfolio
-          # 4. Rebuild marts (populates portfolio tables from raw.portfolio_*)
-          dbt build --project-dir transform --profiles-dir transform --target dev
-          # 5. ML training (~10 min)
+          # 3. ML training (~10 min) — only reads fct_asset_daily, doesn't need portfolio marts
           mmi ml
           mmi ml-gate --warn-only || true
+          # 4. Portfolio backtest (~15 min) — reads fct_asset_daily, writes raw.portfolio_*
+          mmi portfolio
+          # 5. Rebuild marts (populates fct_portfolio_* from raw.portfolio_*)
+          dbt build --project-dir transform --profiles-dir transform --target dev
           # 6. AI brief
           mmi ai
           # 7. Export snapshot
