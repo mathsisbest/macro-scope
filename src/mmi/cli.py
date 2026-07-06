@@ -357,7 +357,8 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
             ml_gate = pd.DataFrame(columns=["date", "forecast_skill", "forecast_weight"])
         else:
             ml_mu_panel, ml_gate = compute.compute_ml_mu_panel(
-                wad, window=window_id, asset_daily_full=wad
+                wad, window=window_id, asset_daily_full=wad,
+                macro_df=macro_wide, asset_dfs=asset_dfs_macro,
             )
         results = compute.compute_portfolio_returns(
             wad, ml_mu_panel=ml_mu_panel, window=window_id, asset_daily_full=wad
@@ -389,6 +390,37 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
             "select symbol, date, daily_return, asset_class from marts.fct_asset_daily"
         ).df()
 
+        # Load macro data for vol_macro features
+        try:
+            macro_raw = con.execute(
+                "select date, series_id, value from marts.fct_macro_indicator order by date"
+            ).df()
+            if not macro_raw.empty:
+                macro_raw["date"] = pd.to_datetime(macro_raw["date"]).astype("datetime64[ns]")
+                macro_wide = macro_raw.pivot_table(
+                    index="date", columns="series_id", values="value", aggfunc="first"
+                ).reset_index().sort_values("date")
+                for col in macro_wide.columns:
+                    if col != "date":
+                        macro_wide[col] = macro_wide[col].ffill()
+            else:
+                macro_wide = None
+        except Exception:
+            macro_wide = None
+
+        # Load cross-asset data for vol_macro features
+        asset_dfs_macro = {}
+        for sym in ["GLD", "TLT"]:
+            try:
+                adf = con.execute(
+                    f"select date, daily_return from marts.fct_asset_daily where symbol='{sym}'"
+                ).df()
+                if not adf.empty:
+                    adf["date"] = pd.to_datetime(adf["date"]).astype("datetime64[ns]")
+                    asset_dfs_macro[sym] = adf
+            except Exception:
+                pass
+
         # BTC on the equity trading calendar defines the shared 2015 floor (its first valid return).
         btc_aligned = compute.btc_aligned_returns(asset_daily)
         valid = btc_aligned.dropna(subset=["daily_return"])
@@ -416,6 +448,7 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
                     wad_wide,
                     window=windows.INC_BTC_2015,
                     asset_daily_full=wad_wide,
+                    macro_df=macro_wide, asset_dfs=asset_dfs_macro,
                 )
         for window_id in windows.WINDOWS:
             if window_id != windows.EX_BTC_2002 and btc_floor is None:

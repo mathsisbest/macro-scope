@@ -96,7 +96,9 @@ def compute_ml_mu_panel(
     test_size: int = 300,
     target_horizon: int = 252,
     model: str = "gb",
-    feature_set: str = "default",
+    feature_set: str = "vol_macro",
+    macro_df: pd.DataFrame | None = None,
+    asset_dfs: dict[str, pd.DataFrame] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Build the ML forecast panel for the portfolio backtest.
 
@@ -141,6 +143,8 @@ def compute_ml_mu_panel(
                 target_type="raw",
                 target_horizon=target_horizon,
                 use_all_train=False,
+                macro_df=macro_df,
+                asset_dfs=asset_dfs,
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("skip %s forecast: %s", sym, exc)
