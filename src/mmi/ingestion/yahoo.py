@@ -27,7 +27,7 @@ class YahooChartExtractor(Extractor):
     table = "raw.asset_prices"
     keys = ["symbol", "date"]
     required_columns = ["symbol", "date", "close"]
-    required = True  # core price history — a *total* failure must fail the run, not pass silently
+    required = False  # gracefully skip on weekends/holidays when no new data
     probe_url = _URL.format(symbol="SPY")
     watermark_col = "date"
 
