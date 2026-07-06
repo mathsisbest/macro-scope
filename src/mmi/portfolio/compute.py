@@ -183,12 +183,16 @@ def compute_ml_mu_panel(
 
 def btc_aligned_returns(asset_daily: pd.DataFrame, *, btc_symbol: str = "BTC") -> pd.DataFrame:
     """BTC daily returns recomputed on the equity trading calendar."""
+    from mmi.portfolio import windows
+
     btc = asset_daily[asset_daily["symbol"] == btc_symbol]
     if btc.empty:
         return pd.DataFrame(columns=["date", "daily_return"])
     equity_dates = pd.DatetimeIndex(
         sorted(
-            pd.to_datetime(asset_daily.loc[asset_daily["asset_class"] != "crypto", "date"]).unique()
+            pd.to_datetime(
+                asset_daily.loc[asset_daily["symbol"].isin(windows.PORTFOLIO_UNIVERSE), "date"]
+            ).unique()
         )
     )
     btc_returns = btc.set_index("date")["daily_return"].sort_index()

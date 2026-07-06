@@ -536,6 +536,11 @@ def generate_brief(con) -> str:
     )
     con.register("_brief", row)
     con.execute("CREATE TABLE IF NOT EXISTS marts.market_brief AS SELECT * FROM _brief LIMIT 0")
-    con.execute("INSERT INTO marts.market_brief SELECT * FROM _brief")
+    existing_cols = {
+        r[1] for r in con.execute("PRAGMA table_info('marts.market_brief')").fetchall()
+    }
+    if "data_date" not in existing_cols:
+        con.execute("ALTER TABLE marts.market_brief ADD COLUMN data_date VARCHAR")
+    con.execute("INSERT INTO marts.market_brief BY NAME SELECT * FROM _brief")
     con.unregister("_brief")
     return safe_text

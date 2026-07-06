@@ -550,7 +550,10 @@ def ml_gate_chart(gate: pd.DataFrame) -> go.Figure:
 # ---------------------------------------------------------------------------
 
 #: Scope caption for the ML forecast tab.
-ML_SCOPE_CAPTION: str = "Models: return forecaster (regime-aware RF) + volatility model (GB)"
+ML_SCOPE_CAPTION: str = (
+    "Models: cross-asset return forecaster (gradient boosting) + realised-volatility forecaster "
+    "(HAR/EWMA baseline check)"
+)
 
 
 def vol_skill_r2_chart(
@@ -665,7 +668,7 @@ def vol_skill_verdict_text(metrics: pd.DataFrame, symbol: str = "SPY") -> str:
         folds_passed = verdict["folds_passed"]
         n_folds = verdict["n_folds"]
         return (
-            f"Volatility model beats baseline OOS "
+            f"{symbol} volatility model beats baseline OOS "
             f"(OOS R²={r2:.3f} ≥ 0.10; QLIKE skill ratio={ratio:.3f} < 0.99; "
             f"{folds_passed}/{n_folds} folds passed)."
         )
@@ -749,7 +752,7 @@ def vol_forecast_value(fc: pd.DataFrame, symbol: str = "SPY") -> float | None:
     forecast = float(value)
     if not math.isfinite(forecast):
         return None
-    return forecast
+    return forecast * math.sqrt(252)
 
 
 def direction_skill_chart(metrics: pd.DataFrame, symbol: str = "SPY") -> go.Figure:
