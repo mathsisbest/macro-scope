@@ -29,7 +29,7 @@ datasets, and roadmap in **PLAN.md**.
   changing their cadence.
 
 ## Roles & session kickoff
-Generic roles (Planner / Builder / Reviewer — see `~/.Codex/velocity-playbook.md`), run as
+Generic roles (Planner / Builder / Reviewer — see `~/.claude/velocity-playbook.md`), run as
 **separate sessions** with a repo-only handoff (no chat relay) — the anti-rubber-stamp rule.
 - **Build:** `Builder: implement <issue #N / task>` → one small single-concern PR.
 - **Review:** `/review-pr <n>` → separate session; loads `docs/REVIEW_GUIDE.md`, posts via `gh pr review`.
