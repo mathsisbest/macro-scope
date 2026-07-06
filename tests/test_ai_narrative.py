@@ -416,6 +416,30 @@ def test_engine_tags_are_distinct():
     assert "(" not in "offline-template"
 
 
+def test_brief_data_date_is_populated(monkeypatch, tmp_path):
+    """generate_brief must store the max fct_asset_daily date as data_date."""
+    con = _make_minimal_con()
+    monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
+    monkeypatch.setattr(narrative.llm, "available", lambda: False)
+    # Create fct_asset_daily with known dates so data_date is deterministic
+    con.execute(
+        "create table marts.fct_asset_daily as "
+        "select 'SPY' as symbol, DATE '2026-07-01' as date, 0.0 as daily_return, "
+        "0.0 as open, 0.0 as high, 0.0 as low, 0.0 as close, 0 as volume, "
+        "0.0 as vol_20d, 0.0 as ma_50, 'yahoo' as source"
+    )
+    try:
+        narrative.generate_brief(con)
+        row = con.execute(
+            "select data_date from marts.market_brief order by created_at desc limit 1"
+        ).fetchone()
+        assert row is not None, "no brief row found"
+        assert row[0] is not None, "data_date is None"
+        assert str(row[0]) == "2026-07-01", f"expected 2026-07-01, got {row[0]}"
+    finally:
+        con.close()
+
+
 # ---------------------------------------------------------------------------
 # gather_facts() TypedDict key-set contract
 # ---------------------------------------------------------------------------

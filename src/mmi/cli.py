@@ -525,7 +525,7 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         ml_panels: dict[str, tuple[pd.DataFrame, pd.DataFrame]] = {}
 
         def _compute_ml_panel(wid, wad):
-            return wid, compute.compute_ml_mu_panel(
+            return compute.compute_ml_mu_panel(
                 wad,
                 window=wid,
                 asset_daily_full=wad,

@@ -171,8 +171,8 @@ class ForecastBacktest:
             if "dates" in r and "predictions" in r:
                 h_df = pd.DataFrame(
                     {
-                    "date": pd.to_datetime(r["dates"].to_numpy()),
-                    f"pred_h{h}": r["predictions"].to_numpy(),
+                        "date": pd.to_datetime(r["dates"].to_numpy()),
+                        f"pred_h{h}": r["predictions"].to_numpy(),
                     }
                 )
                 h_df = h_df.dropna(subset=[f"pred_h{h}"])

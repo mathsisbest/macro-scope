@@ -206,9 +206,7 @@ def evaluate_forecast(
         try:
             model_cls = _MODELS[model]
         except KeyError:
-            raise ValueError(
-                f"Unknown model '{model}'; choose from {list(_MODELS)}"
-            ) from None
+            raise ValueError(f"Unknown model '{model}'; choose from {list(_MODELS)}") from None
         kw = {**_model_kwargs(model), **model_kwargs}
         if loss != "squared_error":
             kw["loss"] = loss
@@ -265,9 +263,7 @@ def evaluate_forecast(
             try:
                 model_cls = _MODELS[model]
             except KeyError:
-                raise ValueError(
-                    f"Unknown model '{model}'; choose from {list(_MODELS)}"
-                ) from None
+                raise ValueError(f"Unknown model '{model}'; choose from {list(_MODELS)}") from None
 
             kw = {**_model_kwargs(model), **model_kwargs}
             if loss != "squared_error":

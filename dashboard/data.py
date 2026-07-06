@@ -264,7 +264,8 @@ def regimes(symbol: str, start: str | None = None) -> pd.DataFrame:
 
 def latest_brief() -> pd.DataFrame:
     return query(
-        "select created_at, engine, brief from marts.market_brief order by created_at desc limit 1"
+        "select created_at, engine, brief, data_date "
+        "from marts.market_brief order by created_at desc limit 1"
     )
 
 
