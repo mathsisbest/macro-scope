@@ -427,7 +427,7 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         reset_portfolio_raw_tables(con)
         # Pull the WHOLE daily panel incl. BTC; each window filters its own universe in Python.
         asset_daily = con.execute(
-            "select symbol, date, daily_return, asset_class from marts.fct_asset_daily"
+            "select symbol, date, open, high, low, close, daily_return, asset_class from marts.fct_asset_daily"
         ).df()
 
         # Load macro data for vol_macro features
@@ -509,7 +509,7 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
             wad = window_data[window_id]
             override = ml_panels.get(window_id)
             if override:
-                ml_mu_panel, ml_gate = override
+                _, (ml_mu_panel, ml_gate) = override
             else:
                 ml_mu_panel = None
                 ml_gate = pd.DataFrame()

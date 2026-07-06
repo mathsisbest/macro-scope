@@ -181,9 +181,11 @@ def btc_aligned_returns(asset_daily: pd.DataFrame, *, btc_symbol: str = "BTC") -
     if btc.empty:
         return pd.DataFrame(columns=["date", "daily_return"])
     equity_dates = pd.DatetimeIndex(
-        sorted(asset_daily.loc[asset_daily["asset_class"] != "crypto", "date"].unique())
+        sorted(pd.to_datetime(asset_daily.loc[asset_daily["asset_class"] != "crypto", "date"]).unique())
     )
     btc_returns = btc.set_index("date")["daily_return"].sort_index()
+    btc_returns.index = pd.to_datetime(btc_returns.index)
+    btc_returns = btc_returns[~btc_returns.index.duplicated(keep="first")]  # deduplicate
     wealth = (1.0 + btc_returns.fillna(0.0)).cumprod()
     on_equity = wealth.reindex(equity_dates).ffill()
     aligned = on_equity.pct_change()
