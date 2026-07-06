@@ -48,7 +48,7 @@ models:
           - not_null
           - accepted_values:
               values:
-                ["equal_weight", "inverse_vol", "risk_parity", "sixty_forty", "mvo_histmean", "mvo_ml"]
+                ["equal_weight", "inverse_vol", "risk_parity", "sixty_forty", "mvo_histmean", "mvo_ml", "ml_tilt", "ml_regime"]
       - name: date
         tests: [not_null]
 
@@ -65,7 +65,7 @@ models:
           - not_null
           - accepted_values:
               values:
-                ["equal_weight", "inverse_vol", "risk_parity", "sixty_forty", "mvo_histmean", "mvo_ml"]
+                ["equal_weight", "inverse_vol", "risk_parity", "sixty_forty", "mvo_histmean", "mvo_ml", "ml_tilt", "ml_regime"]
 
   - name: fct_portfolio_strategy_pairs
     description: "Pairwise bootstrap Sharpe-difference CIs; distinguishable = the difference CI excludes zero. Grain: (window_id, strategy_a, strategy_b), asserted by a singular test."
@@ -145,6 +145,6 @@ models:
           - unique
           - accepted_values:
               values:
-                ["equal_weight", "inverse_vol", "risk_parity", "sixty_forty", "mvo_histmean", "mvo_ml"]
+                ["equal_weight", "inverse_vol", "risk_parity", "sixty_forty", "mvo_histmean", "mvo_ml", "ml_tilt", "ml_regime"]
       - name: distinguishable
         tests: [not_null]

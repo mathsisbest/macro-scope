@@ -309,6 +309,8 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
     """
     import os
 
+    import pandas as pd
+
     from mmi.ingestion import DuckDBLoader
     from mmi.ingestion.loader import reset_portfolio_raw_tables
     from mmi.portfolio import compute, windows
@@ -340,11 +342,23 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
                     default_n_boot,
                 )
 
-    def run_window(loader: DuckDBLoader, window_id: str, wad) -> tuple[int, int, pd.DataFrame]:
+    def run_window(
+        loader: DuckDBLoader,
+        window_id: str,
+        wad,
+        *,
+        ml_mu_override: pd.DataFrame | None = None,
+    ) -> tuple[int, int, pd.DataFrame]:
         # Build the ML forecast + gate ONCE per window, then reuse for returns + attribution.
-        ml_mu_panel, ml_gate = compute.compute_ml_mu_panel(
-            wad, window=window_id, asset_daily_full=wad
-        )
+        # An ml_mu_override from the wider inc_btc_2015 universe ensures common_dates is identical
+        # for both 2015 windows (required by assert_portfolio_windows_period_aligned).
+        if ml_mu_override is not None:
+            ml_mu_panel = ml_mu_override
+            ml_gate = pd.DataFrame(columns=["date", "forecast_skill", "forecast_weight"])
+        else:
+            ml_mu_panel, ml_gate = compute.compute_ml_mu_panel(
+                wad, window=window_id, asset_daily_full=wad
+            )
         results = compute.compute_portfolio_returns(
             wad, ml_mu_panel=ml_mu_panel, window=window_id, asset_daily_full=wad
         )
@@ -387,13 +401,32 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
 
         ran: list[str] = []
         results_by_window: dict[str, pd.DataFrame] = {}
+        # Pre-compute ML panel for 2015 windows using the widest (inc_btc) universe so
+        # common_dates is identical for both — required by the period-alignment test.
+        ml_mu_2015: pd.DataFrame | None = None
+        if btc_floor is not None and windows.INC_BTC_2015 in windows.WINDOWS:
+            wad_wide = compute.window_asset_daily(
+                asset_daily,
+                windows.INC_BTC_2015,
+                btc_floor=btc_floor,
+                btc_aligned=btc_aligned,
+            )
+            if not wad_wide.empty:
+                ml_mu_2015, _ = compute.compute_ml_mu_panel(
+                    wad_wide,
+                    window=windows.INC_BTC_2015,
+                    asset_daily_full=wad_wide,
+                )
         for window_id in windows.WINDOWS:
             if window_id != windows.EX_BTC_2002 and btc_floor is None:
                 continue  # 2015 windows need the BTC floor (warned above)
             wad = compute.window_asset_daily(
                 asset_daily, window_id, btc_floor=btc_floor, btc_aligned=btc_aligned
             )
-            n, n_strategies, results = run_window(loader, window_id, wad)
+            override = (
+                ml_mu_2015 if window_id in (windows.EX_BTC_2015, windows.INC_BTC_2015) else None
+            )
+            n, n_strategies, results = run_window(loader, window_id, wad, ml_mu_override=override)
             results_by_window[window_id] = results
             log.info("portfolio[%s]: %s rows / %s strategies", window_id, n, n_strategies)
             ran.append(window_id)
