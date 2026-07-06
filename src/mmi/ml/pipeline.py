@@ -13,6 +13,7 @@ from mmi.ml.forecast import evaluate_forecast
 from mmi.ml.research import _load_asset_data, _load_macro_data
 from mmi.ml.volatility import MODEL_TAG as VOL_MODEL_TAG
 from mmi.ml.volatility import train_and_backtest_vol
+from mmi.settings import load_assets
 from mmi.utils.db import init_schemas
 from mmi.utils.logging import get_logger
 
@@ -20,6 +21,16 @@ log = get_logger("ml.pipeline")
 
 # Max parallel workers for ML training (per-symbol independence)
 _MAX_WORKERS = 4
+
+
+def _default_symbols() -> list[str]:
+    """Return the configured market universe using symbols as stored in marts."""
+    assets = load_assets()
+    ordered: list[str] = []
+    for group in ("equities", "bonds", "commodities", "fx"):
+        ordered.extend(assets.get(group, []))
+    ordered.extend(sym.replace("-USD", "") for sym in assets.get("crypto_daily", []))
+    return list(dict.fromkeys(ordered))
 
 
 def _write(con, table: str, df: pd.DataFrame) -> None:
@@ -110,7 +121,7 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
     Uses parallel processing for ML training across symbols.
     """
     init_schemas(con)
-    symbols = symbols or ["SPY"]
+    symbols = symbols or _default_symbols()
     now = datetime.now(timezone.utc)
 
     # Load macro/asset data for rich features

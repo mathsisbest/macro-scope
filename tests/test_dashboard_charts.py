@@ -1,5 +1,7 @@
 """The bootstrap scorecard/verdict builders summarise the pairwise result honestly."""
 
+import math
+
 import pandas as pd
 from dashboard.components import charts
 
@@ -228,7 +230,8 @@ def _forecast(rows: list) -> pd.DataFrame:
 
 def test_vol_forecast_picks_spy_rv_har_even_with_other_symbols_present():
     # BTC's rv_har row sorts first positionally: a model-only filter + .iloc[0] would surface
-    # BTC's vol in the SPY headline. The symbol constraint must pin it to SPY's 0.18.
+    # BTC's vol in the SPY headline. The symbol constraint must pin it to SPY's 0.18 daily-scale
+    # forecast, then annualise it for display.
     fc = _forecast(
         [
             ["BTC", "2026-06-20", 0.99, "rv_har"],
@@ -236,7 +239,7 @@ def test_vol_forecast_picks_spy_rv_har_even_with_other_symbols_present():
             ["SPY", "2026-06-20", 0.01, "random_forest"],
         ]
     )
-    assert charts.vol_forecast_value(fc, symbol="SPY") == 0.18
+    assert charts.vol_forecast_value(fc, symbol="SPY") == 0.18 * math.sqrt(252)
 
 
 def test_vol_forecast_none_when_selected_symbol_absent():

@@ -516,7 +516,7 @@ with tab_ml:
                 pred = row["predicted_return"]
                 direction = "↑" if pred > 0 else "↓" if pred < 0 else "→"
                 st.metric(
-                    f"{h}-day forecast",
+                    f"{row['symbol']} · {h}-day forecast",
                     f"{direction} {pred * 100:+.2f}%",
                     f"{row['daily_mu'] * 100:+.3f}%/day",
                 )
@@ -547,8 +547,17 @@ with tab_ml:
 
         # ---- Volatility model (secondary) ----
         st.subheader("Volatility model")
-        st.caption("Gradient Boosting with rich features — secondary to the return forecaster.")
-        verdict_text = charts.vol_skill_verdict_text(metrics, symbol="SPY")
+        st.caption("HAR realised-volatility model with an EWMA/persistence baseline check.")
+        vol_symbols = sorted(metrics.loc[metrics["model"] == "rv_har", "symbol"].dropna().unique())
+        vol_symbol = "SPY" if "SPY" in vol_symbols else (vol_symbols[0] if vol_symbols else "SPY")
+        if len(vol_symbols) > 1:
+            vol_symbol = st.selectbox(
+                "Volatility asset",
+                vol_symbols,
+                index=vol_symbols.index(vol_symbol),
+            )
+
+        verdict_text = charts.vol_skill_verdict_text(metrics, symbol=vol_symbol)
         if "no demonstrated out-of-sample edge" in verdict_text:
             st.warning(verdict_text)
         else:
@@ -556,24 +565,24 @@ with tab_ml:
 
         vol_col1, vol_col2 = st.columns([1, 1])
         with vol_col1:
-            _chart(charts.vol_skill_r2_chart(metrics, symbol="SPY", height=280))
+            _chart(charts.vol_skill_r2_chart(metrics, symbol=vol_symbol, height=280))
         with vol_col2:
-            _chart(charts.vol_skill_qlike_chart(metrics, symbol="SPY", height=280))
+            _chart(charts.vol_skill_qlike_chart(metrics, symbol=vol_symbol, height=280))
 
         # Predicted next-week volatility
-        pred_vol = charts.vol_forecast_value(fc, symbol="SPY")
+        pred_vol = charts.vol_forecast_value(fc, symbol=vol_symbol)
         fc_col1, fc_col2 = st.columns([1, 1])
         with fc_col1:
             if pred_vol is not None:
                 st.metric(
-                    "SPY predicted next-week vol (annualised)",
+                    f"{vol_symbol} predicted next-week vol (annualised)",
                     f"{pred_vol * 100:.2f}%",
                 )
             else:
-                st.caption("No SPY volatility forecast available yet.")
+                st.caption(f"No {vol_symbol} volatility forecast available yet.")
         with fc_col2:
             rv_metrics = (
-                metrics[(metrics["model"] == "rv_har") & (metrics["symbol"] == "SPY")]
+                metrics[(metrics["model"] == "rv_har") & (metrics["symbol"] == vol_symbol)]
                 if not metrics.empty
                 else metrics
             )
@@ -583,7 +592,7 @@ with tab_ml:
                     st.caption(f"Model trained {trained_at.iloc[0]}")
 
         # ---- Locked holdout (vol) ----
-        vol_holdout = charts.holdout_readout(metrics, model="rv_har", symbol="SPY")
+        vol_holdout = charts.holdout_readout(metrics, model="rv_har", symbol=vol_symbol)
         if vol_holdout is not None:
             st.caption(charts.HOLDOUT_CAPTION)
             hv1, hv2, hv3 = st.columns(3)
@@ -596,9 +605,9 @@ with tab_ml:
             if "holdout_n_obs" in vol_holdout:
                 hv3.metric("Holdout obs", f"{vol_holdout['holdout_n_obs']:.0f}")
 
-        reg_view = data.regimes("SPY", rng_start)
+        reg_view = data.regimes(vol_symbol, rng_start)
         if not reg_view.empty:
-            _chart(charts.regime_chart(reg_view, "SPY", height=280))
+            _chart(charts.regime_chart(reg_view, vol_symbol, height=280))
 
 with tab_ai:
     brief = data.latest_brief()
@@ -702,7 +711,7 @@ with tab_portfolio:
         if not stats.empty:
             ci = int(round(stats["ci_pct"].iloc[0] * 100))
             with st.expander(
-                f"📊 Risk-adjusted scorecard — Sharpe with {ci}% bootstrap CI", expanded=False
+                f"📊 Risk-adjusted scorecard — Sharpe with {ci}% bootstrap CI", expanded=True
             ):
                 sc1, sc2 = st.columns(2)
                 with sc1:
