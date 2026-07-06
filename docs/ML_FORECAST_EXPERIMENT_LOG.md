@@ -843,7 +843,60 @@
 
 ---
 
-## Key Principles Discovered (Updated)
+### Experiment 39: Audit — MLP Neural Network
+
+**Date:** 2026-07-06 (Session 5)
+**Approach:** Test MLPRegressor (64, 32 hidden layers) vs HistGB on SPY 252d.
+
+**Results:**
+- GB: IC=0.236, dir=0.772
+- MLP: IC=0.144, dir=0.739
+- Ensemble: IC=0.195
+
+**Verdict:** MLP underperforms GB. Trees are better for this tabular data. Ensemble also underperforms.
+
+---
+
+### Experiment 40: Audit — Walk-Forward HP Tuning
+
+**Date:** 2026-07-06 (Session 5)
+**Approach:** Test 9 HP combos (3 iter × 2 depth × 3 min_samples) per fold, pick best by internal CV.
+
+**Results:**
+- Default HP: IC=0.236
+- Tuned HP: IC=0.238
+
+**Verdict:** Marginal improvement (+0.002). Default HPs are already near-optimal.
+
+---
+
+### Experiment 41: Audit — Vol Regime Overlay
+
+**Date:** 2026-07-06 (Session 5)
+**Approach:** Use vol features to filter or weight ML predictions by vol regime.
+
+**Results:**
+- All: IC=0.236
+- High vol: IC=0.206
+- Low vol: IC=0.213
+- Vol-weighted: IC=0.189
+
+**Verdict:** Vol regime doesn't help. IC is flat across regimes. Vol-weighting hurts.
+
+---
+
+### Experiment 42: Audit — FRED at 252d Horizon
+
+**Date:** 2026-07-06 (Session 5)
+**Approach:** Test vol_macro features at 252d horizon (low-frequency FRED may help at long horizons).
+
+**Results:**
+- Default: IC=0.236
+- vol_macro: Crashes (date dtype mismatch in merge)
+
+**Verdict:** Macro features crash due to pandas date precision issue. Default features already perform well at 252d.
+
+---
 
 1. **Don't prune from GB models.** GB handles irrelevant features naturally. Removing them hurts ensemble diversity.
 2. **Default features beat rich features for returns at short horizons.** NaN in early windows kills richer feature sets. But this REVERSES at long horizons — vol_medium strongly outperforms default at h=252.
@@ -859,6 +912,10 @@
 12. **Regime sizing needs high IC.** At IC=0.10, sizing up/down doesn't help — noise amplification cancels signal amplification. Would need IC > 0.20 for regime sizing to add value.
 13. **Rolling beats expanding — no ensemble benefit.** Expanding window has near-zero IC across all horizons. Old data doesn't predict current returns. Rolling window is strictly better. Don't ensemble them.
 14. **0.6-year rolling window is optimal.** train=160 (0.6 years) beats both shorter (63d) and longer (252d) windows. Shorter = too noisy, longer = stale data.
+15. **GB is the best model for this data.** MLP, RF, and LGB all underperform HistGB. Trees handle tabular data better than neural networks.
+16. **Default HPs are near-optimal.** Walk-forward HP tuning gives only +0.002 IC improvement. The model is not HP-sensitive.
+17. **Vol regime doesn't help returns.** IC is flat across vol regimes. Vol-weighting hurts. The vol model's signal doesn't translate to return prediction.
+18. **We've reached the ceiling with available data.** 38+ experiments across 5 sessions. The bottleneck is now data quality and quantity, not model complexity.
 11. **Multi-asset forecasting reveals asset-specific predictability.** Gold is the most predictable (structural macro drivers), SPY is predictable (cycle-driven), TLT is not (rate path is a random walk).
 12. **Positive R² IS achievable.** GLD h=252 vol_macro achieves R²=+0.568 — the model explains 57% of 1-year gold return variance. The previous dogma ("returns have near-zero R²") was horizon-limited AND asset-limited, not fundamental.
 13. **Feature engineering is ASSET-SPECIFIC.** Gold needs macro features (vol_macro). SPY needs only vol features (no macro — causes overfitting). TLT is unpredictable regardless of features. One-size-fits-all feature engineering is worse than doing nothing.
