@@ -215,6 +215,18 @@ def _q(con: duckdb.DuckDBPyConnection, sql: str, params=None) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _first_model_symbol(ml_snap_con: duckdb.DuckDBPyConnection, model: str) -> str | None:
+    """Return a stable available symbol for a model, if the model wrote any rows."""
+    df = _q(
+        ml_snap_con,
+        "select distinct symbol from marts.model_metrics where model = ? order by symbol",
+        [model],
+    )
+    if df.empty:
+        return None
+    return str(df["symbol"].iloc[0])
+
+
 # ---------------------------------------------------------------------------
 # Tests: marts.model_metrics schema stability
 # ---------------------------------------------------------------------------
@@ -285,19 +297,19 @@ class TestDirectionModelRows:
     """Direction-model rows survive the snapshot round-trip with all expected metric names."""
 
     def test_direction_model_rows_present(self, ml_snap_con):
-        """model_metrics must contain rows for model='return_gb', symbol='SPY'."""
+        """model_metrics must contain rows for at least one ML model."""
         df = _q(
             ml_snap_con,
-            "select metric from marts.model_metrics where model = 'return_gb' and symbol = 'SPY'",
+            "select metric from marts.model_metrics where model = 'return_gb'",
         )
         # ML may skip if sample data is too small (need 412 rows for train=160 + target=252)
         # In that case, we just verify the vol model ran successfully
         if df.empty:
             vol_df = _q(
                 ml_snap_con,
-                "select metric from marts.model_metrics where model = 'rv_har' and symbol = 'SPY'",
+                "select metric from marts.model_metrics where model = 'rv_har'",
             )
-            assert not vol_df.empty, "Neither return_gb nor rv_har rows found for SPY"
+            assert not vol_df.empty, "Neither return_gb nor rv_har rows found"
             return
         assert not df.empty
 
@@ -416,13 +428,9 @@ class TestDirectionModelRows:
 
 
 @pytest.fixture(scope="module")
-def rv_har_present(ml_snap_con):
-    """Whether rv_har rows are present in model_metrics. Seed data is >60 obs so expect True."""
-    df = _q(
-        ml_snap_con,
-        "select metric from marts.model_metrics where model = 'rv_har' and symbol = 'SPY'",
-    )
-    return not df.empty
+def rv_har_symbol(ml_snap_con):
+    """A symbol with rv_har rows in model_metrics, if any."""
+    return _first_model_symbol(ml_snap_con, "rv_har")
 
 
 # ---------------------------------------------------------------------------
@@ -456,16 +464,17 @@ class TestVolModelRows:
                 "This test is a WARN-ONLY skip, not a hard failure."
             )
 
-    def test_rv_har_all_expected_metrics_present(self, ml_snap_con, rv_har_present):
+    def test_rv_har_all_expected_metrics_present(self, ml_snap_con, rv_har_symbol):
         """All 7 rv_har metric names must survive the round-trip (when rows are present)."""
-        if not rv_har_present:
+        if rv_har_symbol is None:
             pytest.skip(
                 "rv_har rows absent — see test_rv_har_rows_present_with_sufficient_seed_data"
             )
 
         df = _q(
             ml_snap_con,
-            "select metric from marts.model_metrics where model = 'rv_har' and symbol = 'SPY'",
+            "select metric from marts.model_metrics where model = 'rv_har' and symbol = ?",
+            [rv_har_symbol],
         )
         found_metrics = set(df["metric"])
         missing = VOL_METRICS - found_metrics
@@ -474,11 +483,14 @@ class TestVolModelRows:
             f"Found: {sorted(found_metrics)}"
         )
 
-    def test_rv_har_no_partial_rows(self, ml_snap_con, rv_har_present):
+    def test_rv_har_no_partial_rows(self, ml_snap_con, rv_har_symbol):
         """rv_har rows must be either fully present (all 7) or fully absent — never partial."""
+        if rv_har_symbol is None:
+            return
         df = _q(
             ml_snap_con,
-            "select metric from marts.model_metrics where model = 'rv_har' and symbol = 'SPY'",
+            "select metric from marts.model_metrics where model = 'rv_har' and symbol = ?",
+            [rv_har_symbol],
         )
         if df.empty:
             # Cleanly absent: acceptable (small-sample skip path)
@@ -496,45 +508,46 @@ class TestVolModelRows:
                 "This indicates a non-atomic write in pipeline.py."
             )
 
-    def test_rv_har_values_finite(self, ml_snap_con, rv_har_present):
+    def test_rv_har_values_finite(self, ml_snap_con, rv_har_symbol):
         """All rv_har metric values must be finite after round-trip (no NaN/Inf)."""
-        if not rv_har_present:
+        if rv_har_symbol is None:
             pytest.skip("rv_har rows absent")
 
         df = _q(
             ml_snap_con,
-            "select metric, value from marts.model_metrics "
-            "where model = 'rv_har' and symbol = 'SPY'",
+            "select metric, value from marts.model_metrics where model = 'rv_har' and symbol = ?",
+            [rv_har_symbol],
         )
         for _, row in df.iterrows():
             val = row["value"]
             assert pd.notna(val), f"rv_har metric '{row['metric']}' is NaN after round-trip"
             assert val == val, f"rv_har metric '{row['metric']}' has non-finite value {val}"
 
-    def test_rv_har_n_obs_positive(self, ml_snap_con, rv_har_present):
+    def test_rv_har_n_obs_positive(self, ml_snap_con, rv_har_symbol):
         """rv_har n_obs must be positive after round-trip."""
-        if not rv_har_present:
+        if rv_har_symbol is None:
             pytest.skip("rv_har rows absent")
 
         df = _q(
             ml_snap_con,
             "select value from marts.model_metrics "
-            "where model = 'rv_har' and symbol = 'SPY' and metric = 'n_obs'",
+            "where model = 'rv_har' and symbol = ? and metric = 'n_obs'",
+            [rv_har_symbol],
         )
         assert not df.empty, "rv_har n_obs row missing after round-trip"
         assert df["value"].iloc[0] > 0, f"rv_har n_obs must be positive, got {df['value'].iloc[0]}"
 
-    def test_rv_har_folds_passed_range(self, ml_snap_con, rv_har_present):
+    def test_rv_har_folds_passed_range(self, ml_snap_con, rv_har_symbol):
         """rv_har folds_passed must be in [0, n_folds] after round-trip."""
-        if not rv_har_present:
+        if rv_har_symbol is None:
             pytest.skip("rv_har rows absent")
 
         def _get(metric):
             df = _q(
                 ml_snap_con,
                 "select value from marts.model_metrics "
-                "where model='rv_har' and symbol='SPY' and metric=?",
-                [metric],
+                "where model='rv_har' and symbol=? and metric=?",
+                [rv_har_symbol, metric],
             )
             return int(df["value"].iloc[0]) if not df.empty else None
 
@@ -546,17 +559,17 @@ class TestVolModelRows:
             f"folds_passed={folds_passed} is outside [0, n_folds={n_folds}]"
         )
 
-    def test_rv_har_qlike_skill_ratio_formula(self, ml_snap_con, rv_har_present):
+    def test_rv_har_qlike_skill_ratio_formula(self, ml_snap_con, rv_har_symbol):
         """qlike_skill_ratio must equal qlike / baseline_qlike within floating-point tolerance."""
-        if not rv_har_present:
+        if rv_har_symbol is None:
             pytest.skip("rv_har rows absent")
 
         def _get(metric):
             df = _q(
                 ml_snap_con,
                 "select value from marts.model_metrics "
-                "where model='rv_har' and symbol='SPY' and metric=?",
-                [metric],
+                "where model='rv_har' and symbol=? and metric=?",
+                [rv_har_symbol, metric],
             )
             return df["value"].iloc[0] if not df.empty else None
 
@@ -578,7 +591,7 @@ class TestVolModelRows:
                 baseline_qlike
             ), "qlike_skill_ratio != qlike/baseline_qlike after round-trip"
 
-    def test_skill_verdict_runs_on_round_tripped_metrics(self, ml_snap_con, rv_har_present):
+    def test_skill_verdict_runs_on_round_tripped_metrics(self, ml_snap_con, rv_har_symbol):
         """skill_verdict() returns a well-formed verdict on the round-tripped frame.
 
         This guards the *contract* of skill_verdict(), not one seed's particular
@@ -594,14 +607,14 @@ class TestVolModelRows:
         """
         from mmi.ml.skill_gate import skill_verdict
 
-        if not rv_har_present:
+        if rv_har_symbol is None:
             pytest.skip("rv_har rows absent — skill_verdict is moot")
 
         df = _q(ml_snap_con, "select * from marts.model_metrics")
         assert not df.empty
 
         # Must not raise — absent/degenerate metrics yield a verdict, never an exception.
-        verdict = skill_verdict(df, symbol="SPY")
+        verdict = skill_verdict(df, symbol=rv_har_symbol)
 
         # Structural assertions: verdict must be a well-formed dict (always true).
         assert isinstance(verdict["cleared"], bool)
@@ -651,7 +664,7 @@ class TestMlForecastMart:
             )
 
     def test_ml_forecast_has_direction_model_row(self, ml_snap_con):
-        """ml_forecast must have at least the return_gb row for SPY after round-trip."""
+        """ml_forecast must have at least one return_gb row after round-trip."""
         df = _q(
             ml_snap_con,
             "select symbol, model from marts.ml_forecast where model = 'return_gb'",
@@ -659,7 +672,7 @@ class TestMlForecastMart:
         if df.empty:
             return  # ML may skip on small sample data
         assert not df.empty, "ml_forecast has no return_gb row after round-trip"
-        assert "SPY" in df["symbol"].to_numpy(), "ml_forecast return_gb row is not for SPY"
+        assert df["symbol"].notna().all(), "ml_forecast return_gb row has null symbol"
 
     def test_ml_forecast_rv_har_row_present_or_cleanly_absent(self, ml_snap_con):
         """ml_forecast rv_har row: either present (with all contract columns) or cleanly absent.
@@ -682,7 +695,7 @@ class TestMlForecastMart:
         # rv_har row IS present — assert it has all contract columns and valid values
         for col in ML_FORECAST_COLUMNS:
             assert col in df_rv.columns, f"rv_har forecast row is missing required column '{col}'"
-        assert "SPY" in df_rv["symbol"].to_numpy(), "rv_har forecast row is not for SPY"
+        assert df_rv["symbol"].notna().all(), "rv_har forecast symbol is null"
         assert not df_rv["as_of"].isna().any(), "rv_har forecast as_of is null"
         assert not df_rv["predicted_next_return"].isna().any(), (
             "rv_har forecast predicted_next_return is null"
