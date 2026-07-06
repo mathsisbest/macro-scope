@@ -18,18 +18,27 @@ class WorldBankExtractor(Extractor):
     keys = ["indicator_id", "country", "date"]
     required_columns = ["indicator_id", "country", "date", "value"]
     probe_url = "https://api.worldbank.org/v2/country/USA/indicator/NY.GDP.MKTP.CD"
+    watermark_col: str = "date"
 
     def probe(self) -> None:
         """Probe World Bank API with a single-row request."""
         get_json(self.probe_url, params={"format": "json", "per_page": 1})
 
     def fetch(self, start_after: str | None = None) -> pd.DataFrame:
-        frames = [self._fetch_indicator(i["id"]) for i in load_assets()["worldbank"]]
+        frames = [self._fetch_indicator(i["id"], start_after) for i in load_assets()["worldbank"]]
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
-    def _fetch_indicator(self, indicator: str) -> pd.DataFrame:
+    def _fetch_indicator(self, indicator: str, start_after: str | None = None) -> pd.DataFrame:
         url = _URL.format(countries=_COUNTRIES, indicator=indicator)
-        payload = get_json(url, params={"format": "json", "per_page": 20000})
+        params = {"format": "json", "per_page": 20000}
+        if start_after:
+            # World Bank API uses date=YYYY:YYYY range; fetch from year after last known
+            try:
+                start_year = int(start_after[:4]) + 1
+                params["date"] = f"{start_year}:2050"
+            except (ValueError, IndexError):
+                pass  # Full refresh if date parsing fails
+        payload = get_json(url, params=params)
         if not isinstance(payload, list) or len(payload) < 2 or payload[1] is None:
             return pd.DataFrame()
         rows = [
