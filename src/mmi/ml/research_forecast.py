@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import itertools
-import warnings
 
 import numpy as np
 import pandas as pd
@@ -21,14 +20,21 @@ from mmi.utils.db import connect
 
 from .forecast import evaluate_forecast
 
-
 # ---------------------------------------------------------------------------
 # Data helpers — fetch & pivot from raw DuckDB
 # ---------------------------------------------------------------------------
 
 _MACRO_SERIES = [
-    "T10Y2Y", "DGS10", "DGS2", "DGS3MO", "FEDFUNDS",
-    "VIXCLS", "DCOILWTICO", "DTWEXBGS", "ICSA", "NFCI",
+    "T10Y2Y",
+    "DGS10",
+    "DGS2",
+    "DGS3MO",
+    "FEDFUNDS",
+    "VIXCLS",
+    "DCOILWTICO",
+    "DTWEXBGS",
+    "ICSA",
+    "NFCI",
 ]
 
 
@@ -49,7 +55,9 @@ def _pivot_macro(con) -> pd.DataFrame:
     """).df()
     if df.empty:
         return pd.DataFrame()
-    pivoted = df.pivot(index="date", columns="series_id", values="value").reset_index()
+    pivoted = df.pivot_table(
+        index="date", columns="series_id", values="value"
+    ).reset_index()
     pivoted.columns.name = None
     pivoted["date"] = pd.to_datetime(pivoted["date"])
     return pivoted.sort_values("date").reset_index(drop=True)
@@ -98,7 +106,8 @@ def run_sweep(
     min_rows: int = 100,
     output_path: str | None = None,
 ) -> pd.DataFrame:
-    """Run a full sweep over model × feature_set × target_type × horizon × regime × loss × n_estimators.
+    """Run a full sweep over model × feature_set × target_type × horizon
+    × regime × loss × n_estimators.
 
     Parameters
     ----------
@@ -134,7 +143,8 @@ def run_sweep(
     print(f"Date range: {df['date'].min()} to {df['date'].max()}")
 
     macro_df = _pivot_macro(con)
-    print(f"Macro series: {len(macro_df)} rows, columns: {[c for c in macro_df.columns if c != 'date']}")
+    cols = [c for c in macro_df.columns if c != "date"]
+    print(f"Macro series: {len(macro_df)} rows, columns: {cols}")
 
     asset_dfs = _load_asset_vol(con, ("GLD", "TLT"))
     print(f"Cross-asset data: {list(asset_dfs.keys())}")
@@ -166,7 +176,11 @@ def run_sweep(
         models, feature_sets, target_types, horizons, losses, model_strengths, regime_options
     ):
         count += 1
-        desc = f"[{count}/{total}] {model} / {fset} / {ttype} / h={horizon} / {'regime' if regime else 'global'} / loss={loss} / n={ntree}"
+        regime_str = "regime" if regime else "global"
+        desc = (
+            f"[{count}/{total}] {model} / {fset} / {ttype} / h={horizon}"
+            f" / {regime_str} / loss={loss} / n={ntree}"
+        )
         print(desc, end=" ... ")
 
         try:
@@ -195,22 +209,24 @@ def run_sweep(
             print(f"too few preds ({res.get('prediction_count', 0)})")
             continue
 
-        results.append({
-            "model": model,
-            "feature_set": fset,
-            "target_type": ttype,
-            "horizon": horizon,
-            "regime_aware": regime,
-            "loss": loss,
-            "n_estimators": nest,
-            "ic": res.get("ic", np.nan),
-            "ic_pvalue": res.get("ic_pvalue", np.nan),
-            "direction_accuracy": res.get("direction_accuracy", np.nan),
-            "prediction_count": res.get("prediction_count", 0),
-            "sharpe": res.get("sharpe", np.nan),
-            "r2": res.get("r2", np.nan),
-            "mean_train_rows": res.get("mean_train_rows", 0),
-        })
+        results.append(
+            {
+                "model": model,
+                "feature_set": fset,
+                "target_type": ttype,
+                "horizon": horizon,
+                "regime_aware": regime,
+                "loss": loss,
+                "n_estimators": ntree,
+                "ic": res.get("ic", np.nan),
+                "ic_pvalue": res.get("ic_pvalue", np.nan),
+                "direction_accuracy": res.get("direction_accuracy", np.nan),
+                "prediction_count": res.get("prediction_count", 0),
+                "sharpe": res.get("sharpe", np.nan),
+                "r2": res.get("r2", np.nan),
+                "mean_train_rows": res.get("mean_train_rows", 0),
+            }
+        )
         print(f"IC={res.get('ic', np.nan):.4f}  DA={res.get('direction_accuracy', np.nan):.3f}")
 
     out = pd.DataFrame(results)
@@ -225,8 +241,16 @@ def summarize(results: pd.DataFrame, top_k: int = 10) -> pd.DataFrame:
     """Print a summary of sweep results, sorted by IC."""
     top = results.sort_values("ic", ascending=False).head(top_k)
     print("\n=== Top Results (by IC) ===")
-    cols = ["model", "feature_set", "target_type", "horizon", "ic",
-            "direction_accuracy", "prediction_count", "sharpe"]
+    cols = [
+        "model",
+        "feature_set",
+        "target_type",
+        "horizon",
+        "ic",
+        "direction_accuracy",
+        "prediction_count",
+        "sharpe",
+    ]
     print(top[cols].to_string(index=False))
     return top
 
@@ -234,6 +258,7 @@ def summarize(results: pd.DataFrame, top_k: int = 10) -> pd.DataFrame:
 def _snapshot_connect() -> object:
     """Open an in-memory DuckDB connection that reads from the committed Parquet snapshot."""
     import duckdb as _duckdb
+
     con = _duckdb.connect()
     con.execute("CREATE SCHEMA IF NOT EXISTS marts")
     con.execute("""
@@ -250,11 +275,12 @@ def _snapshot_connect() -> object:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Research sweep for return forecast")
     parser.add_argument("--db-path", type=str, default=None, help="Path to mmi.duckdb")
-    parser.add_argument("--snapshot", action="store_true",
-                        help="Use committed snapshot Parquet instead of live DB")
-    parser.add_argument("--output", type=str,
-                        default="data/research_forecast_sweep.csv",
-                        help="Output CSV path")
+    parser.add_argument(
+        "--snapshot", action="store_true", help="Use committed snapshot Parquet instead of live DB"
+    )
+    parser.add_argument(
+        "--output", type=str, default="data/research_forecast_sweep.csv", help="Output CSV path"
+    )
     parser.add_argument("--symbol", type=str, default="SPY")
     parser.add_argument("--train-size", type=int, default=250)
     parser.add_argument("--test-size", type=int, default=20)
@@ -265,6 +291,7 @@ if __name__ == "__main__":
         con = _snapshot_connect()
     else:
         from mmi.utils.db import connect
+
         con = connect(args.db_path)
 
     results_df = run_sweep(

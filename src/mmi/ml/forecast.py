@@ -7,7 +7,8 @@ Design
   predict next ``test_size`` rows (each the first ``test_size`` rows after
   the train window that haven't been predicted yet).
 - Strictly out-of-sample: prediction for row t uses only information <= t-1.
-- Optional feature set selection (``feature_set`` = default / vol / vol_macro / vol_rich / vol_medium).
+- Optional feature set selection
+  (``feature_set`` = default / vol / vol_macro / vol_rich / vol_medium).
 - Optional ensemble method (average / median / ic_weighted).
 - Optional target type (raw / vol_adjusted / excess).
 - Dynamic ``available_cols``: only columns present in the dataframe are used,
@@ -17,13 +18,11 @@ Design
 from __future__ import annotations
 
 import warnings
-from collections.abc import Sequence
 
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
-from sklearn.metrics import make_scorer
 
 from . import features as feat
 
@@ -44,8 +43,11 @@ def _model_kwargs(model_name: str) -> dict:
     kw: dict = {"random_state": 42}
     if model_name == "gb":
         kw.update(
-            max_iter=150, max_depth=4, min_samples_leaf=20,
-            loss="squared_error", max_bins=128,
+            max_iter=150,
+            max_depth=4,
+            min_samples_leaf=20,
+            loss="squared_error",
+            max_bins=128,
         )
     elif model_name == "lgb":
         kw.update(n_estimators=150, max_depth=4, min_child_samples=20, num_leaves=15, verbose=-1)
@@ -185,9 +187,9 @@ def evaluate_forecast(
         test_idx = list(range(train_end, n))
         df_train = df.iloc[train_idx]
         df_test = df.iloc[test_idx]
-        y_train = _build_target(df_train, target_type, "target_next_ret").values.ravel()
-        X_train = df_train[available_cols].values
-        X_test = df_test[available_cols].values
+        y_train = _build_target(df_train, target_type, "target_next_ret").to_numpy().ravel()
+        X_train = df_train[available_cols].to_numpy()
+        X_test = df_test[available_cols].to_numpy()
         train_std = np.nanstd(X_train, axis=0)
         non_const = train_std > 0
         if non_const.sum() >= 2:
@@ -196,13 +198,17 @@ def evaluate_forecast(
         # Drop NaN in y_train (vol_adjusted/excess produce NaN for early rows)
         valid_idx = ~np.isnan(y_train)
         if valid_idx.sum() < 50:
-            return _empty_result(df, model, feature_set, target_type, ensemble_method, loss, horizon)
+            return _empty_result(
+                df, model, feature_set, target_type, ensemble_method, loss, horizon
+            )
         X_train = X_train[valid_idx]
         y_train = y_train[valid_idx]
         try:
             model_cls = _MODELS[model]
         except KeyError:
-            raise ValueError(f"Unknown model '{model}'; choose from {list(_MODELS)}")
+            raise ValueError(
+                f"Unknown model '{model}'; choose from {list(_MODELS)}"
+            ) from None
         kw = {**_model_kwargs(model), **model_kwargs}
         if loss != "squared_error":
             kw["loss"] = loss
@@ -236,9 +242,9 @@ def evaluate_forecast(
             df_test = df.iloc[test_idx]
 
             y_train = _build_target(df_train, target_type, "target_next_ret")
-            y_train = y_train.values.ravel()
-            X_train = df_train[available_cols].values
-            X_test = df_test[available_cols].values
+            y_train = y_train.to_numpy().ravel()
+            X_train = df_train[available_cols].to_numpy()
+            X_test = df_test[available_cols].to_numpy()
 
             # Drop constant features (std==0) — HistGB crashes on them
             train_std = np.nanstd(X_train, axis=0)
@@ -259,21 +265,23 @@ def evaluate_forecast(
             try:
                 model_cls = _MODELS[model]
             except KeyError:
-                raise ValueError(f"Unknown model '{model}'; choose from {list(_MODELS)}")
+                raise ValueError(
+                    f"Unknown model '{model}'; choose from {list(_MODELS)}"
+                ) from None
 
             kw = {**_model_kwargs(model), **model_kwargs}
             if loss != "squared_error":
                 kw["loss"] = loss
 
             with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=UserWarning, message=".*early_stopping.*")
+                warnings.filterwarnings(
+                    "ignore", category=UserWarning, message=".*early_stopping.*"
+                )
                 clf = model_cls(**kw)
                 clf.fit(X_train, y_train)
                 preds = clf.predict(X_test)
 
-            if ensemble_method == "mean":
-                all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
-            elif ensemble_method == "median":
+            if ensemble_method == "mean" or ensemble_method == "median":
                 all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
             else:
                 all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
@@ -281,8 +289,19 @@ def evaluate_forecast(
             train_rows_list.append(len(y_train))
 
     return _compute_metrics(
-        df, all_preds, model_count, available_cols, model, feature_set,
-        target_type, ensemble_method, loss, horizon, n, train_size, test_size,
+        df,
+        all_preds,
+        model_count,
+        available_cols,
+        model,
+        feature_set,
+        target_type,
+        ensemble_method,
+        loss,
+        horizon,
+        n,
+        train_size,
+        test_size,
         train_rows_list,
     )
 
@@ -340,11 +359,7 @@ def _compute_metrics(
     test_size: int,
     train_rows_list: list[int],
 ) -> dict:
-    if ensemble_method == "mean":
-        preds = all_preds / model_count.replace(0, np.nan)
-    elif ensemble_method == "median":
-        preds = all_preds / model_count.replace(0, np.nan)
-    elif ensemble_method == "ic_weighted":
+    if ensemble_method == "mean" or ensemble_method == "median" or ensemble_method == "ic_weighted":
         preds = all_preds / model_count.replace(0, np.nan)
     else:
         preds = all_preds / model_count.replace(0, np.nan)
@@ -356,7 +371,7 @@ def _compute_metrics(
     if len(y_true) < 5:
         return _empty_result(df, model, feature_set, target_type, ensemble_method, loss, horizon)
 
-    from scipy.stats import pearsonr, spearmanr
+    from scipy.stats import pearsonr
 
     ic_val, ic_pval = pearsonr(y_true, y_pred)
     ic_val = float(ic_val) if not pd.isna(ic_val) else 0.0
@@ -374,7 +389,9 @@ def _compute_metrics(
     r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
 
     n_models = len(train_rows_list)
-    median_model_count_val = int(model_count[model_count > 0].median()) if (model_count > 0).any() else 0
+    median_model_count_val = (
+        int(model_count[model_count > 0].median()) if (model_count > 0).any() else 0
+    )
     mean_train_rows = int(np.mean(train_rows_list)) if train_rows_list else 0
 
     return {

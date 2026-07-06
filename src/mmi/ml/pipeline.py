@@ -63,35 +63,41 @@ def _train_symbol_ml(
     for name in ("ic", "direction_accuracy", "r2", "sharpe"):
         val = res.get(name)
         if val is not None and pd.notna(val):
-            metric_rows.append({
-                "model": "return_gb",
-                "symbol": sym,
-                "metric": name,
-                "value": float(val),
-                "trained_at": now,
-            })
-    metric_rows.append({
-        "model": "return_gb",
-        "symbol": sym,
-        "metric": "n_obs",
-        "value": float(res.get("prediction_count", 0)),
-        "trained_at": now,
-    })
+            metric_rows.append(
+                {
+                    "model": "return_gb",
+                    "symbol": sym,
+                    "metric": name,
+                    "value": float(val),
+                    "trained_at": now,
+                }
+            )
+    metric_rows.append(
+        {
+            "model": "return_gb",
+            "symbol": sym,
+            "metric": "n_obs",
+            "value": float(res.get("prediction_count", 0)),
+            "trained_at": now,
+        }
+    )
 
     # Live forecast
     if res.get("prediction_count", 0) > 0:
         last_pred = res["predictions"].iloc[-1]
         last_date = res["dates"].iloc[-1]
-        forecast_rows.append({
-            "symbol": sym,
-            "as_of": pd.to_datetime(last_date),
-            "horizon": 252,
-            "predicted_return": float(last_pred),
-            "daily_mu": float(last_pred) / 252,
-            "model": "return_gb",
-            "dir_acc": res.get("direction_accuracy", 0),
-            "r2": res.get("r2", 0),
-        })
+        forecast_rows.append(
+            {
+                "symbol": sym,
+                "as_of": pd.to_datetime(last_date),
+                "horizon": 252,
+                "predicted_return": float(last_pred),
+                "daily_mu": float(last_pred) / 252,
+                "model": "return_gb",
+                "dir_acc": res.get("direction_accuracy", 0),
+                "r2": res.get("r2", 0),
+            }
+        )
 
     return metric_rows, forecast_rows
 
@@ -134,9 +140,7 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
 
     with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
         futures = {
-            executor.submit(
-                _train_symbol_ml, sym, df, macro_df, asset_dfs, now
-            ): sym
+            executor.submit(_train_symbol_ml, sym, df, macro_df, asset_dfs, now): sym
             for sym, df in symbol_data.items()
         }
         for future in as_completed(futures):
@@ -145,7 +149,9 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
                 m_rows, f_rows = future.result()
                 metric_rows.extend(m_rows)
                 forecast_rows.extend(f_rows)
-                log.info("completed ML for %s: %d metrics, %d forecasts", sym, len(m_rows), len(f_rows))
+                log.info(
+                    "completed ML for %s: %d metrics, %d forecasts", sym, len(m_rows), len(f_rows)
+                )
             except Exception as exc:  # noqa: BLE001
                 log.warning("ML failed for %s: %s", sym, exc)
 
@@ -165,20 +171,32 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
             if not vol_metrics:
                 continue
             vol_metric_names = [
-                "oos_r2", "qlike", "baseline_qlike", "qlike_skill_ratio",
-                "n_folds", "folds_passed", "n_obs",
+                "oos_r2",
+                "qlike",
+                "baseline_qlike",
+                "qlike_skill_ratio",
+                "n_folds",
+                "folds_passed",
+                "n_obs",
             ]
-            for name in ("holdout_oos_r2", "holdout_qlike", "holdout_qlike_skill_ratio", "holdout_n_obs"):
+            for name in (
+                "holdout_oos_r2",
+                "holdout_qlike",
+                "holdout_qlike_skill_ratio",
+                "holdout_n_obs",
+            ):
                 if name in vol_metrics:
                     vol_metric_names.append(name)
             for name in vol_metric_names:
-                metric_rows.append({
-                    "model": VOL_MODEL_TAG,
-                    "symbol": sym,
-                    "metric": name,
-                    "value": float(vol_metrics[name]),
-                    "trained_at": now,
-                })
+                metric_rows.append(
+                    {
+                        "model": VOL_MODEL_TAG,
+                        "symbol": sym,
+                        "metric": name,
+                        "value": float(vol_metrics[name]),
+                        "trained_at": now,
+                    }
+                )
             if vol_fc is not None:
                 forecast_rows.append(vol_fc)
 

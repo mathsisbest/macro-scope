@@ -195,16 +195,16 @@ _RICH_FEATURE_NAMES: list[str] = [
     "nfci_x_dollar_zscore",
     "skew_x_vol_dispersion",
     # Return-prediction features: momentum + mean-reversion + trend
-    "ret_momentum_63d",     # 3-month cumulative return (momentum signal)
-    "ret_momentum_126d",    # 6-month cumulative return (intermediate momentum)
-    "ret_momentum_252d",    # 12-month cumulative return (long-term momentum)
-    "ret_reversal_5d",      # 5-day cumulative return (short-term reversal)
-    "ret_reversal_20d",     # 20-day cumulative return (mean-reversion signal)
-    "ret_vol_ratio_5d_20d", # short-term vol / long-term vol (regime shift proxy)
-    "ret_trend_strength",   # |mean_20d| / std_20d (signal-to-noise ratio)
-    "ret_autocorr_20d",     # 20-day return autocorrelation (persistence signal)
-    "yc_slope_x_vix",       # yield curve slope × VIX level (macro regime)
-    "momentum_x_vol",       # 6m momentum × 20d vol (risk-adjusted momentum)
+    "ret_momentum_63d",  # 3-month cumulative return (momentum signal)
+    "ret_momentum_126d",  # 6-month cumulative return (intermediate momentum)
+    "ret_momentum_252d",  # 12-month cumulative return (long-term momentum)
+    "ret_reversal_5d",  # 5-day cumulative return (short-term reversal)
+    "ret_reversal_20d",  # 20-day cumulative return (mean-reversion signal)
+    "ret_vol_ratio_5d_20d",  # short-term vol / long-term vol (regime shift proxy)
+    "ret_trend_strength",  # |mean_20d| / std_20d (signal-to-noise ratio)
+    "ret_autocorr_20d",  # 20-day return autocorrelation (persistence signal)
+    "yc_slope_x_vix",  # yield curve slope × VIX level (macro regime)
+    "momentum_x_vol",  # 6m momentum × 20d vol (risk-adjusted momentum)
 ]
 
 
@@ -292,11 +292,19 @@ def make_features(
 
 
 _MOM_REV_FEATURE_NAMES: list[str] = [
-    "mom_21d", "mom_63d", "mom_126d", "mom_252d", "mom_accel",
-    "rev_5d", "rev_10d",
-    "ret_zscore_20d", "ret_zscore_60d",
-    "dist_from_mean_20d", "dist_from_mean_60d",
-    "trend_20d", "trend_60d",
+    "mom_21d",
+    "mom_63d",
+    "mom_126d",
+    "mom_252d",
+    "mom_accel",
+    "rev_5d",
+    "rev_10d",
+    "ret_zscore_20d",
+    "ret_zscore_60d",
+    "dist_from_mean_20d",
+    "dist_from_mean_60d",
+    "trend_20d",
+    "trend_60d",
 ]
 
 
@@ -564,7 +572,11 @@ def _add_rich_features(
     if "ret_skew_20d" in out.columns and "vol_dispersion" in out.columns:
         out["skew_x_vol_dispersion"] = out["ret_skew_20d"] * out["vol_dispersion"]
 
-    for w, name in [(63, "ret_momentum_63d"), (126, "ret_momentum_126d"), (252, "ret_momentum_252d")]:
+    for w, name in [
+        (63, "ret_momentum_63d"),
+        (126, "ret_momentum_126d"),
+        (252, "ret_momentum_252d"),
+    ]:
         out[name] = ret.rolling(w, min_periods=w // 2).sum().shift(1)
 
     for w, name in [(5, "ret_reversal_5d"), (20, "ret_reversal_20d")]:
@@ -578,9 +590,11 @@ def _add_rich_features(
     ret_std_20d = ret.rolling(20, min_periods=10).std()
     out["ret_trend_strength"] = (ret_mean_20d.abs() / ret_std_20d.replace(0, np.nan)).shift(1)
 
-    out["ret_autocorr_20d"] = ret.rolling(20, min_periods=15).apply(
-        lambda x: x.autocorr(lag=1) if len(x) > 5 else np.nan, raw=False
-    ).shift(1)
+    out["ret_autocorr_20d"] = (
+        ret.rolling(20, min_periods=15)
+        .apply(lambda x: x.autocorr(lag=1) if len(x) > 5 else np.nan, raw=False)
+        .shift(1)
+    )
 
     if "yc_slope_zscore_60d" in out.columns and "vix_level_lag1" in out.columns:
         out["yc_slope_x_vix"] = out["yc_slope_zscore_60d"] * out["vix_level_lag1"]
@@ -667,7 +681,7 @@ def _add_extended_features(
             adf = adf.rename(columns={"daily_return": f"{label}_ret"})
             out = out.merge(adf, on="date", how="left", suffixes=("", f"_{label}"))
 
-        for sym, label, feat_name in [
+        for _sym, label, feat_name in [
             ("GLD", "gld", "spy_gld_spread_20d"),
             ("VEA", "vea", "vea_spy_spread_20d"),
             ("TIP", "tip", "spy_tip_spread_20d"),

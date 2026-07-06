@@ -151,8 +151,8 @@ def _run_cmd_portfolio_with_nboot(monkeypatch, tmp_path, n_boot_env: str | None)
     # fct_asset_daily must exist so cmd_portfolio's SELECT succeeds.
     con.execute(
         "create table marts.fct_asset_daily as select * from (values "
-        "('SPY', DATE '2020-01-01', 0.001, 'equities')) "
-        "t(symbol, date, daily_return, asset_class)"
+        "('SPY', DATE '2020-01-01', 100.0, 101.0, 99.0, 100.5, 0.001, 'equities')) "
+        "t(symbol, date, open, high, low, close, daily_return, asset_class)"
     )
     con.close()
 

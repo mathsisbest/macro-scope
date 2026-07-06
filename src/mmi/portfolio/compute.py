@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
 
-from ..ml import features as feat
 from ..ml.forecast import evaluate_forecast
 from ..utils.logging import get_logger
 
@@ -70,12 +68,14 @@ def compute_all_predictions(
         preds = res.get("predictions", pd.Series(dtype=float))
 
         if isinstance(dates, pd.Series) and isinstance(preds, pd.Series):
-            for d, p in zip(dates.values, preds.values):
-                output_rows.append({
-                    "date": pd.Timestamp(d),
-                    "symbol": sym,
-                    "pred_ret": float(p) if pd.notna(p) else np.nan,
-                })
+            for d, p in zip(dates.values, preds.values, strict=False):
+                output_rows.append(
+                    {
+                        "date": pd.Timestamp(d),
+                        "symbol": sym,
+                        "pred_ret": float(p) if pd.notna(p) else np.nan,
+                    }
+                )
 
     if not output_rows:
         return pd.DataFrame(columns=["date", "symbol", "pred_ret", "ue", "pos_signal", "pred_vol"])
@@ -110,7 +110,6 @@ def compute_ml_mu_panel(
     """
     symbols = list(asset_daily["symbol"].unique()) if "symbol" in asset_daily.columns else ["SPY"]
     mu_rows: list[dict] = []
-    gate_rows: list[dict] = []
 
     for sym in symbols:
         sym_data = asset_daily[asset_daily["symbol"] == sym].copy()
@@ -119,7 +118,10 @@ def compute_ml_mu_panel(
 
         # Get OHLC from full data if available
         ohlc_data = sym_data
-        if asset_daily_full is not None and sym in asset_daily_full.get("symbol", pd.Series()).values:
+        if (
+            asset_daily_full is not None
+            and sym in asset_daily_full.get("symbol", pd.Series()).to_numpy()
+        ):
             ohlc_full = asset_daily_full[asset_daily_full["symbol"] == sym]
             if not ohlc_full.empty:
                 ohlc_data = ohlc_full
@@ -157,20 +159,24 @@ def compute_ml_mu_panel(
         preds = res.get("predictions", pd.Series(dtype=float))
 
         if isinstance(dates, pd.Series) and isinstance(preds, pd.Series):
-            for d, p in zip(dates.values, preds.values):
+            for d, p in zip(dates.values, preds.values, strict=False):
                 if pd.notna(p):
-                    mu_rows.append({
-                        "date": pd.Timestamp(d),
-                        "symbol": sym,
-                        "mu": float(p) / target_horizon,  # Daily-equivalent
-                    })
+                    mu_rows.append(
+                        {
+                            "date": pd.Timestamp(d),
+                            "symbol": sym,
+                            "mu": float(p) / target_horizon,  # Daily-equivalent
+                        }
+                    )
 
     mu_panel = pd.DataFrame(mu_rows) if mu_rows else pd.DataFrame(columns=["date", "symbol", "mu"])
     gate = pd.DataFrame(columns=["date", "forecast_skill", "forecast_weight"])
 
     log.info(
         "ml_mu_panel: %d mu rows, %d assets, target_horizon=%d",
-        len(mu_panel), mu_panel["symbol"].nunique() if not mu_panel.empty else 0, target_horizon,
+        len(mu_panel),
+        mu_panel["symbol"].nunique() if not mu_panel.empty else 0,
+        target_horizon,
     )
     return mu_panel, gate
 
@@ -181,7 +187,9 @@ def btc_aligned_returns(asset_daily: pd.DataFrame, *, btc_symbol: str = "BTC") -
     if btc.empty:
         return pd.DataFrame(columns=["date", "daily_return"])
     equity_dates = pd.DatetimeIndex(
-        sorted(pd.to_datetime(asset_daily.loc[asset_daily["asset_class"] != "crypto", "date"]).unique())
+        sorted(
+            pd.to_datetime(asset_daily.loc[asset_daily["asset_class"] != "crypto", "date"]).unique()
+        )
     )
     btc_returns = btc.set_index("date")["daily_return"].sort_index()
     btc_returns.index = pd.to_datetime(btc_returns.index)
@@ -241,12 +249,14 @@ def compute_portfolio_returns(
 
     # 1. Equal-weight baseline
     ew_ret = panel.mean(axis=1)
-    result = pd.DataFrame({
-        "window_id": window,
-        "strategy": "equal_weight",
-        "date": panel.index,
-        "daily_return": ew_ret.values,
-    })
+    result = pd.DataFrame(
+        {
+            "window_id": window,
+            "strategy": "equal_weight",
+            "date": panel.index,
+            "daily_return": ew_ret.to_numpy(),
+        }
+    )
     result["cumulative_return"] = (1 + result["daily_return"]).cumprod() - 1
     frames.append(result)
 
@@ -272,12 +282,14 @@ def compute_portfolio_returns(
                 ml_tilt.loc[date] = panel.loc[date] / len(panel.columns)
 
     ml_ret = ml_tilt.sum(axis=1)
-    result_ml = pd.DataFrame({
-        "window_id": window,
-        "strategy": "ml_tilt",
-        "date": common_dates,
-        "daily_return": ml_ret.values,
-    })
+    result_ml = pd.DataFrame(
+        {
+            "window_id": window,
+            "strategy": "ml_tilt",
+            "date": common_dates,
+            "daily_return": ml_ret.to_numpy(),
+        }
+    )
     result_ml["cumulative_return"] = (1 + result_ml["daily_return"]).cumprod() - 1
     frames.append(result_ml)
 
@@ -298,10 +310,7 @@ def compute_portfolio_returns(
                 continue
 
             # Regime multiplier: 2x during negative momentum, 0.5x during positive
-            if mom < 0:
-                regime_mult = 2.0  # Size up when model is more accurate
-            else:
-                regime_mult = 0.5  # Size down when model is less accurate
+            regime_mult = 2.0 if mom < 0 else 0.5
 
             pos_signals = signals[signals > 0]
             if len(pos_signals) > 0:
@@ -312,17 +321,21 @@ def compute_portfolio_returns(
                 # Normalize to sum to 1 (cap at 3x any single position)
                 adjusted_weights = adjusted_weights.clip(upper=1.0 / len(pos_signals) * 3)
                 adjusted_weights = adjusted_weights / adjusted_weights.sum()
-                ml_regime.loc[date] = panel.loc[date] * adjusted_weights.reindex(panel.columns, fill_value=0)
+                ml_regime.loc[date] = panel.loc[date] * adjusted_weights.reindex(
+                    panel.columns, fill_value=0
+                )
             else:
                 ml_regime.loc[date] = panel.loc[date] / len(panel.columns)
 
     regime_ret = ml_regime.sum(axis=1)
-    result_regime = pd.DataFrame({
-        "window_id": window,
-        "strategy": "ml_regime",
-        "date": common_dates,
-        "daily_return": regime_ret.values,
-    })
+    result_regime = pd.DataFrame(
+        {
+            "window_id": window,
+            "strategy": "ml_regime",
+            "date": common_dates,
+            "daily_return": regime_ret.to_numpy(),
+        }
+    )
     result_regime["cumulative_return"] = (1 + result_regime["daily_return"]).cumprod() - 1
     frames.append(result_regime)
 
@@ -346,11 +359,13 @@ def compute_attribution(
     rows = []
     for sym in panel.columns:
         contribution = (panel[sym] * weight).sum()
-        rows.append({
-            "window_id": window,
-            "strategy": "equal_weight",
-            "symbol": sym,
-            "contribution_to_return": float(contribution),
-            "contribution_to_risk": 1.0 / n,
-        })
+        rows.append(
+            {
+                "window_id": window,
+                "strategy": "equal_weight",
+                "symbol": sym,
+                "contribution_to_return": float(contribution),
+                "contribution_to_risk": 1.0 / n,
+            }
+        )
     return pd.DataFrame(rows)

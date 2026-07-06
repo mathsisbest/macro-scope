@@ -9,14 +9,10 @@ Provides the ``ForecastBacktest`` class that:
 
 from __future__ import annotations
 
-import warnings
-from collections.abc import Callable
-
 import numpy as np
 import pandas as pd
 
-from . import features as feat
-from .forecast import evaluate_forecast, _feasible_date_range
+from .forecast import evaluate_forecast
 
 _FORECAST_MODEL = "gb"
 _HORIZONS = (1, 5, 10, 20)
@@ -173,10 +169,12 @@ class ForecastBacktest:
         pred_df = pd.DataFrame({"date": all_dates})
         for h, r in valid_horizons.items():
             if "dates" in r and "predictions" in r:
-                h_df = pd.DataFrame({
-                    "date": pd.to_datetime(r["dates"].values),
-                    f"pred_h{h}": r["predictions"].values,
-                })
+                h_df = pd.DataFrame(
+                    {
+                    "date": pd.to_datetime(r["dates"].to_numpy()),
+                    f"pred_h{h}": r["predictions"].to_numpy(),
+                    }
+                )
                 h_df = h_df.dropna(subset=[f"pred_h{h}"])
                 pred_df = pred_df.merge(h_df, on="date", how="left")
 
@@ -197,7 +195,6 @@ class ForecastBacktest:
 
         full = first.get("dates", pd.Series())
         if isinstance(full, pd.Series) and not full.empty:
-            first_res = next(iter(valid_horizons.values()))
             y_true = pd.Series(index=full.values, dtype=float)
         else:
             y_true = pd.Series(dtype=float)
@@ -292,8 +289,8 @@ def _compute_panel_metrics(
 
     try:
         ic_val, ic_pval = pearsonr(
-            ens_pred.values.astype(float),
-            y_true_series.values.astype(float),
+            ens_pred.to_numpy().astype(float),
+            y_true_series.to_numpy().astype(float),
         )
         ic = float(ic_val) if not pd.isna(ic_val) else 0.0
     except Exception:
