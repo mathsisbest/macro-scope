@@ -348,7 +348,8 @@ def _add_macro_features(
 
     if macro_df is not None and not macro_df.empty and "date" in macro_df.columns:
         macro = macro_df.copy()
-        macro["date"] = pd.to_datetime(macro["date"])
+        macro["date"] = pd.to_datetime(macro["date"]).astype("datetime64[ns]")
+        out["date"] = pd.to_datetime(out["date"]).astype("datetime64[ns]")
         out = pd.merge_asof(
             out.sort_values("date"),
             macro.sort_values("date"),
