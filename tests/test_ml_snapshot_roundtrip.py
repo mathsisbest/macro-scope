@@ -288,20 +288,16 @@ class TestDirectionModelRows:
         """model_metrics must contain rows for model='return_gb', symbol='SPY'."""
         df = _q(
             ml_snap_con,
-            "select metric from marts.model_metrics "
-            "where model = 'return_gb' and symbol = 'SPY'",
+            "select metric from marts.model_metrics where model = 'return_gb' and symbol = 'SPY'",
         )
         # ML may skip if sample data is too small (need 412 rows for train=160 + target=252)
         # In that case, we just verify the vol model ran successfully
         if df.empty:
             vol_df = _q(
                 ml_snap_con,
-                "select metric from marts.model_metrics "
-                "where model = 'rv_har' and symbol = 'SPY'",
+                "select metric from marts.model_metrics where model = 'rv_har' and symbol = 'SPY'",
             )
-            assert not vol_df.empty, (
-                "Neither return_gb nor rv_har rows found for SPY"
-            )
+            assert not vol_df.empty, "Neither return_gb nor rv_har rows found for SPY"
             return
         assert not df.empty
 
@@ -309,8 +305,7 @@ class TestDirectionModelRows:
         """All direction-model metric names must survive the round-trip."""
         df = _q(
             ml_snap_con,
-            "select metric from marts.model_metrics "
-            "where model = 'return_gb' and symbol = 'SPY'",
+            "select metric from marts.model_metrics where model = 'return_gb' and symbol = 'SPY'",
         )
         if df.empty:
             return  # ML may skip on small sample data

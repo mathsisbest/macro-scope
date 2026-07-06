@@ -255,7 +255,7 @@ def _asset_signals(con) -> tuple[list[dict[str, Any]], pd.DataFrame]:
 
     assets: list[dict[str, Any]] = []
     for sym, g in df.groupby("symbol", sort=True):
-        g = g.sort_values("date")
+        g = g.sort_values("date").drop_duplicates(subset=["date"], keep="last")
         close = g["close"].to_numpy(dtype=float)
         if len(close) < 2:
             continue
@@ -515,8 +515,24 @@ def generate_brief(con) -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     (out_dir / f"{stamp}.md").write_text(safe_text, encoding="utf-8")
 
+    try:
+        data_date = (
+            con.execute(
+                "select cast(max(date) as varchar) from marts.fct_asset_daily"
+            ).fetchone()[0]
+            or ""
+        )
+    except Exception:
+        data_date = ""
     row = pd.DataFrame(
-        [{"created_at": datetime.now(timezone.utc), "engine": engine, "brief": safe_text}]
+        [
+            {
+                "created_at": datetime.now(timezone.utc),
+                "engine": engine,
+                "brief": safe_text,
+                "data_date": data_date,
+            }
+        ]
     )
     con.register("_brief", row)
     con.execute("CREATE TABLE IF NOT EXISTS marts.market_brief AS SELECT * FROM _brief LIMIT 0")

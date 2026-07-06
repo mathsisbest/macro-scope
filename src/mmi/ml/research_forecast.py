@@ -55,9 +55,7 @@ def _pivot_macro(con) -> pd.DataFrame:
     """).df()
     if df.empty:
         return pd.DataFrame()
-    pivoted = df.pivot_table(
-        index="date", columns="series_id", values="value"
-    ).reset_index()
+    pivoted = df.pivot_table(index="date", columns="series_id", values="value").reset_index()
     pivoted.columns.name = None
     pivoted["date"] = pd.to_datetime(pivoted["date"])
     return pivoted.sort_values("date").reset_index(drop=True)
