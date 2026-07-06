@@ -490,7 +490,26 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         ran: list[str] = []
         results_by_window: dict[str, pd.DataFrame] = {}
 
-        # Pre-compute ML panels for all windows in parallel
+        # Pre-compute ML panel for 2015 windows using the widest (inc_btc) universe so
+        # common_dates is identical for both — required by the period-alignment test.
+        ml_mu_2015: pd.DataFrame | None = None
+        if btc_floor is not None:
+            wad_wide = compute.window_asset_daily(
+                asset_daily,
+                windows.INC_BTC_2015,
+                btc_floor=btc_floor,
+                btc_aligned=btc_aligned,
+            )
+            if not wad_wide.empty:
+                ml_mu_2015, _ = compute.compute_ml_mu_panel(
+                    wad_wide,
+                    window=windows.INC_BTC_2015,
+                    asset_daily_full=wad_wide,
+                    macro_df=macro_wide,
+                    asset_dfs=asset_dfs_macro,
+                )
+
+        # Pre-compute ML panels for the 2002 window in parallel
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         window_data = {}
@@ -503,7 +522,7 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
             if not wad.empty:
                 window_data[window_id] = wad
 
-        ml_panels = {}
+        ml_panels: dict[str, tuple[pd.DataFrame, pd.DataFrame]] = {}
 
         def _compute_ml_panel(wid, wad):
             return wid, compute.compute_ml_mu_panel(
@@ -529,16 +548,16 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         # Sequential portfolio backtests (DuckDB writes)
         for window_id in window_data:
             wad = window_data[window_id]
-            override = ml_panels.get(window_id)
-            if override:
-                _, (ml_mu_panel, ml_gate) = override
+            if window_id in (windows.EX_BTC_2015, windows.INC_BTC_2015) and ml_mu_2015 is not None:
+                override = ml_mu_2015
             else:
-                ml_mu_panel = None
+                result = ml_panels.get(window_id)
+                override = result[0] if result else None
             n, n_strategies, results = run_window(
                 loader,
                 window_id,
                 wad,
-                ml_mu_override=ml_mu_panel if ml_mu_panel is not None else None,
+                ml_mu_override=override,
             )
             results_by_window[window_id] = results
             log.info("portfolio[%s]: %s rows / %s strategies", window_id, n, n_strategies)
