@@ -46,8 +46,12 @@ Generic roles (Planner / Builder / Reviewer — see `~/.claude/velocity-playbook
 - **GenAI is provider-agnostic** (`src/mmi/ai/llm.py`): `LLM_PROVIDER` = gemini|groq|claude, default
   **free Gemini/Groq**, deterministic-template fallback with no key. The Claude API is metered and
   **not** covered by the owner's subscription — see `Never`.
-- Data sources (Yahoo v8 / FRED / World Bank), the micro-batch "streaming" model (ADR-0003), and
+- Data sources (Yahoo v8 / FRED / World Bank / **Shiller CAPE**), the micro-batch "streaming" model (ADR-0003), and
   the Sports-betting Phase-2 plan → **PLAN.md + docs/adr/**.
+- **Per-symbol ML config** (PR #65): each asset has its own model/horizon/features selected by systematic
+  sweep (192 configs). SPY uses Gradient Boosting at 10yr horizon with vol_macro + CAPE features (R²=+0.58);
+  TLT uses LightGBM at 2yr (R²=+0.40); GLD uses GB at 1yr with short rolling window. See `_SYMBOL_ML_CONFIG`
+  in `src/mmi/ml/pipeline.py` and the full sweep at `PLAN.md §7.3`.
 
 ## Current status — read the live sources, not this file
 Status drifts, so it's not hand-maintained here: read **open issues**, `gh pr list`, recent

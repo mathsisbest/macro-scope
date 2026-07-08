@@ -2,17 +2,19 @@
 
 ```
 free APIs ──▶ ingestion (src/mmi/ingestion) ──▶ DuckDB raw schema
-                                                    │
-                                          dbt (transform/) builds
-                                          staging ▶ intermediate ▶ marts
-                                                    │
-                        ┌───────────────────────────┼───────────────────────────┐
-                        ▼                           ▼                            ▼
-                 ml (src/mmi/ml)            ai (src/mmi/ai)               dashboard/
-            forecast + regimes        GenAI market brief             Streamlit + Plotly
-                        └───────────── all read/write marts ─────────────┘
-                                                    ▲
-                               GitHub Actions cron (daily.yml / weekly.yml) orchestrates the loop
+  ∙ Yahoo v8 (prices, crypto)                          │
+  ∙ FRED (macro)                              dbt (transform/) builds
+  ∙ World Bank (GDP)                          staging ▶ intermediate ▶ marts
+  ∙ Shiller CAPE (Yale spreadsheet)                     │
+                         ┌───────────────────────────┼───────────────────────────┐
+                         ▼                           ▼                            ▼
+                  ml (src/mmi/ml)            ai (src/mmi/ai)               dashboard/
+             forecast + regimes        GenAI market brief             Streamlit + Plotly
+  per-symbol config, Shiller CAPE                  deterministic                snapshot-mode
+  features, walk-forward sweep                     template fallback           Parquet reads
+                         └───────────── all read/write marts ─────────────┘
+                                                     ▲
+                                GitHub Actions cron (daily.yml / weekly.yml) orchestrates the loop
 ```
 
 ## Layers
