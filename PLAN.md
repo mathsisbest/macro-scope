@@ -191,7 +191,7 @@ markets-macro-intelligence/
 │   └── deploy-note.md             # how Streamlit Cloud auto-deploys on push
 │
 ├── config/
-│   ├── settings.py                # pydantic-settings: typed config from env
+│   ├── settings.py                # convenience re-export from mmi.settings
 │   └── assets.yml                 # which tickers/series to track (declarative)
 │
 ├── src/mmi/                       # installable package (good SWE: no loose scripts)
@@ -218,7 +218,6 @@ markets-macro-intelligence/
 │   │   ├── intermediate/          # joins, returns, rolling windows
 │   │   └── marts/                 # final BI tables (fct_/dim_)
 │   ├── tests/                     # custom data tests
-│   └── seeds/                     # static lookups (asset metadata)
 │
 ├── dashboard/                     # ── BI ──
 │   ├── app.py                     # Streamlit entry

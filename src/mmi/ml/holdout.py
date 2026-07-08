@@ -8,7 +8,7 @@ holdout metrics are *reported, not gated*.  The holdout is NEVER used to tune th
 features, or the gate thresholds.
 
 This module is intentionally tiny and DB-free so both the volatility (``rv_har``) and the
-direction (``random_forest``) models share one carving rule and one small-data guard, and so
+direction (``return_gb``) models share one carving rule and one small-data guard, and so
 the rule is unit-testable in isolation.
 """
 
