@@ -445,7 +445,7 @@ def _compute_metrics(
 ) -> dict:
     preds = all_preds / model_count.replace(0, np.nan)
 
-    valid = (model_count > 0) & df["target_next_ret"].notna() & (df["target_next_ret"] != 0)
+    valid = (model_count > 0) & df["target_next_ret"].notna()
     y_true = df.loc[valid, "target_next_ret"]
     y_pred = preds.loc[valid]
 
