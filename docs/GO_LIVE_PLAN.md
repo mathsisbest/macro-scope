@@ -89,8 +89,13 @@ the same wave.
 - `fct_asset_daily` keeps `source` (drives `is_sample_data()`) and `open/high/low/close` (drives the
   Garman-Klass vol estimator). Windows/strategies enums unchanged.
 
-### Contract E — ML: volatility headline target, skill gate, non-goals
-- **Headline certified model = forward next-week (5-trading-day) realized-volatility forecast for SPY**,
+### Contract E — ML: volatility headline target, return forecast, skill gate, non-goals
+- **Return forecast model:** per-symbol GradientBoosting / LightGBM with Shiller CAPE + dividend/earnings
+  yield features (`vol_macro` feature set). Horizon varies by asset (SPY 2520d, TLT 504d, GLD 252d). Strict
+  walk-forward OOS with no lookahead. Metrics (R², IC, direction accuracy) persist to `marts.model_metrics`.
+  The active configs were selected via a systematic sweep of 192 combinations (3 symbols × 6 feature sets ×
+  2 models × 7 horizons) — see `data/ml_full_sweep.csv` and `PLAN.md §7.3`.
+- **Headline certified volatility model = forward next-week (5-trading-day) realized-volatility forecast for SPY**,
   HAR-style. Vol proxy = **Garman-Klass** range estimator from OHLC; features = HAR cascade (1d/5d/22d) +
   macro (yield curve, rate level). Walk-forward `TimeSeriesSplit(5)`, leakage-free (features use only past
   data; label = forward realized vol).

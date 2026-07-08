@@ -68,6 +68,7 @@ Markets and macro combine into one narrative:
 |---|---|---|---|---|
 | **Yahoo** (v8 chart) | Daily *adjusted* close for equities/ETFs/bonds/commodities/FX + daily BTC | None | Daily | Unofficial endpoint (browser UA); the working price source |
 | **Stooq** *(removed)* | Was Daily OHLC — free CSV now returns a JS challenge | — | — | Removed from `EXTRACTORS` |
+| **Shiller CAPE** (Yale) | S&P 500 valuation: CAPE ratio, P/E, D/E, cyclically-adjusted yields | None | Monthly (on pipeline run) | Free spreadsheet hosted at Yale since 2000s — no key, no cap |
 | **FRED** (St. Louis Fed) | US macro: CPI, rates, unemployment, yield curve, M2 | Free API key | Daily check (data is monthly) | Generous; no hard public cap |
 | **World Bank** | Cross-country GDP, inflation, indicators | None | Weekly | None |
 | **DBnomics** | Aggregator over ECB/Eurostat/IMF/OECD | None | Weekly | None |
@@ -108,6 +109,7 @@ flowchart LR
         A2[Yahoo]:::src
         A3[FRED]:::src
         A4[World Bank / DBnomics]:::src
+        A5[Shiller CAPE\nYale spreadsheet]:::src
     end
 
     subgraph Ingest["Data Engineering — ingestion/"]
@@ -256,13 +258,48 @@ markets-macro-intelligence/
 - `dbt docs generate` gives free, browsable **lineage** — great to screenshot for the README.
 
 ### 7.3 ML / AI (`src/mmi/ml/`)
-- **Forecast**: next-period return / volatility per asset using engineered features
-  (lags, rolling stats, macro features). Honest **walk-forward backtest**, baseline comparison,
-  metrics (MAE, directional accuracy) saved to `model_metrics`.
-- **Regime detection**: label low/medium/high volatility regimes (e.g. Gaussian mixture or
-  rolling-vol thresholds) to colour the dashboard.
-- Principle emphasised: *evaluation and baselines over leaderboard-chasing.* Models are small
-  and explainable — the point is method, not a giant net.
+- **Per-symbol return forecast** (PR #65). Each asset gets its own config optimised via systematic
+  hyperparameter sweep (scripts/ml_full_sweep.py): model type (GradientBoosting / LightGBM), feature
+  set, target horizon, and window strategy. The active configs (Jul 2026) are:
+
+  | Asset | Model | Horizon | Feature set | OOS R² | Why |
+  |-------|-------|---------|-------------|--------|-----|
+  | **SPY** | Gradient Boosting | **10 yr** (2520d) | vol_macro + CAPE + div/earnings yield | **+0.58** | Equity returns are noise-dominant <5yr; valuation mean-reversion (CAPE, div yield) only emerges at decadal horizons. Shorter horizons produce negative R². |
+  | **TLT** | LightGBM | **2 yr** (504d) | vol_macro | **+0.40** | Bond returns need wider windows. Previously R²=+0.06 at 6mo. |
+  | **GLD** | Gradient Boosting | **1 yr** (252d) | vol_macro | — | Gold's regime changes quickly; short rolling window (160d train, non-expanding) prevents overfitting to stale regimes. |
+
+  All results are strict walk-forward OOS (no lookahead), with IC, direction accuracy, and R²
+  persisted to `marts.model_metrics`. The daily forecast (predicted return, daily_mu) goes to
+  `marts.ml_forecast`.
+- **Feature sets** are composable and additive:
+  - `vol`: HAR cascade + Garman-Klass + trailing RV (6 features).
+  - `vol_macro`: vol + yield curve, VIX, oil, dollar, NFCI, claims, cross-asset vol, **Shiller
+    CAPE/dividend yield/earnings yield** (22 features).
+  - `vol_medium`: vol + fast rich features (momentum, vol-of-vol, interactions) — ~27 features,
+    optimised for portfolio backtest speed.
+  - `vol_rich`: vol_macro + cross-asset correlations, higher moments, calendar, interactions
+    (~50 features).
+  - `vol_rich_plus`: vol_rich + unused FRED macro (CPI, unemployment, M2), breakeven inflation,
+    recession probability, cross-asset spreads (~83 features).
+  - `mom_rev`: pure momentum/reversal features (13 features).
+  Extensive sweep across all six feature sets × all horizons × GB/LGB confirmed **vol_macro is the
+  best single set** — richer sets add noise, not signal, at the horizons where forecasts are
+  positive.
+- **Shiller CAPE data** (`data/raw/shiller_cape.parquet`): downloaded from Robert Shiller's Yale
+  spreadsheet (`http://www.econ.yale.edu/~shiller/data/ie_data.xls`), cached locally. Extracts
+  5 columns: CAPE ratio, excess CAPE yield, dividend yield (D/P), earnings yield (E/P), and date.
+  Monthly data (1881–present) is ASOF-merged onto the daily trading calendar by
+  `_load_macro_data()`. The download is guarded by a local cache; on cache-miss the pipeline
+  fetches it live (the URL has been stable for 20+ years).
+- **Volatility forecast**: HAR-style realised-vol predictor (Garman-Klass estimator, 1d/5d/22d
+  cascade) using Gradient Boosting + vol_macro features. Walk-forward `TimeSeriesSplit(5)`,
+  OOS R² and QLIKE metrics. Gated by `skill_verdict()`: clears only when `OOS R² ≥ 0.10 AND
+  QLIKE-ratio < 0.99 AND ≥ 3/5 folds pass`.
+- **Regime detection**: tercile-based vol regime (Low/Medium/High) on 20-day realised vol,
+  written to `marts.fct_regime`.
+- Principle: *evaluation and baselines over leaderboard-chasing.* Models are small and explainable.
+  The honest default is to not forecast when the model cannot beat the naive baseline — SPY
+  short-horizon models are not deployed because they cannot clear even a minimal skill bar.
 
 ### 7.4 GenAI layer (`src/mmi/ai/`) — the future-proofing
 - `llm.py` is a thin **provider-agnostic** wrapper: one `complete(prompt)` interface,
