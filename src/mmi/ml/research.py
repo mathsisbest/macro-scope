@@ -82,9 +82,10 @@ def _load_macro_data(con) -> pd.DataFrame:
                 on="date",
                 direction="backward",
             )
-            # Forward-fill CAPE (monthly) to daily dates
-            wide["cape"] = wide["cape"].ffill()
-            wide["excess_cape_yield"] = wide["excess_cape_yield"].ffill()
+            # Forward-fill CAPE-derived features (monthly) to daily dates
+            for col in ["cape", "excess_cape_yield", "div_yield", "earn_yield"]:
+                if col in wide.columns:
+                    wide[col] = wide[col].ffill()
 
         return wide
     except Exception:
@@ -95,6 +96,7 @@ def _load_cape_data() -> pd.DataFrame:
     """Download Shiller CAPE data and return as a (date, cape, excess_cape_yield) DataFrame.
 
     The source is Robert Shiller's public spreadsheet at Yale.  Data is monthly from 1881.
+    Also extracts dividend yield and earnings yield computed from raw P/D/E columns.
     Returns an empty DataFrame if download or parse fails.
     """
     import pathlib
@@ -116,8 +118,9 @@ def _load_cape_data() -> pd.DataFrame:
         log.warning("Failed to download Shiller CAPE data — skipping")
         return pd.DataFrame()
 
-    cape = df[[0, 12, 16]].copy()
-    cape.columns = ["date_str", "cape", "excess_cape_yield"]
+    # Columns: 0=date, 1=P, 2=D, 3=E, 12=CAPE, 16=excess_CAPE_yield
+    out = df[[0, 1, 2, 3, 12, 16]].copy()
+    out.columns = ["date_str", "P", "D", "E", "cape", "excess_cape_yield"]
 
     def _parse(d):
         if pd.isna(d):
@@ -129,17 +132,25 @@ def _load_cape_data() -> pd.DataFrame:
             day=1,
         )
 
-    cape["date"] = cape["date_str"].apply(_parse)
-    cape = cape.dropna(subset=["cape"])[["date", "cape", "excess_cape_yield"]]
-    cape = cape.sort_values("date").reset_index(drop=True)
+    out["date"] = out["date_str"].apply(_parse)
+    for col in ["P", "D", "E", "cape", "excess_cape_yield"]:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    # Compute yields: dividend yield and earnings yield as decimals (not %)
+    out["div_yield"] = out["D"] / out["P"]
+    out["earn_yield"] = out["E"] / out["P"]
+
+    out = out.dropna(subset=["cape"])
+    cols = ["date", "cape", "excess_cape_yield", "div_yield", "earn_yield"]
+    out = out[cols].sort_values("date").reset_index(drop=True)
 
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cape.to_parquet(cache_path)
+        out.to_parquet(cache_path)
     except Exception:
         pass
 
-    return cape
+    return out
 
 
 def _load_asset_data(con, symbols: list[str]) -> dict[str, pd.DataFrame]:

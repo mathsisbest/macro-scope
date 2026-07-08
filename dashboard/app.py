@@ -94,9 +94,9 @@ Each asset gets its own config, selected via sweep for best OOS R²:
 
 | Asset | Model | Horizon | R² | Features |
 |-------|-------|---------|-----|----------|
-| SPY | **LightGBM** + CAPE | **10 yr** | **+0.42** | vol/macro + Shiller P/E |
-| GLD | Gradient Boosting | 1 yr | +0.15 | vol/macro |
-| TLT | LightGBM | 6 mo | +0.06 | vol/macro |
+| SPY | **Gradient Boosting** + CAPE + Div Yield | **10 yr** | **+0.58** | vol/macro + Shiller |
+| GLD | Gradient Boosting | 1 yr | — | vol/macro (short window) |
+| TLT | **LightGBM** | **2 yr** | **+0.40** | vol/macro |
 
 SPY's 10-year forward return is predicted by valuation mean-reversion (CAPE ratio, from Shiller's
 Yale spreadsheet). Shorter horizons produce negative R² — 1-day SPY returns are noise. GLD uses a

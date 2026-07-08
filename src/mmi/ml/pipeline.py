@@ -21,16 +21,18 @@ log = get_logger("ml.pipeline")
 
 # Max parallel workers for ML training (per-symbol independence)
 _MAX_WORKERS = 4
-
-# Per-symbol ML configs optimized via sweep (scripts/ml_sweep.py, ml_cape_sweep.py).
+# Per-symbol ML configs optimised via systematic sweeps (scripts/ml_full_sweep.py).
 # Keys: model, train_size, target_horizon, use_all_train, feature_set.
-# GLD: short rolling window, 1yr target → R²=+0.154 (directional edge +0.062)
-# TLT: 10yr expanding window, LGB, 6mo target → R²=+0.059 (directional edge +0.135)
-# SPY: 10yr expanding window, LGB, 10yr target, CAPE → R²=+0.033 (IC=0.61)
-#      (shorter horizons consistently negative — 10yr is the only positive horizon)
+# SPY: 10yr horizon (2520d), Gradient Boosting, vol_macro (incl. CAPE + div/earnings yield)
+#      → R²=+0.580 (IC=0.76). Shorter horizons noise-dominant; only 10yr shows reliable signal.
+# GLD: Short rolling window (160d train, 252d target, non-expanding, GB, vol_macro)
+#      → least-negative R². Gold's regime changes too quickly for longer windows.
+# TLT: 2yr horizon (504d), LightGBM, vol_macro, 10yr expanding window
+#      → R²=+0.395 (was +0.059 at 6mo). Bond returns need wider windows.
+
 _SYMBOL_ML_CONFIG: dict[str, dict] = {
     "SPY": {
-        "model": "lgb",
+        "model": "gb",
         "train_size": 2520,
         "target_horizon": 2520,
         "use_all_train": True,
@@ -46,7 +48,7 @@ _SYMBOL_ML_CONFIG: dict[str, dict] = {
     "TLT": {
         "model": "lgb",
         "train_size": 2520,
-        "target_horizon": 126,
+        "target_horizon": 504,
         "use_all_train": True,
         "feature_set": "vol_macro",
     },
