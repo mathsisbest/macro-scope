@@ -179,6 +179,7 @@ def evaluate_forecast(
     all_preds: pd.Series = pd.Series(index=df.index, dtype=float)
     model_count: pd.Series = pd.Series(0, index=df.index, dtype=int)
     train_rows_list: list[int] = []
+    median_preds: dict[int | str, list[float]] = {}  # index -> list of predictions for median
 
     if single_split:
         train_end = n - test_size
@@ -278,7 +279,11 @@ def evaluate_forecast(
 
             if ensemble_method not in ("mean", "median"):
                 raise ValueError(f"Unknown ensemble_method: {ensemble_method}")
-            all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
+            if ensemble_method == "median":
+                for i, pred in zip(test_idx, preds):
+                    median_preds.setdefault(i, []).append(float(pred))
+            else:
+                all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
             model_count.iloc[test_idx] += 1
             train_rows_list.append(len(y_train))
 
@@ -298,6 +303,7 @@ def evaluate_forecast(
         test_size,
         train_rows_list,
         target_horizon,
+        median_preds,
     )
 
 
@@ -442,8 +448,14 @@ def _compute_metrics(
     test_size: int,
     train_rows_list: list[int],
     target_horizon: int,
+    median_preds: dict[int | str, list[float]] | None = None,
 ) -> dict:
-    preds = all_preds / model_count.replace(0, np.nan)
+    if ensemble_method == "median":
+        preds = pd.Series(dtype=float, index=df.index)
+        for idx, vals in (median_preds or {}).items():
+            preds[idx] = float(np.median(vals))
+    else:
+        preds = all_preds / model_count.replace(0, np.nan)
 
     valid = (model_count > 0) & df["target_next_ret"].notna()
     y_true = df.loc[valid, "target_next_ret"]
