@@ -9,7 +9,7 @@ from typing import cast
 import pandas as pd
 
 from mmi.ml import regime
-from mmi.ml.forecast import evaluate_forecast
+from mmi.ml.forecast import evaluate_forecast, train_latest_forecast
 from mmi.ml.research import _load_asset_data, _load_macro_data
 from mmi.ml.volatility import MODEL_TAG as VOL_MODEL_TAG
 from mmi.ml.volatility import train_and_backtest_vol
@@ -21,6 +21,48 @@ log = get_logger("ml.pipeline")
 
 # Max parallel workers for ML training (per-symbol independence)
 _MAX_WORKERS = 4
+
+# Per-symbol ML configs optimized via sweep (scripts/ml_sweep.py, ml_cape_sweep.py).
+# Keys: model, train_size, target_horizon, use_all_train, feature_set.
+# GLD: short rolling window, 1yr target → R²=+0.154 (directional edge +0.062)
+# TLT: 10yr expanding window, LGB, 6mo target → R²=+0.059 (directional edge +0.135)
+# SPY: 10yr expanding window, LGB, 10yr target, CAPE → R²=+0.033 (IC=0.61)
+#      (shorter horizons consistently negative — 10yr is the only positive horizon)
+_SYMBOL_ML_CONFIG: dict[str, dict] = {
+    "SPY": {
+        "model": "lgb",
+        "train_size": 2520,
+        "target_horizon": 2520,
+        "use_all_train": True,
+        "feature_set": "vol_macro",
+    },
+    "GLD": {
+        "model": "gb",
+        "train_size": 160,
+        "target_horizon": 252,
+        "use_all_train": False,
+        "feature_set": "vol_macro",
+    },
+    "TLT": {
+        "model": "lgb",
+        "train_size": 2520,
+        "target_horizon": 126,
+        "use_all_train": True,
+        "feature_set": "vol_macro",
+    },
+}
+_DEFAULT_ML_CONFIG: dict = {
+    "model": "gb",
+    "train_size": 2520,
+    "target_horizon": 126,
+    "use_all_train": True,
+    "feature_set": "vol_macro",
+}
+
+
+def _ml_config(sym: str) -> dict:
+    """Return the optimised ML config for *sym*, falling back to *DEFAULT*."""
+    return _SYMBOL_ML_CONFIG.get(sym, _DEFAULT_ML_CONFIG)
 
 
 def _default_symbols() -> list[str]:
@@ -46,24 +88,49 @@ def _train_symbol_ml(
     asset_dfs: dict,
     now,
 ) -> tuple[list[dict], list[dict]]:
-    """Train ML models for a single symbol. Returns (metric_rows, forecast_rows)."""
+    """Train ML models for a single symbol. Returns (metric_rows, forecast_rows).
+
+    Uses per-symbol config from ``_SYMBOL_ML_CONFIG`` (optimised via sweep).
+    """
     metric_rows: list[dict] = []
     forecast_rows: list[dict] = []
 
-    # Single config: train=160, target_horizon=252, vol_macro, test_size=300
+    cfg = _ml_config(sym)
+    model_name: str = cfg["model"]
+    train_size: int = cfg["train_size"]
+    target_horizon: int = cfg["target_horizon"]
+    use_all_train: bool = cfg["use_all_train"]
+    feature_set: str = cfg["feature_set"]
+
+    # Compute a usable test_size: large enough for a meaningful evaluation
+    # window but small enough to get several walk-forward folds.
+    n = len(df)
+    available_test = n - train_size - target_horizon
+    if available_test < 100:
+        log.warning(
+            "skip %s: insufficient data (%d rows) for train=%d h=%d",
+            sym,
+            n,
+            train_size,
+            target_horizon,
+        )
+        return metric_rows, forecast_rows
+    test_size = min(504, max(252, available_test // 4))
+
     try:
         res = evaluate_forecast(
             df=df,
-            train_size=160,
-            test_size=300,
+            train_size=train_size,
+            test_size=test_size,
             horizon=20,
-            model="gb",
-            feature_set="vol_macro",
+            model=model_name,
+            feature_set=feature_set,
             macro_df=macro_df,
             asset_dfs=asset_dfs,
             target_type="raw",
-            target_horizon=252,
+            target_horizon=target_horizon,
             ensemble_method="mean",
+            use_all_train=use_all_train,
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("skip %s: %s", sym, exc)
@@ -72,8 +139,18 @@ def _train_symbol_ml(
     if res.get("prediction_count", 0) == 0:
         return metric_rows, forecast_rows
 
-    # Persist metrics
-    for name in ("ic", "direction_accuracy", "r2", "sharpe"):
+    # Persist metrics. Do not persist the legacy return-model Sharpe when the target is a
+    # multi-day overlapping forward return; evaluate_forecast returns NaN for that field because
+    # treating overlapping annual targets as daily tradable returns is misleading.
+    for name in (
+        "ic",
+        "direction_accuracy",
+        "baseline_direction_accuracy",
+        "direction_edge",
+        "positive_target_rate",
+        "positive_prediction_rate",
+        "r2",
+    ):
         val = res.get(name)
         if val is not None and pd.notna(val):
             metric_rows.append(
@@ -95,17 +172,26 @@ def _train_symbol_ml(
         }
     )
 
-    # Live forecast
-    if res.get("prediction_count", 0) > 0:
-        last_pred = res["predictions"].iloc[-1]
-        last_date = res["dates"].iloc[-1]
+    latest = train_latest_forecast(
+        df=df,
+        train_size=train_size,
+        model=model_name,
+        feature_set=feature_set,
+        macro_df=macro_df,
+        asset_dfs=asset_dfs,
+        target_type="raw",
+        target_horizon=target_horizon,
+    )
+
+    if latest.get("prediction") is not None and pd.notna(latest.get("prediction")):
+        pred = float(latest["prediction"])
         forecast_rows.append(
             {
                 "symbol": sym,
-                "as_of": pd.to_datetime(last_date),
-                "horizon": 252,
-                "predicted_return": float(last_pred),
-                "daily_mu": float(last_pred) / 252,
+                "as_of": pd.to_datetime(latest["as_of"]),
+                "horizon": target_horizon,
+                "predicted_return": pred,
+                "daily_mu": pred / target_horizon,
                 "model": "return_gb",
                 "dir_acc": res.get("direction_accuracy", 0),
                 "r2": res.get("r2", 0),

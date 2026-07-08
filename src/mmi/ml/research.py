@@ -9,6 +9,7 @@ Results are printed to stdout and returned as a DataFrame for manual review.
 
 from __future__ import annotations
 
+import io
 import itertools
 
 import pandas as pd
@@ -53,10 +54,10 @@ def _model_params(model_name: str) -> list[dict]:
 
 
 def _load_macro_data(con) -> pd.DataFrame:
-    """Load ALL FRED series from fct_macro_indicator, pivoted to wide format.
+    """Load FRED series + Shiller CAPE, pivoted to a wide daily DataFrame.
 
-    Returns one row per date with columns for each series_id. The feature builder
-    ASOF-merges this onto SPY trading dates.
+    Returns one row per date with a column per series_id plus ``cape`` and
+    ``excess_cape_yield``.  The feature builder ASOF-merges this onto trading dates.
     """
     try:
         df = con.execute(
@@ -64,18 +65,81 @@ def _load_macro_data(con) -> pd.DataFrame:
         ).df()
         if df.empty:
             return pd.DataFrame()
-        # Pivot: each series_id becomes a column
         wide = df.pivot_table(index="date", columns="series_id", values="value", aggfunc="first")
         wide = wide.reset_index().sort_values("date")
-        # Forward-fill all series aggressively — monthly/quarterly data gets the last
-        # known value carried forward to every subsequent daily date. This is standard
-        # practice for mixing low-frequency macro with high-frequency market data.
         for col in wide.columns:
             if col != "date":
                 wide[col] = wide[col].ffill()
+
+        # Merge Shiller CAPE data — monthly, ASOF-merged onto daily grid
+        cape_df = _load_cape_data()
+        if not cape_df.empty:
+            wide["date"] = pd.to_datetime(wide["date"])
+            cape_df["date"] = pd.to_datetime(cape_df["date"])
+            wide = pd.merge_asof(
+                wide.sort_values("date"),
+                cape_df.sort_values("date"),
+                on="date",
+                direction="backward",
+            )
+            # Forward-fill CAPE (monthly) to daily dates
+            wide["cape"] = wide["cape"].ffill()
+            wide["excess_cape_yield"] = wide["excess_cape_yield"].ffill()
+
         return wide
     except Exception:
         return pd.DataFrame()
+
+
+def _load_cape_data() -> pd.DataFrame:
+    """Download Shiller CAPE data and return as a (date, cape, excess_cape_yield) DataFrame.
+
+    The source is Robert Shiller's public spreadsheet at Yale.  Data is monthly from 1881.
+    Returns an empty DataFrame if download or parse fails.
+    """
+    import pathlib
+    import urllib.request
+
+    cache_path = pathlib.Path("data/raw/shiller_cape.parquet")
+    if cache_path.exists():
+        try:
+            return pd.read_parquet(cache_path)
+        except Exception:
+            pass
+
+    url = "http://www.econ.yale.edu/~shiller/data/ie_data.xls"
+    try:
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            raw = resp.read()
+        df = pd.read_excel(io.BytesIO(raw), sheet_name="Data", header=None, skiprows=8)
+    except Exception:
+        log.warning("Failed to download Shiller CAPE data — skipping")
+        return pd.DataFrame()
+
+    cape = df[[0, 12, 16]].copy()
+    cape.columns = ["date_str", "cape", "excess_cape_yield"]
+
+    def _parse(d):
+        if pd.isna(d):
+            return pd.NaT
+        parts = str(d).split(".")
+        return pd.Timestamp(
+            year=int(parts[0]),
+            month=int(parts[1]) if len(parts) > 1 else 1,
+            day=1,
+        )
+
+    cape["date"] = cape["date_str"].apply(_parse)
+    cape = cape.dropna(subset=["cape"])[["date", "cape", "excess_cape_yield"]]
+    cape = cape.sort_values("date").reset_index(drop=True)
+
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cape.to_parquet(cache_path)
+    except Exception:
+        pass
+
+    return cape
 
 
 def _load_asset_data(con, symbols: list[str]) -> dict[str, pd.DataFrame]:

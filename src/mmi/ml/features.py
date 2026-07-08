@@ -109,6 +109,9 @@ _MACRO_FEATURE_NAMES: list[str] = [
     # Cross-asset vol
     "gld_vol_20d_lag1",
     "tlt_vol_20d_lag1",
+    # Valuation (Shiller CAPE)
+    "cape",
+    "excess_cape_yield",
 ]
 
 # Medium feature names (added by feature_set='vol_medium' — fast, key predictors only).

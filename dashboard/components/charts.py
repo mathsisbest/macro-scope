@@ -575,23 +575,54 @@ def return_forecast_table(fc: pd.DataFrame) -> pd.DataFrame:
 
 
 def return_performance_table(metrics: pd.DataFrame) -> pd.DataFrame:
-    """Wide per-asset return-model metrics: IC, direction accuracy, R², Sharpe and n_obs."""
+    """Wide per-asset return-model metrics with explicit direction baselines."""
     needed = {"model", "symbol", "metric", "value"}
     if metrics.empty or not needed <= set(metrics.columns):
-        return pd.DataFrame(columns=["symbol", "ic", "direction_accuracy", "r2", "sharpe", "n_obs"])
+        return pd.DataFrame(
+            columns=[
+                "symbol",
+                "ic",
+                "direction_accuracy",
+                "baseline_direction_accuracy",
+                "direction_edge",
+                "positive_prediction_rate",
+                "r2",
+                "n_obs",
+            ]
+        )
     rows = metrics[metrics["model"].str.startswith("return_", na=False)]
     if rows.empty:
-        return pd.DataFrame(columns=["symbol", "ic", "direction_accuracy", "r2", "sharpe", "n_obs"])
+        return pd.DataFrame(
+            columns=[
+                "symbol",
+                "ic",
+                "direction_accuracy",
+                "baseline_direction_accuracy",
+                "direction_edge",
+                "positive_prediction_rate",
+                "r2",
+                "n_obs",
+            ]
+        )
     wide = (
         rows.pivot_table(index="symbol", columns="metric", values="value", aggfunc="last")
         .reset_index()
         .rename_axis(None, axis=1)
     )
-    for col in ["ic", "direction_accuracy", "r2", "sharpe", "n_obs"]:
+    cols = [
+        "ic",
+        "direction_accuracy",
+        "baseline_direction_accuracy",
+        "direction_edge",
+        "positive_prediction_rate",
+        "r2",
+        "n_obs",
+    ]
+    for col in cols:
         if col not in wide.columns:
             wide[col] = pd.NA
         wide[col] = pd.to_numeric(wide[col], errors="coerce")
-    return wide[["symbol", "ic", "direction_accuracy", "r2", "sharpe", "n_obs"]].sort_values(
+    return wide[["symbol", *cols]].sort_values(
         ["ic", "direction_accuracy"], ascending=[False, False], na_position="last"
     )
 
