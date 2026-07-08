@@ -15,6 +15,7 @@ import itertools
 import pandas as pd
 
 from mmi.ml.volatility import train_and_backtest_vol
+from mmi.settings import REPO_ROOT
 from mmi.utils.db import connect
 from mmi.utils.logging import get_logger
 
@@ -99,10 +100,9 @@ def _load_cape_data() -> pd.DataFrame:
     Also extracts dividend yield and earnings yield computed from raw P/D/E columns.
     Returns an empty DataFrame if download or parse fails.
     """
-    import pathlib
     import urllib.request
 
-    cache_path = pathlib.Path("data/raw/shiller_cape.parquet")
+    cache_path = REPO_ROOT / "data/raw/shiller_cape.parquet"
     if cache_path.exists():
         try:
             return pd.read_parquet(cache_path)
