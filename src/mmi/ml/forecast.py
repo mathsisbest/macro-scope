@@ -299,7 +299,96 @@ def evaluate_forecast(
         train_size,
         test_size,
         train_rows_list,
+        target_horizon,
     )
+
+
+def train_latest_forecast(
+    df: pd.DataFrame,
+    train_size: int = 250,
+    model: str = "gb",
+    feature_set: str = "default",
+    macro_df: pd.DataFrame | None = None,
+    asset_dfs: dict[str, pd.DataFrame] | None = None,
+    target_type: str = "raw",
+    target_horizon: int = 1,
+    loss: str = "squared_error",
+    **model_kwargs,
+) -> dict:
+    """Train on all rows with known forward targets and predict the latest feature-valid row.
+
+    This is deliberately separate from ``evaluate_forecast``.  The walk-forward evaluator must
+    drop the final ``target_horizon`` rows because their realized forward return is unknown, but
+    the live dashboard forecast should still be as-of the latest row whose features are known.
+    """
+    df = df.copy()
+    if feature_set == "vol_medium" and macro_df is not None:
+        feat_df = feat.make_features(
+            df, feature_set=feature_set, macro_df=macro_df, asset_dfs=asset_dfs
+        )
+    elif feature_set == "vol_medium":
+        feat_df = feat.make_features(df, feature_set="vol_medium")
+    else:
+        feat_df = feat.make_features(
+            df, feature_set=feature_set, macro_df=macro_df, asset_dfs=asset_dfs
+        )
+
+    if target_horizon > 1:
+        feat_df["target_next_ret"] = (
+            feat_df["ret"].rolling(target_horizon).sum().shift(-target_horizon)
+        )
+
+    all_feature_cols = feat.feature_columns(feature_set)
+    available_cols = [c for c in all_feature_cols if c in feat_df.columns]
+    if not available_cols:
+        return {"prediction": np.nan, "as_of": pd.NaT, "train_rows": 0}
+
+    feature_valid = feat_df[available_cols].notna().any(axis=1)
+    available_cols = [c for c in available_cols if feat_df.loc[feature_valid, c].notna().any()]
+    if not available_cols:
+        return {"prediction": np.nan, "as_of": pd.NaT, "train_rows": 0}
+
+    train_df = feat_df[feature_valid & feat_df["target_next_ret"].notna()].copy()
+    latest_df = feat_df[feature_valid].tail(1)
+    if latest_df.empty or len(train_df) < train_size:
+        return {"prediction": np.nan, "as_of": pd.NaT, "train_rows": len(train_df)}
+
+    y_train = _build_target(train_df, target_type, "target_next_ret").to_numpy().ravel()
+    X_train = train_df[available_cols].to_numpy()
+    X_latest = latest_df[available_cols].to_numpy()
+
+    train_std = np.nanstd(X_train, axis=0)
+    non_const = train_std > 0
+    if non_const.sum() < 2:
+        return {"prediction": np.nan, "as_of": pd.NaT, "train_rows": len(train_df)}
+    X_train = X_train[:, non_const]
+    X_latest = X_latest[:, non_const]
+
+    valid_y = ~np.isnan(y_train)
+    X_train = X_train[valid_y]
+    y_train = y_train[valid_y]
+    if len(y_train) < train_size:
+        return {"prediction": np.nan, "as_of": pd.NaT, "train_rows": len(y_train)}
+
+    try:
+        model_cls = _MODELS[model]
+    except KeyError:
+        raise ValueError(f"Unknown model '{model}'; choose from {list(_MODELS)}") from None
+    kw = {**_model_kwargs(model), **model_kwargs}
+    if loss != "squared_error":
+        kw["loss"] = loss
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=UserWarning, message=".*early_stopping.*")
+        clf = model_cls(**kw)
+        clf.fit(X_train, y_train)
+        pred = float(clf.predict(X_latest)[0])
+
+    return {
+        "prediction": pred,
+        "as_of": pd.to_datetime(latest_df["date"].iloc[0]),
+        "train_rows": len(y_train),
+        "available_feature_cols": available_cols,
+    }
 
 
 # ---------- internal: helpers ----------
@@ -354,6 +443,7 @@ def _compute_metrics(
     train_size: int,
     test_size: int,
     train_rows_list: list[int],
+    target_horizon: int,
 ) -> dict:
     if ensemble_method == "mean" or ensemble_method == "median" or ensemble_method == "ic_weighted":
         preds = all_preds / model_count.replace(0, np.nan)
@@ -376,9 +466,19 @@ def _compute_metrics(
     direction_tp = ((y_true > 0) & (y_pred > 0)).sum()
     direction_tn = ((y_true < 0) & (y_pred < 0)).sum()
     direction_accuracy = (direction_tp + direction_tn) / len(y_true) if len(y_true) > 0 else np.nan
+    positive_target_rate = float((y_true > 0).mean()) if len(y_true) > 0 else np.nan
+    positive_prediction_rate = float((y_pred > 0).mean()) if len(y_pred) > 0 else np.nan
+    negative_target_rate = float((y_true < 0).mean()) if len(y_true) > 0 else np.nan
+    baseline_direction_accuracy = max(positive_target_rate, negative_target_rate)
+    direction_edge = direction_accuracy - baseline_direction_accuracy
 
-    strat_ret = y_pred * np.sign(y_true)
-    sharpe = strat_ret.mean() / strat_ret.std() * np.sqrt(252) if strat_ret.std() > 0 else 0.0
+    strategy_target_ret = np.sign(y_pred) * y_true
+    if target_horizon == 1 and strategy_target_ret.std() > 0:
+        sharpe = strategy_target_ret.mean() / strategy_target_ret.std() * np.sqrt(252)
+    else:
+        # Multi-day forward targets are overlapping observations; reporting them as a daily
+        # tradable Sharpe is misleading. Keep the field for API compatibility but fail closed.
+        sharpe = np.nan
 
     ss_res = ((y_true - y_pred) ** 2).sum()
     ss_tot = ((y_true - y_true.mean()) ** 2).sum()
@@ -395,6 +495,10 @@ def _compute_metrics(
         "ic": ic_val,
         "ic_pvalue": ic_pval,
         "direction_accuracy": direction_accuracy,
+        "baseline_direction_accuracy": baseline_direction_accuracy,
+        "direction_edge": direction_edge,
+        "positive_target_rate": positive_target_rate,
+        "positive_prediction_rate": positive_prediction_rate,
         "prediction_count": len(y_true),
         "predictions": y_pred,
         "y_true": y_true,

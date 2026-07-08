@@ -330,7 +330,8 @@ def test_return_performance_table_pivots_asset_metrics():
 
     assert out["symbol"].tolist() == ["BTC", "SPY"]
     assert out.loc[out["symbol"] == "SPY", "r2"].iloc[0] == -0.4
-    assert "sharpe" in out.columns
+    assert "ic" in out.columns
+    assert "direction_accuracy" in out.columns
 
 
 def test_return_regime_breakdown_table_reads_persisted_regime_metrics():

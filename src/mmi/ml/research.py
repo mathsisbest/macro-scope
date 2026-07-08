@@ -9,6 +9,7 @@ Results are printed to stdout and returned as a DataFrame for manual review.
 
 from __future__ import annotations
 
+import io
 import itertools
 
 import pandas as pd
@@ -53,10 +54,10 @@ def _model_params(model_name: str) -> list[dict]:
 
 
 def _load_macro_data(con) -> pd.DataFrame:
-    """Load ALL FRED series from fct_macro_indicator, pivoted to wide format.
+    """Load FRED series + Shiller CAPE, pivoted to a wide daily DataFrame.
 
-    Returns one row per date with columns for each series_id. The feature builder
-    ASOF-merges this onto SPY trading dates.
+    Returns one row per date with a column per series_id plus ``cape`` and
+    ``excess_cape_yield``.  The feature builder ASOF-merges this onto trading dates.
     """
     try:
         df = con.execute(
@@ -64,18 +65,92 @@ def _load_macro_data(con) -> pd.DataFrame:
         ).df()
         if df.empty:
             return pd.DataFrame()
-        # Pivot: each series_id becomes a column
         wide = df.pivot_table(index="date", columns="series_id", values="value", aggfunc="first")
         wide = wide.reset_index().sort_values("date")
-        # Forward-fill all series aggressively — monthly/quarterly data gets the last
-        # known value carried forward to every subsequent daily date. This is standard
-        # practice for mixing low-frequency macro with high-frequency market data.
         for col in wide.columns:
             if col != "date":
                 wide[col] = wide[col].ffill()
+
+        # Merge Shiller CAPE data — monthly, ASOF-merged onto daily grid
+        cape_df = _load_cape_data()
+        if not cape_df.empty:
+            wide["date"] = pd.to_datetime(wide["date"])
+            cape_df["date"] = pd.to_datetime(cape_df["date"])
+            wide = pd.merge_asof(
+                wide.sort_values("date"),
+                cape_df.sort_values("date"),
+                on="date",
+                direction="backward",
+            )
+            # Forward-fill CAPE-derived features (monthly) to daily dates
+            for col in ["cape", "excess_cape_yield", "div_yield", "earn_yield"]:
+                if col in wide.columns:
+                    wide[col] = wide[col].ffill()
+
         return wide
     except Exception:
         return pd.DataFrame()
+
+
+def _load_cape_data() -> pd.DataFrame:
+    """Download Shiller CAPE data and return as a (date, cape, excess_cape_yield) DataFrame.
+
+    The source is Robert Shiller's public spreadsheet at Yale.  Data is monthly from 1881.
+    Also extracts dividend yield and earnings yield computed from raw P/D/E columns.
+    Returns an empty DataFrame if download or parse fails.
+    """
+    import pathlib
+    import urllib.request
+
+    cache_path = pathlib.Path("data/raw/shiller_cape.parquet")
+    if cache_path.exists():
+        try:
+            return pd.read_parquet(cache_path)
+        except Exception:
+            pass
+
+    url = "http://www.econ.yale.edu/~shiller/data/ie_data.xls"
+    try:
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            raw = resp.read()
+        df = pd.read_excel(io.BytesIO(raw), sheet_name="Data", header=None, skiprows=8)
+    except Exception:
+        log.warning("Failed to download Shiller CAPE data — skipping")
+        return pd.DataFrame()
+
+    # Columns: 0=date, 1=P, 2=D, 3=E, 12=CAPE, 16=excess_CAPE_yield
+    out = df[[0, 1, 2, 3, 12, 16]].copy()
+    out.columns = ["date_str", "P", "D", "E", "cape", "excess_cape_yield"]
+
+    def _parse(d):
+        if pd.isna(d):
+            return pd.NaT
+        parts = str(d).split(".")
+        return pd.Timestamp(
+            year=int(parts[0]),
+            month=int(parts[1]) if len(parts) > 1 else 1,
+            day=1,
+        )
+
+    out["date"] = out["date_str"].apply(_parse)
+    for col in ["P", "D", "E", "cape", "excess_cape_yield"]:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    # Compute yields: dividend yield and earnings yield as decimals (not %)
+    out["div_yield"] = out["D"] / out["P"]
+    out["earn_yield"] = out["E"] / out["P"]
+
+    out = out.dropna(subset=["cape"])
+    cols = ["date", "cape", "excess_cape_yield", "div_yield", "earn_yield"]
+    out = out[cols].sort_values("date").reset_index(drop=True)
+
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        out.to_parquet(cache_path)
+    except Exception:
+        pass
+
+    return out
 
 
 def _load_asset_data(con, symbols: list[str]) -> dict[str, pd.DataFrame]:

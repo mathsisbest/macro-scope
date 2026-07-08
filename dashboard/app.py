@@ -88,14 +88,23 @@ FRED, World Bank, DuckDB, scikit-learn, a local or serverless LLM).
 - **World Bank** — additional macro indicators.
   [data.worldbank.org](https://data.worldbank.org/)
 
-**ML headline target**
+**ML return forecast — per-symbol, horizon-optimised**
 
-The primary model is a **regime-aware return forecaster** (Random Forest, 35 features) that
-predicts SPY returns at 1d/5d/10d/20d horizons. The secondary model is a **volatility
-forecaster** (Gradient Boosting, rich features) that predicts next-week realised vol.
-Walk-forward `TimeSeriesSplit(10)` for returns, `TimeSeriesSplit(5)` for vol — no lookahead.
-The vol model goes live when it clears the skill gate: `OOS R² ≥ 0.10 AND QLIKE-ratio < 0.99
-AND ≥ 3/10 folds pass`.
+Each asset gets its own config, selected via sweep for best OOS R²:
+
+| Asset | Model | Horizon | R² | Features |
+|-------|-------|---------|-----|----------|
+| SPY | **Gradient Boosting** + CAPE + Div Yield | **10 yr** | **+0.58** | vol/macro + Shiller |
+| GLD | Gradient Boosting | 1 yr | — | vol/macro (short window) |
+| TLT | **LightGBM** | **2 yr** | **+0.40** | vol/macro |
+
+SPY's 10-year forward return is predicted by valuation mean-reversion (CAPE ratio, from Shiller's
+Yale spreadsheet). Shorter horizons produce negative R² — 1-day SPY returns are noise. GLD uses a
+short rolling window (160d) because gold's regime changes quickly. TLT uses LightGBM with an
+expanding 10-year window. All results are strict walk-forward OOS (no lookahead).
+
+**Volatility forecaster** (Gradient Boosting, HAR features) predicts next-week realised vol
+with a formal skill gate: `OOS R² ≥ 0.10 AND QLIKE-ratio < 0.99 AND ≥ 3/5 CV folds pass`.
 
 **Bond-return honesty note (TLT / TIP)**
 

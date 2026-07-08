@@ -13,8 +13,20 @@
       "rows": 8415
     },
     "fct_recession_risk": {
-      "rows": 12519
+      "rows": 12478
+    },
+    "fct_regime": {
+      "rows": 52532
+    },
+    "market_brief": {
+      "rows": 1
+    },
+    "ml_forecast": {
+      "rows": 15
+    },
+    "model_metrics": {
+      "rows": 138
     }
   },
-  "generated_at": "2026-07-08T08:27:08.396280+00:00"
+  "generated_at": "2026-07-08T17:44:36.736872+00:00"
 }
