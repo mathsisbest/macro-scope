@@ -129,7 +129,7 @@ the same wave.
   "no demonstrated out-of-sample edge — baseline-only" UI/brief state; no beats/outperforms phrasing.
 - **Next-day direction model** (`model='return_gb'`) is **retained, demoted** to an honestly-labelled
   "no demonstrated short-horizon edge" secondary — **not** the gate. Shares the regularized
-  `make_regressor()` factory + frozen `SEED` with the 21-day `mvo_ml` model, but each is a distinct
+   regularized factory + frozen `SEED` with the 21-day `mvo_ml` model, but each is a distinct
   prediction problem; `mvo_ml` keeps its own `fct_portfolio_ml_gate`.
 - **Macro is volatility/regime context, never a return input.** The recession-risk panel is macro context.
 - **Confirmed non-goals (honest, recorded):** macro→return-level/direction prediction (Goyal-Welch

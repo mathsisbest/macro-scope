@@ -18,8 +18,7 @@ datasets, and roadmap in **PLAN.md**.
 ## Dev workflow
 - **Small, single-concern PRs** (~1–5 files), branch `pNN-slug`, structured body
   (concern / what changed / risk / `make ci` result / questions). Move fast.
-- **`make ci` is the gate** (ruff, ruff format, mypy, seed, `dbt build`+tests, dashboard smoke,
-  pytest) — run it locally before every PR and paste the result in the body. One-time: `make setup`
+- **`make ci` is the gate** (ruff, ruff format, mypy, seed, portfolio, schema drop, dbt build+tests, ml, ai, dashboard smoke, app smoke, pytest) — run it locally before every PR and paste the result in the body. One-time: `make setup`
   (needs `brew install python@3.11`).
 - **GitHub Actions runs the same gate on every PR** (`ci.yml` on `pull_request` to main; also
   `workflow_dispatch`). Public repo → unlimited free Actions minutes.
@@ -56,7 +55,7 @@ Status drifts, so it's not hand-maintained here: read **open issues**, `gh pr li
 ## How to run
 ```bash
 make setup         # one-time: create .venv + install everything (needs `brew install python@3.11`)
-make ci            # the local gate: lint, types, dbt build+tests, dashboard smoke, pytest
+make ci            # the local gate: lint, types, portfolio, dbt build+tests, ml, ai, dashboard smoke, app smoke, pytest
 make demo          # seed sample data (+ build dbt marts) and launch the dashboard
 # live data path (needs free keys in .env — see .env.example):
 make ingest && make dbt-build && make ml && make ai && make dashboard
