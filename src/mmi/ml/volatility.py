@@ -564,12 +564,11 @@ def train_and_backtest_vol(
         "symbol": symbol,
         "as_of": pd.to_datetime(feat_valid["date"].iloc[-1]),
         "horizon": float(horizon),
-        "predicted_return": next_vol,
+        "predicted_next_return": next_vol,
         "daily_mu": None,
         "model": model_name,
         "dir_acc": None,
         "r2": metrics.get("oos_r2"),
-        "predicted_next_return": next_vol,
     }
 
     log.info(
