@@ -1,5 +1,5 @@
 <!--
-House style: a small, single-concern PR (~1–5 files). Branch `<type>/<slug>`.
+House style: a small, single-concern PR (~1–5 files). Branch `pNN-slug`.
 Title = conventional commit (feat:/fix:/refactor:/docs:/test:/build:). Link the issue with `Closes #NN`.
 Keep the five sections below — they mirror CLAUDE.md › Dev workflow.
 -->
