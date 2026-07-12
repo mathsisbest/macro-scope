@@ -39,7 +39,7 @@ Generic roles (Planner / Builder / Reviewer — see `~/.claude/velocity-playbook
   (4) Compliance with £0 cost, free-tier limits, and no main branch direct pushes.
 
 ## Key decisions (full rationale in PLAN.md + docs/adr/)
-- **Stack:** Python 3.10+, **DuckDB** (local dev/CI), **dbt-duckdb** (medallion staging→marts),
+- **Stack:** Python 3.11+, **DuckDB** (local dev/CI), **dbt-duckdb** (medallion staging→marts),
   **scikit-learn**, **Streamlit + Plotly**. The **public deploy reads committed Parquet snapshots**
   (`data/public/`, snapshot mode); **MotherDuck** is an optional live store for private dev only,
   not the public path.
@@ -99,7 +99,7 @@ Use only for **post-merge verification** on `main` to confirm Streamlit Cloud au
 - Lint/format: ruff (line length 100). Tests: pytest. Pre-commit configured.
 
 ## Repo map (full tree in PLAN.md §6)
-`src/mmi/{ingestion,ml,ai,utils}` · `transform/` (dbt) · `dashboard/` (Streamlit) · `config/` ·
+`src/mmi/{ingestion,ml,portfolio,ai,utils}` · `scripts/` · `transform/` (dbt) · `dashboard/` (Streamlit) · `config/` ·
 `tests/` · `.github/workflows/` (`ci.yml` — gate on PRs; `daily.yml` + `weekly.yml` — scheduled snapshot refresh) ·
 `docs/` (+ ADRs).
 

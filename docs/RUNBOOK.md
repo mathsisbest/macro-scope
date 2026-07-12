@@ -10,7 +10,7 @@ For the automated deployment notes see [`.github/workflows/deploy-note.md`](../.
 
 - You have push access to `mathsisbest/macro-scope` on GitHub.
 - You have free-tier accounts for the data sources you want to use (see below).
-- Python 3.10+ is installed locally for the heavy refresh step.
+- Python 3.11+ is installed locally for the heavy refresh step.
 
 ---
 
@@ -55,16 +55,16 @@ you must seed the weekly output first.
    ```bash
    make refresh-full
    ```
-This runs: `mmi ingest` → `mmi build` → `mmi portfolio` → `mmi ml` → `mmi ai` →
+This runs: `mmi ingest` → `mmi build` → `mmi ml` → `mmi portfolio` → `mmi ai` →
 `mmi snapshot`. It will write Parquet files to `data/public/`.
 
 To run the steps individually:
    ```bash
    mmi ingest
-   mmi build
-   mmi portfolio
-   mmi ml
-   mmi ai
+    mmi build
+    mmi ml
+    mmi portfolio
+    mmi ai
    mmi snapshot
    ```
 3. Check the output:

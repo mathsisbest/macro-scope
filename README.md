@@ -55,7 +55,7 @@ available for an optional local run, but it isn't required.)
 |---|---|---|
 | [Yahoo Finance](https://finance.yahoo.com/) (`yfinance`) | Equities, ETF, FX & BTC (BTC-USD) daily OHLCV | Free, no key |
 | [Shiller CAPE](http://www.econ.yale.edu/~shiller/data/ie_data.xls) (Yale) | S&P 500 CAPE ratio, P/E, D/E, excess CAPE yield (monthly, 1881–present) | Free, no key |
-| [FRED](https://fred.stlouisfed.org/) (St Louis Fed) | Macro series: DGS10, DGS2, DGS3MO, CPIAUCSL, UNRATE, FEDFUNDS, T10YIE, BAMLH0A0HYM2 | Free, key required |
+| [FRED](https://fred.stlouisfed.org/) (St Louis Fed) | Macro series: DGS10, DGS2, DGS3MO, CPIAUCSL, UNRATE, FEDFUNDS | Free, key required |
 | [World Bank](https://data.worldbank.org/) | GDP growth, current-account balance | Free, no key |
 
 ---
