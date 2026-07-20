@@ -7,14 +7,14 @@
       "rows": 0
     },
     "fct_macro_indicator": {
-      "rows": 93352
+      "rows": 93358
     },
     "fct_market_macro": {
       "rows": 0
     },
     "fct_recession_risk": {
-      "rows": 12526
+      "rows": 12527
     }
   },
-  "generated_at": "2026-07-17T08:09:26.337670+00:00"
+  "generated_at": "2026-07-20T08:57:04.964240+00:00"
 }
