@@ -135,4 +135,5 @@ class TestLabelRegimes:
         result = label_regimes(con)
         con.close()
         assert _has_expected_columns(result)
-        assert result.empty
+        assert len(result) == 2
+        assert (result["regime"] == "Medium").all()
