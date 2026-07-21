@@ -167,7 +167,7 @@ def evaluate_forecast(
         if non_const.sum() >= 2:
             X_train = X_train[:, non_const]
             X_test = X_test[:, non_const]
-            used_cols = [col for col, nc in zip(available_cols, non_const) if nc]
+            used_cols = [col for col, nc in zip(available_cols, non_const, strict=False) if nc]
         # Drop NaN in y_train (vol_adjusted/excess produce NaN for early rows)
         valid_idx = ~np.isnan(y_train)
         if valid_idx.sum() < 50:
@@ -190,7 +190,7 @@ def evaluate_forecast(
             train_rows_list.append(len(y_train))
             if hasattr(clf, "feature_importances_"):
                 fi = clf.feature_importances_
-                for col_name, val in zip(used_cols, fi):
+                for col_name, val in zip(used_cols, fi, strict=False):
                     last_feature_importances[col_name] = float(val)
     else:
         for start in range(0, n - train_size, test_size):
@@ -224,7 +224,7 @@ def evaluate_forecast(
             non_const = train_std > 0
             if non_const.sum() < 2:
                 continue
-            used_cols = [col for col, nc in zip(available_cols, non_const) if nc]
+            used_cols = [col for col, nc in zip(available_cols, non_const, strict=False) if nc]
             X_train = X_train[:, non_const]
             X_test = X_test[:, non_const]
 
@@ -253,7 +253,7 @@ def evaluate_forecast(
             preds_fold = clf.predict(X_test)
             if hasattr(clf, "feature_importances_"):
                 fi = clf.feature_importances_
-                for col_name, val in zip(used_cols, fi):
+                for col_name, val in zip(used_cols, fi, strict=False):
                     last_feature_importances[col_name] = float(val)
 
             if ensemble_method == "median":
@@ -261,8 +261,8 @@ def evaluate_forecast(
                     median_preds.setdefault(row_idx, []).append(float(preds_fold[i_pos]))
                     model_count.iloc[row_idx] += 1
             else:
-                all_preds.iloc[test_idx] = (
-                    all_preds.iloc[test_idx].fillna(0) + pd.Series(preds_fold, index=test_idx)
+                all_preds.iloc[test_idx] = all_preds.iloc[test_idx].fillna(0) + pd.Series(
+                    preds_fold, index=test_idx
                 )
                 model_count.iloc[test_idx] += 1
             train_rows_list.append(len(y_train))
@@ -327,7 +327,7 @@ def train_latest_forecast(
     if non_const.sum() < 2:
         return {"as_of": last_row["date"].iloc[0], "prediction": None}
 
-    used_cols = [col for col, nc in zip(available_cols, non_const) if nc]
+    used_cols = [col for col, nc in zip(available_cols, non_const, strict=False) if nc]
     X_train = X_train[:, non_const]
     X_pred = X_pred[:, non_const]
 
@@ -354,7 +354,7 @@ def train_latest_forecast(
     feature_importances: dict[str, float] = {}
     if hasattr(clf, "feature_importances_"):
         fi = clf.feature_importances_
-        for col_name, val in zip(used_cols, fi):
+        for col_name, val in zip(used_cols, fi, strict=False):
             feature_importances[col_name] = float(val)
 
     return {
@@ -367,9 +367,7 @@ def train_latest_forecast(
 # ---------- internal: helpers ----------
 
 
-def _empty_result(
-    df, model, feature_set, target_type, ensemble_method, loss, horizon
-) -> dict:
+def _empty_result(df, model, feature_set, target_type, ensemble_method, loss, horizon) -> dict:
     return {
         "horizon": horizon,
         "ic": np.nan,
@@ -464,12 +462,12 @@ def _compute_metrics(
                     labels=["low", "medium", "high"],
                     duplicates="drop",
                 )
-                for reg_key, reg_label in [
+                for reg_key, _reg_label in [
                     ("low", "direction_accuracy_low"),
                     ("medium", "direction_accuracy_medium"),
                     ("high", "direction_accuracy_high"),
                 ]:
-                    mask = (regimes == reg_key)
+                    mask = regimes == reg_key
                     if mask.sum() > 0:
                         yt = y_true[mask]
                         yp = y_pred[mask]

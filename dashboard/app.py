@@ -13,6 +13,7 @@ import os
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -302,7 +303,8 @@ tab_digest, tab_mkt, tab_macro, tab_ml, tab_ai, tab_portfolio = st.tabs(
 with tab_digest:
     st.subheader("📰 Weekly Executive Digest & Actionable Market Signals")
     st.caption(
-        "Synthesized recap of macro environment, active regime shifts, and walk-forward model tilts."
+        "Synthesized recap of macro environment, active regime shifts, "
+        "and walk-forward model tilts."
     )
 
     # 1. Executive AI Brief
@@ -329,9 +331,23 @@ with tab_digest:
             sym = row.symbol
             pred = float(row.predicted_return)
             h = int(row.horizon)
-            m_rows = metrics_data[(metrics_data["model"] == "return_gb") & (metrics_data["symbol"] == sym)] if not metrics_data.empty else pd.DataFrame()
-            r2_val = m_rows[m_rows["metric"] == "r2"]["value"].iloc[0] if not m_rows.empty and "r2" in m_rows["metric"].values else np.nan
-            dir_acc = m_rows[m_rows["metric"] == "direction_accuracy"]["value"].iloc[0] if not m_rows.empty and "direction_accuracy" in m_rows["metric"].values else np.nan
+            m_rows = (
+                metrics_data[
+                    (metrics_data["model"] == "return_gb") & (metrics_data["symbol"] == sym)
+                ]
+                if not metrics_data.empty
+                else pd.DataFrame()
+            )
+            r2_val = (
+                m_rows[m_rows["metric"] == "r2"]["value"].iloc[0]
+                if not m_rows.empty and "r2" in m_rows["metric"].to_numpy()
+                else np.nan
+            )
+            dir_acc = (
+                m_rows[m_rows["metric"] == "direction_accuracy"]["value"].iloc[0]
+                if not m_rows.empty and "direction_accuracy" in m_rows["metric"].to_numpy()
+                else np.nan
+            )
 
             if pd.notna(r2_val) and r2_val > 0:
                 status = "🟢 Active Tilt (Skill Cleared)"
@@ -340,14 +356,16 @@ with tab_digest:
             else:
                 status = "🔴 Gated Out (Noise)"
 
-            tilts.append({
-                "Asset": sym,
-                "Horizon": f"{h}d",
-                "Forecast Return": f"{pred:+.2%}",
-                "OOS R²": f"{r2_val:+.3f}" if pd.notna(r2_val) else "N/A",
-                "Direction Accuracy": f"{dir_acc:.1%}" if pd.notna(dir_acc) else "N/A",
-                "Status": status
-            })
+            tilts.append(
+                {
+                    "Asset": sym,
+                    "Horizon": f"{h}d",
+                    "Forecast Return": f"{pred:+.2%}",
+                    "OOS R²": f"{r2_val:+.3f}" if pd.notna(r2_val) else "N/A",
+                    "Direction Accuracy": f"{dir_acc:.1%}" if pd.notna(dir_acc) else "N/A",
+                    "Status": status,
+                }
+            )
         st.dataframe(pd.DataFrame(tilts), hide_index=True, width="stretch")
 
     st.divider()
@@ -688,10 +706,13 @@ with tab_ml:
             st.divider()
             st.subheader("ML Feature Importance (Macro Drivers)")
             st.caption(
-                "Gini feature importances from tree-based return models. Shows which top macro indicators "
+                "Gini feature importances from tree-based return models. "
+                "Shows which top macro indicators "
                 "(Shiller CAPE, Yield Curve, VIX, NFCI) drive predictions per asset."
             )
-            feat_syms = sorted(metrics.loc[metrics["model"] == "return_gb", "symbol"].dropna().unique())
+            feat_syms = sorted(
+                metrics.loc[metrics["model"] == "return_gb", "symbol"].dropna().unique()
+            )
             if feat_syms:
                 sel_fi_sym = st.selectbox("Feature importance asset", feat_syms, index=0)
                 _chart(charts.feature_importance_chart(metrics, symbol=sel_fi_sym, height=300))

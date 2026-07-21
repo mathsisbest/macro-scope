@@ -671,8 +671,9 @@ def feature_importance_chart(
     """Horizontal bar chart showing top macro & volatility feature importances for a symbol."""
     needed = {"model", "symbol", "metric", "value"}
     fig = go.Figure()
+    no_data_title = dict(text=f"{symbol} — feature importance (no data)", font=_TITLE_FONT)
     if metrics.empty or not needed <= set(metrics.columns):
-        fig.update_layout(title=dict(text=f"{symbol} — feature importance (no data)", font=_TITLE_FONT))
+        fig.update_layout(title=no_data_title)
         return style_fig(fig, height=height)
 
     rows = metrics[
@@ -682,7 +683,7 @@ def feature_importance_chart(
     ].copy()
 
     if rows.empty:
-        fig.update_layout(title=dict(text=f"{symbol} — feature importance (no data)", font=_TITLE_FONT))
+        fig.update_layout(title=no_data_title)
         return style_fig(fig, height=height)
 
     rows["feature"] = rows["metric"].str.replace("feature_importance_", "", regex=False)
