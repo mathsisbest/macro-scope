@@ -280,7 +280,7 @@ def evaluate_forecast(
             if ensemble_method not in ("mean", "median"):
                 raise ValueError(f"Unknown ensemble_method: {ensemble_method}")
             if ensemble_method == "median":
-                for i, pred in zip(test_idx, preds):
+                for i, pred in zip(test_idx, preds, strict=False):
                     median_preds.setdefault(i, []).append(float(pred))
             else:
                 all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
