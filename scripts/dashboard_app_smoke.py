@@ -90,10 +90,10 @@ def test_populated_db_path() -> None:
     # ── 1. No unhandled exception ─────────────────────────────────────────────
     assert not at.exception, f"app.py raised an exception: {at.exception}"
 
-    # ── 2. All 6 tabs present ─────────────────────────────────────────────────
+    # ── 2. All 5 tabs present ─────────────────────────────────────────────────
     all_tabs = at.tabs
-    assert len(all_tabs) == 6, (
-        f"Expected 6 tabs (Weekly Digest/Markets/Macro/ML forecast/AI brief/Portfolio), "
+    assert len(all_tabs) == 5, (
+        f"Expected 5 tabs (Weekly Digest/Markets/Macro/ML forecast/Portfolio), "
         f"got {len(all_tabs)}: {all_tabs}"
     )
 
@@ -104,8 +104,8 @@ def test_populated_db_path() -> None:
     )
 
     # ── 4. Portfolio panels: the portfolio tab must contain at least one plotly chart.
-    # AppTest indexes tabs by label (0-based) OR by their render position; tab[5] = Portfolio.
-    portfolio_tab = all_tabs[5]
+    # AppTest indexes tabs by label (0-based) OR by their render position; tab[4] = Portfolio.
+    portfolio_tab = all_tabs[4]
     # If the portfolio backtest ran, there will be at least one plotly_chart element there.
     # We accept an empty portfolio (mmi seed doesn't always run portfolio) with a graceful info.
     # Either way, the tab itself must be render-error-free — at.exception covers that.
