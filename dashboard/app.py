@@ -380,6 +380,28 @@ with tab_digest:
             with reg_cols[idx % 3]:
                 st.metric(label=f"{reg_sym} Regime", value=cur_reg)
 
+    st.divider()
+
+    # 4. Interactive Scenario Stress-Tester
+    with st.expander("⚡ Interactive Macro Scenario Stress-Tester", expanded=False):
+        st.caption(
+            "Simulate custom macro shocks (Fed Funds rate shift, VIX spike) "
+            "on 20-day predicted asset returns."
+        )
+        sim_col1, sim_col2 = st.columns(2)
+        with sim_col1:
+            rate_shock = st.slider("Fed Funds Rate Shift (bps)", -200, +200, 0, step=25)
+        with sim_col2:
+            vix_shock = st.slider("VIX Index Shift", -10, +20, 0, step=1)
+
+        sim_fc = charts.return_forecast_table(data.ml_forecast())
+        if not sim_fc.empty:
+            _chart(
+                charts.scenario_simulation_chart(
+                    sim_fc, delta_rate_bps=rate_shock, delta_vix=vix_shock, height=300
+                )
+            )
+
 with tab_mkt:
     # Cross-asset view spanning every class — equities, bonds, commodities, FX AND crypto (BTC has
     # full daily history in fct_asset_daily, so it joins the cross-asset stats like any other

@@ -58,6 +58,22 @@ class Extractor(ABC):
         df = df.dropna(subset=self.keys)
         return df
 
+    def validate_pydantic(self, df: pd.DataFrame, pydantic_model: type) -> pd.DataFrame:
+        """Validate dataframe rows using a Pydantic schema model."""
+        if df.empty:
+            return df
+        records = df.to_dict(orient="records")
+        valid_records = []
+        for r in records:
+            try:
+                obj = pydantic_model(**r)
+                valid_records.append(obj.model_dump())
+            except Exception:
+                continue
+        if not valid_records:
+            return pd.DataFrame(columns=df.columns)
+        return pd.DataFrame(valid_records)
+
     def skip_reason(self) -> str | None:
         """Return a human reason to SKIP this run (e.g. a missing API key), or None to run.
 

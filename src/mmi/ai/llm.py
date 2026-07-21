@@ -56,21 +56,32 @@ def provider_model() -> str:
     reraise=True,
 )
 def complete(prompt: str, *, system: str | None = None, max_tokens: int = 800) -> str:
-    """Return a completion from the configured provider.
+    """Return a completion with multi-provider failover fallback.
 
-    Any transport error (including HTTP 429 rate-limits) is re-raised after up to 3 retries
-    so the caller (generate_brief) can degrade to 'offline-template (llm-failed)' without
-    crashing.  Logic errors (bad JSON, no text parts) raise RuntimeError which bypasses the
-    retry and surfaces immediately to the same handler.
+    Tries configured primary provider (settings.llm_provider), and falls over
+    to secondary providers (gemini -> groq -> claude) if primary API is unavailable
+    or rate-limited.
     """
-    provider = settings.llm_provider
-    if provider == "gemini":
-        return _gemini(prompt, system, max_tokens)
-    if provider == "groq":
-        return _groq(prompt, system, max_tokens)
-    if provider == "claude":
-        return _claude(prompt, system, max_tokens)
-    raise ValueError(f"unknown provider {provider}")
+    primary = settings.llm_provider
+    providers_order = [primary] + [p for p in ("gemini", "groq", "claude") if p != primary]
+
+    last_error = None
+    for p in providers_order:
+        try:
+            if p == "gemini" and settings.gemini_api_key:
+                return _gemini(prompt, system, max_tokens)
+            if p == "groq" and settings.groq_api_key:
+                return _groq(prompt, system, max_tokens)
+            if p == "claude" and settings.anthropic_api_key:
+                return _claude(prompt, system, max_tokens)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("LLM provider '%s' failed: %s; trying next provider...", p, exc)
+            last_error = exc
+            continue
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("No configured LLM provider has a valid API key.")
 
 
 def _gemini(prompt: str, system: str | None, max_tokens: int) -> str:
