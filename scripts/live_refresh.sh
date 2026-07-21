@@ -3,13 +3,13 @@
 #
 # Orchestrates the full local pipeline in dependency order:
 #   1. mmi ingest          — pull live data from free APIs
-#   2. dbt build (first)   — staging → marts (all except portfolio)
-#   3. mmi portfolio       — heavy walk-forward backtest (uncapped, uses real n_boot)
-#   4. dbt build (second)  — rebuild marts including portfolio marts
-#   5. mmi ml              — train + score HAR realized-vol + direction models
-#   6. mmi ml-gate STRICT  — skill gate (exits non-zero if model does NOT clear the bar)
-#                            This BLOCKS steps 7-8; a failing model can never produce a
+#   2. dbt build (first)   — staging → marts (non-ML, non-portfolio marts)
+#   3. mmi ml              — train + score HAR realized-vol + direction models
+#   4. mmi ml-gate STRICT  — skill gate (exits non-zero if model does NOT clear the bar)
+#                            This BLOCKS steps 5-8; a failing model can never produce a
 #                            committed artifact. Omit --warn-only intentionally.
+#   5. mmi portfolio       — heavy walk-forward backtest (uncapped, uses real n_boot)
+#   6. dbt build (second)  — rebuild all marts including portfolio + ML marts
 #   7. mmi ai              — generate the GenAI market brief (uses LLM_PROVIDER)
 #   8. mmi snapshot        — export marts.* → data/public/*.parquet
 #
@@ -85,35 +85,26 @@ echo "--- Step 1/8: mmi ingest ---"
 "$PY" -m mmi.cli ingest
 echo ""
 
-# Step 2 — first dbt build: staging → marts (non-portfolio marts)
+# Step 2 — first dbt build: staging → marts (non-ML marts)
 echo "--- Step 2/8: dbt build (first pass) ---"
-"$DBT" build --project-dir transform --profiles-dir transform --target dev
+"$DBT" build --project-dir transform --profiles-dir transform --target dev \
+    --exclude tag:portfolio tag:ml --indirect-selection cautious
 echo ""
 
-# Step 3 — heavy portfolio backtest (walk-forward, uncapped)
-echo "--- Step 3/8: mmi portfolio (n_boot=$MMI_PORTFOLIO_N_BOOT) ---"
-"$PY" -m mmi.cli portfolio
-echo ""
-
-# Step 4 — second dbt build: rebuild all marts including portfolio marts
-echo "--- Step 4/8: dbt build (second pass — including portfolio marts) ---"
-"$DBT" build --project-dir transform --profiles-dir transform --target dev
-echo ""
-
-# Step 5 — train + score HAR realized-vol and direction models
-echo "--- Step 5/8: mmi ml ---"
+# Step 3 — train + score HAR realized-vol and direction models
+echo "--- Step 3/8: mmi ml ---"
 "$PY" -m mmi.cli ml
 echo ""
 
-# Step 6 — skill gate STRICT (no --warn-only): exits non-zero if model does not clear the bar.
-#           This BLOCKS steps 7 and 8. A model that fails the skill bar can NEVER produce
+# Step 4 — skill gate STRICT (no --warn-only): exits non-zero if model does not clear the bar.
+#           This BLOCKS steps 5-8. A model that fails the skill bar can NEVER produce
 #           a committed snapshot artifact.
-echo "--- Step 6/8: mmi ml-gate (STRICT — blocks snapshot on failure) ---"
+echo "--- Step 4/8: mmi ml-gate (STRICT — blocks snapshot on failure) ---"
 if ! "$PY" -m mmi.cli ml-gate; then
     echo ""
     echo "ERROR: mmi ml-gate STRICT failed — the HAR realized-vol model did not clear the"
     echo "       skill bar (oos_r2 >= 0.10 AND qlike_skill_ratio < 0.99 AND"
-    echo "       folds_passed >= ceil(0.6*n_folds)). Steps 7 (mmi ai) and 8 (mmi snapshot)"
+    echo "       folds_passed >= ceil(0.6*n_folds)). Steps 5-8 (portfolio, ai, snapshot)"
     echo "       were BLOCKED. No snapshot was written; data/public is unchanged."
     echo ""
     echo "       If running against sample/keyless data this is expected — see the dry-run"
@@ -127,6 +118,16 @@ if ! "$PY" -m mmi.cli ml-gate; then
     echo "           the committed artifact"
     exit 1
 fi
+echo ""
+
+# Step 5 — heavy portfolio backtest (walk-forward, uncapped)
+echo "--- Step 5/8: mmi portfolio (n_boot=$MMI_PORTFOLIO_N_BOOT) ---"
+"$PY" -m mmi.cli portfolio
+echo ""
+
+# Step 6 — second dbt build: rebuild all marts including portfolio + ML marts
+echo "--- Step 6/8: dbt build (second pass — including portfolio + ML marts) ---"
+"$DBT" build --project-dir transform --profiles-dir transform --target dev
 echo ""
 
 # Step 7 — generate the GenAI market brief

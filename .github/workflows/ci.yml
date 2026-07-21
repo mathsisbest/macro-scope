@@ -62,5 +62,7 @@ jobs:
         run: PYTHONPATH=. python scripts/dashboard_smoke.py
       - name: Dashboard app-render smoke
         run: PYTHONPATH=. python scripts/dashboard_app_smoke.py
+      - name: Public import smoke (clean-room install)
+        run: python scripts/public_import_smoke.py
       - name: Tests
         run: pytest
