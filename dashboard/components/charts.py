@@ -577,47 +577,26 @@ def return_forecast_table(fc: pd.DataFrame) -> pd.DataFrame:
 def return_performance_table(metrics: pd.DataFrame) -> pd.DataFrame:
     """Wide per-asset return-model metrics with explicit direction baselines."""
     needed = {"model", "symbol", "metric", "value"}
-    if metrics.empty or not needed <= set(metrics.columns):
-        return pd.DataFrame(
-            columns=[
-                "symbol",
-                "ic",
-                "direction_accuracy",
-                "baseline_direction_accuracy",
-                "direction_edge",
-                "positive_prediction_rate",
-                "r2",
-                "n_obs",
-            ]
-        )
-    rows = metrics[metrics["model"].str.startswith("return_", na=False)]
-    if rows.empty:
-        return pd.DataFrame(
-            columns=[
-                "symbol",
-                "ic",
-                "direction_accuracy",
-                "baseline_direction_accuracy",
-                "direction_edge",
-                "positive_prediction_rate",
-                "r2",
-                "n_obs",
-            ]
-        )
-    wide = (
-        rows.pivot_table(index="symbol", columns="metric", values="value", aggfunc="last")
-        .reset_index()
-        .rename_axis(None, axis=1)
-    )
     cols = [
         "ic",
         "direction_accuracy",
         "baseline_direction_accuracy",
         "direction_edge",
         "positive_prediction_rate",
+        "sharpe",
         "r2",
         "n_obs",
     ]
+    if metrics.empty or not needed <= set(metrics.columns):
+        return pd.DataFrame(columns=["symbol", *cols])
+    rows = metrics[metrics["model"].str.startswith("return_", na=False)]
+    if rows.empty:
+        return pd.DataFrame(columns=["symbol", *cols])
+    wide = (
+        rows.pivot_table(index="symbol", columns="metric", values="value", aggfunc="last")
+        .reset_index()
+        .rename_axis(None, axis=1)
+    )
     for col in cols:
         if col not in wide.columns:
             wide[col] = pd.NA
