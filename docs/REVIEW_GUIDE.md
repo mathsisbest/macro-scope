@@ -73,7 +73,7 @@ checklist. You are review-only — never edit code.
 - **ML baseline honesty:** on synthetic sample data the model *trails* the naive baseline (no
   signal) — expected. On real data, re-evaluate (consider direction-classification + proper CV);
   don't approve over-claimed predictive power.
-- **No data in git:** the scheduled cron writes to MotherDuck; the `.duckdb` binary and ingested
+- **No data in git:** the scheduled cron writes Parquet snapshots to `data/public/` (committed to
   data are never committed — flag any data file in the diff.
 - **Secrets & freshness:** no keys in code/logs/UI; dbt source-freshness should surface in the UI.
 - **Yahoo v8** is an unofficial endpoint — best-effort; **FRED / World Bank** are the reliable core.

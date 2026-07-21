@@ -508,7 +508,7 @@ with tab_ml:
         # ---- Return forecast — regime-aware multi-horizon (the headline model) ----
         st.subheader("Return forecast — regime-aware (multi-horizon)")
         st.caption(
-            "Gradient Boosting with 35 features (yield curve, VIX, dollar, financial conditions, "
+            "Gradient Boosting with 39 features (yield curve, VIX, dollar, financial conditions, "
             "cross-asset correlations, kurtosis/skewness). Per-regime models for Low/Med/High vol."
         )
         st.warning(

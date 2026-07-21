@@ -157,9 +157,9 @@ tested SQL.
 |---|---|---|
 | Language | **Python 3.11+** | Ubiquitous for data/ML; one language across all layers |
 | Ingestion | **httpx + pandas + pydantic** | Typed, testable extractors |
-| Storage | **DuckDB** (local dev/CI) + **MotherDuck** free tier (deployed) | Zero-infra OLAP engine; the scheduled cron + dashboard share state via MotherDuck. The `.duckdb` binary is **not** committed to git |
+| Storage | **DuckDB** (local dev/CI); public deploy reads committed Parquet snapshots in `data/public/` | Zero-infra OLAP engine; no shared DB needed. The `.duckdb` binary is **not** committed to git |
 | Transform | **dbt-core + dbt-duckdb** | Industry-standard analytics engineering; 100% open-source |
-| ML | **scikit-learn, statsmodels** | Classic, explainable, no GPU needed |
+| ML | **scikit-learn** | Classic, explainable, no GPU needed |
 | Experiment tracking | **JSON metrics + DuckDB `model_metrics` table** | Free, no MLflow server needed (MLflow optional later) |
 | GenAI | **Provider-agnostic client** → default **Google Gemini free** (1,500 req/day) or **Groq free**; **Claude** as a drop-in | Truly free default; Claude optional (see honesty note §10) |
 | Dashboard | **Streamlit** | Code-defined UI + charts; **free Community Cloud** hosting that deploys from **public** repos |
@@ -175,9 +175,9 @@ tested SQL.
 
 ```
 markets-macro-intelligence/
-├── README.md                      # Entry point: what/why/how-to-run, badges, screenshots
+├── README.md                      # Entry point: what/why/how-to-run, badges
 ├── PLAN.md                        # This document
-├── LICENSE                        # MIT
+├── LICENSE                        # All rights reserved
 ├── pyproject.toml                 # Deps + tool config (ruff, pytest, mypy)
 ├── Makefile                       # make ingest / build / test / dashboard / all
 ├── .env.example                   # Documents every required secret (no real values)
@@ -254,11 +254,11 @@ markets-macro-intelligence/
   `fct_market_macro` (the joined "markets in macro context" table the dashboard centres on).
 - **Tests**: `not_null`, `unique`, `accepted_range`, relationship tests, plus a custom test
   that returns are within sane bounds. **Source freshness** flags stale data.
-- `dbt docs generate` gives free, browsable **lineage** — great to screenshot for the README.
+- `dbt docs generate` gives free, browsable **lineage**.
 
 ### 7.3 ML / AI (`src/mmi/ml/`)
 - **Per-symbol return forecast** (PR #65). Each asset gets its own config optimised via systematic
-  hyperparameter sweep (scripts/ml_full_sweep.py): model type (GradientBoosting / LightGBM), feature
+     hyperparameter sweep (`src/mmi/ml/research.py`): model type (GradientBoosting / LightGBM), feature
   set, target horizon, and window strategy. The active configs (Jul 2026) are:
 
   | Asset | Model | Horizon | Feature set | OOS R² | Why |
@@ -322,12 +322,11 @@ markets-macro-intelligence/
 - **Packaged code**, not loose scripts (`pip install -e .`); clear module boundaries per layer.
 - **Typed config** via `pydantic-settings`; **secrets only via env** (`.env` gitignored,
   `.env.example` documents them); never committed.
-- **Tests**: unit tests for extractors/features (with mocked HTTP), a dbt build smoke test,
-  import test for the dashboard. Coverage reported in CI.
+- **Tests**: unit tests for extractors/features (with mocked HTTP), an import test for the dashboard. Coverage reported in CI.
 - **CI** (`ci.yml`): ruff lint+format check, mypy, pytest on every PR.
 - **Lint/format**: ruff; **pre-commit** stops bad commits locally.
 - **Conventional commits** + a branch-per-feature workflow; PR template.
-- **Docs**: README with run instructions + screenshots, `docs/architecture.md`, and **ADRs**
+- **Docs**: README with run instructions, `docs/architecture.md`, and **ADRs**
   recording key decisions (why DuckDB, why micro-batch over Kafka, why provider-agnostic LLM).
 - **Reproducibility**: pinned deps, `make all` runs the whole pipeline from clean, and a tiny
   committed sample dataset means a reviewer can `git clone && make dashboard` in 2 minutes.
@@ -338,8 +337,10 @@ markets-macro-intelligence/
 ## 9. Deployment (all free)
 
 1. **Code & CI:** public GitHub repo. CI runs automatically on every PR — `daily.yml` and `weekly.yml` handle scheduled ingestion.
-2. **Data:** the scheduled cron writes to **MotherDuck** (free tier) and the dashboard reads from
-   it — the `.duckdb` binary is **not** committed to git. Local dev/CI use a local DuckDB file.
+2. **Data:** the scheduled cron commits Parquet snapshots to the repo (`data/public/`) and the public
+   dashboard reads from `data/public/` in snapshot mode. The `.duckdb` binary is **not** committed to git.
+
+   Local dev/CI use a local DuckDB file.
 3. **Dashboard:** **Streamlit Community Cloud**, connected to the public repo. It sets a
    webhook, so **every push auto-redeploys**. Secrets (API keys) go in Streamlit's encrypted
    secrets box, not the repo.
@@ -373,10 +374,10 @@ markets-macro-intelligence/
 |---|---|---|
 | **0 — Scaffold** *(this session)* | Repo skeleton, configs, CI, one working extractor, dbt skeleton, dashboard shell, sample data | `make dashboard` runs locally |
 | **1 — Data Engineering** | All extractors + cron + idempotent loads + audit table | Green ingest workflow on schedule |
-| **2 — Analytics Engineering** | Full dbt staging→marts + tests + freshness + docs | `dbt build` green, lineage screenshot |
+| **2 — Analytics Engineering** | Full dbt staging→marts + tests + freshness + docs | `dbt build` green, lineage docs |
 | **3 — ML/AI** | Forecast + regime models, backtest, tracked metrics | Metrics table + forecast in dashboard |
 | **4 — GenAI** | Provider-agnostic narrative layer | Daily brief auto-generated & shown |
-| **5 — Polish** | README screenshots, ADRs, coverage badge, deploy to Streamlit Cloud | Public repo + live URL |
+| **5 — Polish** | ADRs, coverage badge, deploy to Streamlit Cloud | Public repo + live URL |
 | **6 — Optional** | Sports-odds module / real Kafka demo | See §13 |
 | **7 — Portfolio backtesting (capstone)** | Look-ahead-free allocation backtest (equal-wt / inverse-vol / true risk-parity; ML max-Sharpe frontier as a *measured* experiment), tested portfolio marts, bootstrap CIs, regime-conditional analysis, AI commentary | See **issue #7** + its critical review; built in sub-phases 0–D, **after** P1–P3 |
 

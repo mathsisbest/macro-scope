@@ -38,14 +38,14 @@ Generic roles (Planner / Builder / Reviewer — see `~/.claude/velocity-playbook
 - **Plan / architect:** `Planner: <question>` → read-only Q&A, **no commits**; hands specs via the repo.
 
 ## Key decisions (full rationale in PLAN.md + docs/adr/)
-- **Stack:** Python 3.10+, **DuckDB** (local dev/CI), **dbt-duckdb** (medallion staging→marts),
+- **Stack:** Python 3.11+, **DuckDB** (local dev/CI), **dbt-duckdb** (medallion staging→marts),
   **scikit-learn**, **Streamlit + Plotly**. The **public deploy reads committed Parquet snapshots**
   (`data/public/`, snapshot mode); **MotherDuck** is an optional live store for private dev only,
   not the public path.
 - **GenAI is provider-agnostic** (`src/mmi/ai/llm.py`): `LLM_PROVIDER` = gemini|groq|claude, default
   **free Gemini/Groq**, deterministic-template fallback with no key. The Claude API is metered and
   **not** covered by the owner's subscription — see `Never`.
-- Data sources (Yahoo v8 / FRED / World Bank), the micro-batch "streaming" model (ADR-0003), and
+- Data sources (Yahoo v8 / FRED / World Bank / **Shiller CAPE**), the micro-batch "streaming" model (ADR-0003), and
   the Sports-betting Phase-2 plan → **PLAN.md + docs/adr/**.
 
 ## Current status — read the live sources, not this file
@@ -87,7 +87,7 @@ view/verify — see `Never`.
 - Lint/format: ruff (line length 100). Tests: pytest. Pre-commit configured.
 
 ## Repo map (full tree in PLAN.md §6)
-`src/mmi/{ingestion,ml,ai,utils}` · `transform/` (dbt) · `dashboard/` (Streamlit) · `config/` ·
+`src/mmi/{ingestion,ml,portfolio,ai,utils}` · `scripts/` · `transform/` (dbt) · `dashboard/` (Streamlit) · `config/` ·
 `tests/` · `.github/workflows/` (`ci.yml` — gate on PRs; `daily.yml` + `weekly.yml` — scheduled snapshot refresh) ·
 `docs/` (+ ADRs).
 
