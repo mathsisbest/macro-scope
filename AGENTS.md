@@ -31,12 +31,13 @@ datasets, and roadmap in **PLAN.md**.
 ## Roles & session kickoff
 Generic roles (Planner / Builder / Reviewer — see `~/.claude/velocity-playbook.md`), run as
 **separate sessions** with a repo-only handoff (no chat relay) — the anti-rubber-stamp rule.
-- **Build:** `Builder: implement <issue #N / task>` → one small single-concern PR.
-- **Review:** `/review-pr <n>` → separate session; loads `docs/REVIEW_GUIDE.md`, posts via `gh pr review`.
-  **Every review must:** (1) write unit tests for uncovered modules with adversarial edge-case depth,
-  (2) run `pytest --cov=mmi --cov-report=term-missing` before/after to prove coverage improved,
-  (3) follow the extracted-pure-functions pattern (`dashboard/components/utils.py`) for dashboard helpers.
-- **Plan / architect:** `Planner: <question>` → read-only Q&A, **no commits**; hands specs via the repo.
+- **Plan:** Outline high-level goals, task breakdown, and technical rationale before starting implementation.
+- **Build:** Implement <issue #N / task> in small, single-concern branches (`pNN-slug`). All changes must pass `make ci`.
+- **Review (External / DeepSeek / Opencode):** The user performs adversarial review of PR branches using DeepSeek or other opencode models. Every review checks:
+  (1) Unit tests for uncovered modules with adversarial edge-case depth,
+  (2) `pytest --cov=mmi --cov-report=term-missing` proves test coverage target (>=70%) is met,
+  (3) Extracted pure-functions pattern for dashboard/utility components,
+  (4) Compliance with £0 cost, free-tier limits, and no main branch direct pushes.
 
 ## Key decisions (full rationale in PLAN.md + docs/adr/)
 - **Stack:** Python 3.10+, **DuckDB** (local dev/CI), **dbt-duckdb** (medallion staging→marts),
