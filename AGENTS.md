@@ -30,12 +30,13 @@ datasets, and roadmap in **PLAN.md**.
 ## Roles & session kickoff
 Generic roles (Planner / Builder / Reviewer — see `~/.claude/velocity-playbook.md`), run as
 **separate sessions** with a repo-only handoff (no chat relay) — the anti-rubber-stamp rule.
-- **Build:** `Builder: implement <issue #N / task>` → one small single-concern PR.
-- **Review:** `/review-pr <n>` → separate session; loads `docs/REVIEW_GUIDE.md`, posts via `gh pr review`.
-  **Every review must:** (1) write unit tests for uncovered modules with adversarial edge-case depth,
-  (2) run `pytest --cov=mmi --cov-report=term-missing` before/after to prove coverage improved,
-  (3) follow the extracted-pure-functions pattern (`dashboard/components/utils.py`) for dashboard helpers.
-- **Plan / architect:** `Planner: <question>` → read-only Q&A, **no commits**; hands specs via the repo.
+- **Plan:** Outline high-level goals, task breakdown, and technical rationale before starting implementation.
+- **Build:** Implement <issue #N / task> in small, single-concern branches (`pNN-slug`). All changes must pass `make ci`.
+- **Review (External / DeepSeek / Opencode):** The user performs adversarial review of PR branches using DeepSeek or other opencode models. Every review checks:
+  (1) Unit tests for uncovered modules with adversarial edge-case depth,
+  (2) `pytest --cov=mmi --cov-report=term-missing` proves test coverage target (>=70%) is met,
+  (3) Extracted pure-functions pattern for dashboard/utility components,
+  (4) Compliance with £0 cost, free-tier limits, and no main branch direct pushes.
 
 ## Key decisions (full rationale in PLAN.md + docs/adr/)
 - **Stack:** Python 3.10+, **DuckDB** (local dev/CI), **dbt-duckdb** (medallion staging→marts),
@@ -65,16 +66,23 @@ make demo          # seed sample data (+ build dbt marts) and launch the dashboa
 make ingest && make dbt-build && make ml && make ai && make dashboard
 ```
 
-## Viewing the dashboard — local-first
-View and verify the dashboard **locally**; the deployed app is for external sharing only.
+## Viewing the dashboard — local-first vs production
+Always verify the dashboard **locally** during development and PR review; the deployed Streamlit Cloud app is for post-merge verification only.
+
 ```bash
-make dashboard      # → http://localhost:8501  (add --server.headless to suppress the browser pop)
+make dashboard      # → http://localhost:8501 (add --server.headless to run quietly without browser pop)
 ```
+
+**Why local-first during Build & Review:**
+- **Instant feedback & logs:** Errors, stack traces, and stdout stream directly to terminal.
+- **Pre-merge testing:** Tests unmerged PR branches (`pNN-slug`) locally before committing/merging (Streamlit Cloud only builds `main`).
+- **No browser disruption:** Headless execution avoids popping OS browser windows during agentic coding or CI runs.
+
 With no local `data/mmi.duckdb` and no MotherDuck token, `dashboard/snapshot_boot.py` auto-enables
-snapshot mode, so `make dashboard` serves the committed real-data Parquet in `data/public/` with
-**no keys**. Use `make dashboard`, **not** `make demo` (`demo` seeds *synthetic* sample data the
-dashboard would then read instead of the real snapshot). Don't open `macro-scope.streamlit.app` to
-view/verify — see `Never`.
+snapshot mode, serving the committed real-data Parquet in `data/public/` keyless. Use `make dashboard`, **not** `make demo` (`demo` seeds *synthetic* sample data).
+
+**Deployed App (`macro-scope.streamlit.app`):**
+Use only for **post-merge verification** on `main` to confirm Streamlit Cloud auto-deployment succeeded.
 
 ## Conventions
 - Package code under `src/mmi/` (installable, `mmi` CLI). No loose scripts.

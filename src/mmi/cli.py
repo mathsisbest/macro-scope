@@ -6,12 +6,14 @@ import argparse
 import contextlib
 import sys
 import traceback
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import pandas as pd
+
+    from mmi.ingestion.base import Extractor
 
 from mmi.utils.db import connect
 from mmi.utils.logging import get_logger
@@ -87,74 +89,85 @@ def cmd_ingest(_: argparse.Namespace) -> int:
         loader = DuckDBLoader(con)
 
         # Phase 1: Parallel fetch (network I/O bound)
-        fetch_results = {}
+        fetch_results: dict[str, tuple[Extractor, str, Any]] = {}
         with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = {}
-            for cls in EXTRACTORS:
-                extractor = cls(loader)
-                futures[executor.submit(_fetch_extractor, extractor)] = extractor
+            futures = {
+                executor.submit(_fetch_extractor, cls(loader)): cls(loader) for cls in EXTRACTORS
+            }
 
             for future in as_completed(futures):
                 extractor = futures[future]
                 try:
-                    df = future.result()
-                    fetch_results[extractor] = df
+                    res_type, payload = future.result()
+                    fetch_results[extractor.source] = (extractor, res_type, payload)
                 except Exception as exc:
-                    if getattr(extractor, "required", True):
-                        required_failures += 1
-                        log.error(
-                            "REQUIRED source %s fetch failed: %s", extractor.source, str(exc)[:100]
-                        )
-                    else:
-                        optional_failures += 1
-                        log.warning(
-                            "optional source %s fetch failed: %s", extractor.source, str(exc)[:100]
-                        )
+                    fetch_results[extractor.source] = (extractor, "error", exc)
 
-        # Phase 2: Sequential load (DuckDB writes)
-        for extractor, df in fetch_results.items():
-            if df is None or df.empty:
+        # Phase 2: Sequential load & audit logging (DuckDB writes)
+        for cls in EXTRACTORS:
+            ext_instance = cls(loader)
+            if ext_instance.source not in fetch_results:
+                continue
+            extractor, res_type, payload = fetch_results[ext_instance.source]
+            run_id = loader.start_run(extractor.source)
+
+            if res_type == "skip":
+                reason = payload
+                log.warning("%s: skipping — %s", extractor.source, reason)
+                loader.finish_run(run_id, 0, "skipped", reason)
+                continue
+
+            if res_type == "error":
+                err = payload
+                msg = redact(str(err))
+                loader.finish_run(run_id, 0, "failed", msg)
                 if getattr(extractor, "required", True):
                     required_failures += 1
-                    log.error("REQUIRED source %s returned no data", extractor.source)
+                    log.error("REQUIRED source %s fetch failed: %s", extractor.source, msg[:100])
                 else:
                     optional_failures += 1
-                    log.warning("optional source %s returned no data", extractor.source)
+                    log.warning("optional source %s fetch failed: %s", extractor.source, msg[:100])
                 continue
+
+            # res_type == "ok"
+            df = payload
+            if df is None or df.empty:
+                loader.finish_run(run_id, 0, "success")
+                log.info("%s: 0 rows", extractor.source)
+                continue
+
             try:
-                run_id = extractor.loader.start_run(extractor.source)
                 validated = extractor.validate(df)
-                rows = extractor.loader.upsert(extractor.table, validated, extractor.keys)
-                extractor.loader.finish_run(run_id, rows, "success")
+                rows = loader.upsert(extractor.table, validated, extractor.keys)
+                loader.finish_run(run_id, rows, "success")
                 log.info("%s: %s rows", extractor.source, rows)
             except Exception as exc:
+                msg = redact(str(exc))
+                loader.finish_run(run_id, 0, "failed", msg)
                 if getattr(extractor, "required", True):
                     required_failures += 1
-                    log.error(
-                        "REQUIRED source %s load failed: %s", extractor.source, str(exc)[:100]
-                    )
+                    log.error("REQUIRED source %s load failed: %s", extractor.source, msg[:100])
                 else:
                     optional_failures += 1
-                    log.warning(
-                        "optional source %s load failed: %s", extractor.source, str(exc)[:100]
-                    )
+                    log.warning("optional source %s load failed: %s", extractor.source, msg[:100])
 
     if optional_failures:
         log.warning("%d optional source(s) failed; run still successful", optional_failures)
     return 1 if required_failures else 0
 
 
-def _fetch_extractor(extractor):
+def _fetch_extractor(extractor: Extractor) -> tuple[str, Any]:
     """Fetch data from an extractor (network I/O bound — safe to parallelize)."""
     reason = extractor.skip_reason()
     if reason:
-        raise RuntimeError(f"skipped: {reason}")
+        return ("skip", reason)
     start_after = None
     if extractor.watermark_col:
         wm = extractor.loader.watermark(extractor.table, extractor.watermark_col)
         if wm:
             start_after = wm
-    return extractor.fetch(start_after=start_after)
+    df = extractor.fetch(start_after=start_after)
+    return ("ok", df)
 
 
 def cmd_build(_: argparse.Namespace) -> int:
