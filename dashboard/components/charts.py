@@ -665,6 +665,47 @@ def return_regime_breakdown_table(metrics: pd.DataFrame) -> pd.DataFrame:
     return rows[["symbol", "regime", "direction_accuracy"]].sort_values(["symbol", "regime"])
 
 
+def feature_importance_chart(
+    metrics: pd.DataFrame, symbol: str = "SPY", height: int = HEIGHT_MEDIUM
+) -> go.Figure:
+    """Horizontal bar chart showing top macro & volatility feature importances for a symbol."""
+    needed = {"model", "symbol", "metric", "value"}
+    fig = go.Figure()
+    no_data_title = dict(text=f"{symbol} — feature importance (no data)", font=_TITLE_FONT)
+    if metrics.empty or not needed <= set(metrics.columns):
+        fig.update_layout(title=no_data_title)
+        return style_fig(fig, height=height)
+
+    rows = metrics[
+        (metrics["model"] == "return_gb")
+        & (metrics["symbol"] == symbol)
+        & (metrics["metric"].str.startswith("feature_importance_", na=False))
+    ].copy()
+
+    if rows.empty:
+        fig.update_layout(title=no_data_title)
+        return style_fig(fig, height=height)
+
+    rows["feature"] = rows["metric"].str.replace("feature_importance_", "", regex=False)
+    rows["importance"] = pd.to_numeric(rows["value"], errors="coerce").fillna(0.0)
+    top = rows.sort_values("importance", ascending=True).tail(10)
+
+    fig.add_bar(
+        x=top["importance"],
+        y=top["feature"],
+        orientation="h",
+        marker=dict(color=PALETTE["accent"]),
+        name="Importance",
+    )
+    fig.update_layout(
+        title=dict(text=f"{symbol} — Top 10 Feature Importances", font=_TITLE_FONT),
+        xaxis=dict(title="Importance Weight"),
+        yaxis=dict(title="Feature"),
+    )
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=height)
+
+
 def vol_skill_r2_chart(
     metrics: pd.DataFrame, symbol: str = "SPY", height: int = HEIGHT_MEDIUM
 ) -> go.Figure:

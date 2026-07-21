@@ -39,18 +39,27 @@ _TARGET_TYPES = ("raw", "vol_adjusted", "excess")
 # ---------- internal helpers ----------
 
 
-def _model_kwargs(model_name: str) -> dict:
+def _model_kwargs(model_name: str, loss: str = "squared_error") -> dict:
     kw: dict = {"random_state": 42}
     if model_name == "gb":
+        loss_val = loss if loss in ("squared_error", "huber", "absolute_error") else "squared_error"
         kw.update(
             max_iter=150,
             max_depth=4,
             min_samples_leaf=20,
-            loss="squared_error",
+            loss=loss_val,
             max_bins=128,
         )
     elif model_name == "lgb":
-        kw.update(n_estimators=150, max_depth=4, min_child_samples=20, num_leaves=15, verbose=-1)
+        obj_val = "huber" if loss == "huber" else "regression"
+        kw.update(
+            n_estimators=150,
+            max_depth=4,
+            min_child_samples=20,
+            num_leaves=15,
+            objective=obj_val,
+            verbose=-1,
+        )
     return kw
 
 
@@ -109,46 +118,7 @@ def evaluate_forecast(
     single_split: bool = False,
     **model_kwargs,
 ) -> dict:
-    """Walk-forward or single-split out-of-sample forecast evaluation.
-
-    Parameters
-    ----------
-    df:
-        Must contain ``date``, ``daily_return`` (and OHLC when feature_set='vol*').
-    train_size:
-        Number of rows in the initial training window.
-    test_size:
-        Number of rows per test window (or size of test split when ``single_split=True``).
-    horizon:
-        Number of days ahead to forecast (h-step return).
-    model:
-        ``'gb'`` or ``'lgb'``.
-    feature_set:
-        Feature group name (default/vol/vol_macro/vol_rich/vol_medium).
-    macro_df:
-        Macro dataframe for vol_macro feature set.
-    asset_dfs:
-        Asset dict for cross-asset features in vol_macro/vol_rich.
-    target_type:
-        Target transformation: ``'raw'`` (default), ``'vol_adjusted'``, or ``'excess'``.
-    ensemble_method:
-        How to combine predictions from overlapping windows: ``'mean'`` or ``'median'``.
-    use_all_train:
-        If True, train on all data before the test window (expanding window).
-    loss:
-        Loss function passed to GB: 'squared_error' (default) or 'huber'.
-    single_split:
-        If True, use a single train/test split (train on last ``train_size`` rows
-        before the test period) instead of walk-forward.  Much faster for research sweeps.
-    **model_kwargs:
-        Additional kwargs forwarded to the regressor constructor.
-
-    Returns
-    -------
-    dict with keys: horizon, ic, ic_pvalue, direction_accuracy, counts, predictions, dates,
-    sharpe, r2, train_size, test_size, n_models, median_model_count, mean_train_rows,
-    model, feature_set, target_type, ensemble_method, loss, feature_cols, available_feature_cols.
-    """
+    """Walk-forward or single-split out-of-sample forecast evaluation."""
     df = df.copy()
 
     if feature_set == "vol_medium" and macro_df is not None:
@@ -180,6 +150,7 @@ def evaluate_forecast(
     model_count: pd.Series = pd.Series(0, index=df.index, dtype=int)
     train_rows_list: list[int] = []
     median_preds: dict[int | str, list[float]] = {}  # index -> list of predictions for median
+    last_feature_importances: dict[str, float] = {}
 
     if single_split:
         train_end = n - test_size
@@ -192,9 +163,11 @@ def evaluate_forecast(
         X_test = df_test[available_cols].to_numpy()
         train_std = np.nanstd(X_train, axis=0)
         non_const = train_std > 0
+        used_cols = available_cols
         if non_const.sum() >= 2:
             X_train = X_train[:, non_const]
             X_test = X_test[:, non_const]
+            used_cols = [col for col, nc in zip(available_cols, non_const, strict=False) if nc]
         # Drop NaN in y_train (vol_adjusted/excess produce NaN for early rows)
         valid_idx = ~np.isnan(y_train)
         if valid_idx.sum() < 50:
@@ -207,9 +180,7 @@ def evaluate_forecast(
             model_cls = _MODELS[model]
         except KeyError:
             raise ValueError(f"Unknown model '{model}'; choose from {list(_MODELS)}") from None
-        kw = {**_model_kwargs(model), **model_kwargs}
-        if loss != "squared_error":
-            kw["loss"] = loss
+        kw = {**_model_kwargs(model, loss=loss), **model_kwargs}
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=UserWarning, message=".*early_stopping.*")
             clf = model_cls(**kw)
@@ -217,6 +188,10 @@ def evaluate_forecast(
             all_preds.iloc[test_idx] = clf.predict(X_test)
             model_count.iloc[test_idx] = 1
             train_rows_list.append(len(y_train))
+            if hasattr(clf, "feature_importances_"):
+                fi = clf.feature_importances_
+                for col_name, val in zip(used_cols, fi, strict=False):
+                    last_feature_importances[col_name] = float(val)
     else:
         for start in range(0, n - train_size, test_size):
             if use_all_train:
@@ -249,6 +224,7 @@ def evaluate_forecast(
             non_const = train_std > 0
             if non_const.sum() < 2:
                 continue
+            used_cols = [col for col, nc in zip(available_cols, non_const, strict=False) if nc]
             X_train = X_train[:, non_const]
             X_test = X_test[:, non_const]
 
@@ -258,16 +234,14 @@ def evaluate_forecast(
             y_train = y_train[valid]
 
             if len(y_train) < 50:
-                break
+                continue
 
             try:
                 model_cls = _MODELS[model]
             except KeyError:
                 raise ValueError(f"Unknown model '{model}'; choose from {list(_MODELS)}") from None
 
-            kw = {**_model_kwargs(model), **model_kwargs}
-            if loss != "squared_error":
-                kw["loss"] = loss
+            kw = {**_model_kwargs(model, loss=loss), **model_kwargs}
 
             with warnings.catch_warnings():
                 warnings.filterwarnings(
@@ -275,36 +249,44 @@ def evaluate_forecast(
                 )
                 clf = model_cls(**kw)
                 clf.fit(X_train, y_train)
-                preds = clf.predict(X_test)
 
-            if ensemble_method not in ("mean", "median"):
-                raise ValueError(f"Unknown ensemble_method: {ensemble_method}")
+            preds_fold = clf.predict(X_test)
+            if hasattr(clf, "feature_importances_"):
+                fi = clf.feature_importances_
+                for col_name, val in zip(used_cols, fi, strict=False):
+                    last_feature_importances[col_name] = float(val)
+
             if ensemble_method == "median":
-                for i, pred in zip(test_idx, preds, strict=False):
-                    median_preds.setdefault(i, []).append(float(pred))
+                for i_pos, row_idx in enumerate(test_idx):
+                    median_preds.setdefault(row_idx, []).append(float(preds_fold[i_pos]))
+                    model_count.iloc[row_idx] += 1
             else:
-                all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
-            model_count.iloc[test_idx] += 1
+                all_preds.iloc[test_idx] = all_preds.iloc[test_idx].fillna(0) + pd.Series(
+                    preds_fold, index=test_idx
+                )
+                model_count.iloc[test_idx] += 1
             train_rows_list.append(len(y_train))
 
-    return _compute_metrics(
-        df,
-        all_preds,
-        model_count,
-        available_cols,
-        model,
-        feature_set,
-        target_type,
-        ensemble_method,
-        loss,
-        horizon,
-        n,
-        train_size,
-        test_size,
-        train_rows_list,
-        target_horizon,
-        median_preds,
+    res = _compute_metrics(
+        df=df,
+        all_preds=all_preds,
+        model_count=model_count,
+        available_cols=available_cols,
+        model=model,
+        feature_set=feature_set,
+        target_type=target_type,
+        ensemble_method=ensemble_method,
+        loss=loss,
+        horizon=horizon,
+        n=n,
+        train_size=train_size,
+        test_size=test_size,
+        train_rows_list=train_rows_list,
+        target_horizon=target_horizon,
+        median_preds=median_preds if ensemble_method == "median" else None,
     )
+    res["feature_importances"] = last_feature_importances
+    return res
 
 
 def train_latest_forecast(
@@ -319,106 +301,93 @@ def train_latest_forecast(
     loss: str = "squared_error",
     **model_kwargs,
 ) -> dict:
-    """Train on all rows with known forward targets and predict the latest feature-valid row.
-
-    This is deliberately separate from ``evaluate_forecast``.  The walk-forward evaluator must
-    drop the final ``target_horizon`` rows because their realized forward return is unknown, but
-    the live dashboard forecast should still be as-of the latest row whose features are known.
-    """
+    """Train on the most recent `train_size` rows and produce a single latest prediction."""
     df = df.copy()
-    if feature_set == "vol_medium" and macro_df is not None:
-        feat_df = feat.make_features(
-            df, feature_set=feature_set, macro_df=macro_df, asset_dfs=asset_dfs
-        )
-    elif feature_set == "vol_medium":
-        feat_df = feat.make_features(df, feature_set="vol_medium")
-    else:
-        feat_df = feat.make_features(
-            df, feature_set=feature_set, macro_df=macro_df, asset_dfs=asset_dfs
-        )
+    df = feat.make_features(df, feature_set=feature_set, macro_df=macro_df, asset_dfs=asset_dfs)
 
     if target_horizon > 1:
-        feat_df["target_next_ret"] = (
-            feat_df["ret"].rolling(target_horizon).sum().shift(-target_horizon)
-        )
+        df["target_next_ret"] = df["ret"].rolling(target_horizon).sum().shift(-target_horizon)
 
     all_feature_cols = feat.feature_columns(feature_set)
-    available_cols = [c for c in all_feature_cols if c in feat_df.columns]
-    if not available_cols:
-        return {"prediction": np.nan, "as_of": pd.NaT, "train_rows": 0}
+    available_cols = [c for c in all_feature_cols if c in df.columns]
+    df_features = df.dropna(subset=available_cols, how="all").reset_index(drop=True)
 
-    feature_valid = feat_df[available_cols].notna().any(axis=1)
-    available_cols = [c for c in available_cols if feat_df.loc[feature_valid, c].notna().any()]
-    if not available_cols:
-        return {"prediction": np.nan, "as_of": pd.NaT, "train_rows": 0}
+    if len(df_features) < train_size + 1:
+        return {"as_of": df["date"].iloc[-1] if not df.empty else None, "prediction": None}
 
-    train_df = feat_df[feature_valid & feat_df["target_next_ret"].notna()].copy()
-    latest_df = feat_df[feature_valid].tail(1)
-    if latest_df.empty or len(train_df) < train_size:
-        return {"prediction": np.nan, "as_of": pd.NaT, "train_rows": len(train_df)}
+    df_train_raw = df_features.iloc[-(train_size + 1) : -1]
+    last_row = df_features.iloc[[-1]]
 
-    y_train = _build_target(train_df, target_type, "target_next_ret").to_numpy().ravel()
-    X_train = train_df[available_cols].to_numpy()
-    X_latest = latest_df[available_cols].to_numpy()
+    y_train = _build_target(df_train_raw, target_type, "target_next_ret").to_numpy().ravel()
+    X_train = df_train_raw[available_cols].to_numpy()
+    X_pred = last_row[available_cols].to_numpy()
 
     train_std = np.nanstd(X_train, axis=0)
     non_const = train_std > 0
     if non_const.sum() < 2:
-        return {"prediction": np.nan, "as_of": pd.NaT, "train_rows": len(train_df)}
-    X_train = X_train[:, non_const]
-    X_latest = X_latest[:, non_const]
+        return {"as_of": last_row["date"].iloc[0], "prediction": None}
 
-    valid_y = ~np.isnan(y_train)
-    X_train = X_train[valid_y]
-    y_train = y_train[valid_y]
-    if len(y_train) < train_size:
-        return {"prediction": np.nan, "as_of": pd.NaT, "train_rows": len(y_train)}
+    used_cols = [col for col, nc in zip(available_cols, non_const, strict=False) if nc]
+    X_train = X_train[:, non_const]
+    X_pred = X_pred[:, non_const]
+
+    valid = ~np.isnan(y_train)
+    X_train = X_train[valid]
+    y_train = y_train[valid]
+
+    if len(y_train) < 50:
+        return {"as_of": last_row["date"].iloc[0], "prediction": None}
 
     try:
         model_cls = _MODELS[model]
     except KeyError:
         raise ValueError(f"Unknown model '{model}'; choose from {list(_MODELS)}") from None
-    kw = {**_model_kwargs(model), **model_kwargs}
-    if loss != "squared_error":
-        kw["loss"] = loss
+
+    kw = {**_model_kwargs(model, loss=loss), **model_kwargs}
+
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=UserWarning, message=".*early_stopping.*")
         clf = model_cls(**kw)
         clf.fit(X_train, y_train)
-        pred = float(clf.predict(X_latest)[0])
+
+    pred = float(clf.predict(X_pred)[0])
+    feature_importances: dict[str, float] = {}
+    if hasattr(clf, "feature_importances_"):
+        fi = clf.feature_importances_
+        for col_name, val in zip(used_cols, fi, strict=False):
+            feature_importances[col_name] = float(val)
 
     return {
+        "as_of": last_row["date"].iloc[0],
         "prediction": pred,
-        "as_of": pd.to_datetime(latest_df["date"].iloc[0]),
-        "train_rows": len(y_train),
-        "available_feature_cols": available_cols,
+        "feature_importances": feature_importances,
     }
 
 
 # ---------- internal: helpers ----------
 
 
-def _empty_result(
-    df: pd.DataFrame,
-    model: str,
-    feature_set: str,
-    target_type: str,
-    ensemble_method: str,
-    loss: str,
-    horizon: int | None,
-) -> dict:
+def _empty_result(df, model, feature_set, target_type, ensemble_method, loss, horizon) -> dict:
     return {
         "horizon": horizon,
         "ic": np.nan,
         "ic_pvalue": np.nan,
         "direction_accuracy": np.nan,
+        "baseline_direction_accuracy": np.nan,
+        "direction_edge": np.nan,
+        "positive_target_rate": np.nan,
+        "positive_prediction_rate": np.nan,
+        "direction_accuracy_low": np.nan,
+        "direction_accuracy_medium": np.nan,
+        "direction_accuracy_high": np.nan,
         "prediction_count": 0,
         "predictions": pd.Series(dtype=float),
-        "dates": pd.Series(dtype=float),
+        "y_true": pd.Series(dtype=float),
+        "dates": pd.Series(dtype=object),
         "sharpe": np.nan,
         "r2": np.nan,
-        "train_size": None,
-        "test_size": None,
+        "train_size": 0,
+        "test_size": 0,
         "n_models": 0,
         "median_model_count": 0,
         "mean_train_rows": 0,
@@ -427,8 +396,9 @@ def _empty_result(
         "target_type": target_type,
         "ensemble_method": ensemble_method,
         "loss": loss,
-        "feature_cols": [],
+        "feature_cols": feat.feature_columns(feature_set),
         "available_feature_cols": [],
+        "feature_importances": {},
     }
 
 
@@ -479,12 +449,44 @@ def _compute_metrics(
     baseline_direction_accuracy = max(positive_target_rate, negative_target_rate)
     direction_edge = direction_accuracy - baseline_direction_accuracy
 
+    # Regime-specific directional accuracy
+    dir_acc_low, dir_acc_med, dir_acc_high = np.nan, np.nan, np.nan
+    if "ret" in df.columns:
+        vol_20d = df["ret"].rolling(20, min_periods=5).std()
+        valid_vol = vol_20d.loc[valid]
+        if len(valid_vol.dropna()) >= 6:
+            try:
+                regimes = pd.qcut(
+                    valid_vol,
+                    q=3,
+                    labels=["low", "medium", "high"],
+                    duplicates="drop",
+                )
+                for reg_key, _reg_label in [
+                    ("low", "direction_accuracy_low"),
+                    ("medium", "direction_accuracy_medium"),
+                    ("high", "direction_accuracy_high"),
+                ]:
+                    mask = regimes == reg_key
+                    if mask.sum() > 0:
+                        yt = y_true[mask]
+                        yp = y_pred[mask]
+                        tp = ((yt > 0) & (yp > 0)).sum()
+                        tn = ((yt < 0) & (yp < 0)).sum()
+                        acc = (tp + tn) / len(yt) if len(yt) > 0 else np.nan
+                        if reg_key == "low":
+                            dir_acc_low = acc
+                        elif reg_key == "medium":
+                            dir_acc_med = acc
+                        elif reg_key == "high":
+                            dir_acc_high = acc
+            except Exception:
+                pass
+
     strategy_target_ret = np.sign(y_pred) * y_true
     if target_horizon == 1 and strategy_target_ret.std() > 0:
         sharpe = strategy_target_ret.mean() / strategy_target_ret.std() * np.sqrt(252)
     else:
-        # Multi-day forward targets are overlapping observations; reporting them as a daily
-        # tradable Sharpe is misleading. Keep the field for API compatibility but fail closed.
         sharpe = np.nan
 
     ss_res = ((y_true - y_pred) ** 2).sum()
@@ -506,6 +508,9 @@ def _compute_metrics(
         "direction_edge": direction_edge,
         "positive_target_rate": positive_target_rate,
         "positive_prediction_rate": positive_prediction_rate,
+        "direction_accuracy_low": dir_acc_low,
+        "direction_accuracy_medium": dir_acc_med,
+        "direction_accuracy_high": dir_acc_high,
         "prediction_count": len(y_true),
         "predictions": y_pred,
         "y_true": y_true,

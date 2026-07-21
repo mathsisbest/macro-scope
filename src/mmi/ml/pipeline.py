@@ -156,6 +156,9 @@ def _train_symbol_ml(
     for name in (
         "ic",
         "direction_accuracy",
+        "direction_accuracy_low",
+        "direction_accuracy_medium",
+        "direction_accuracy_high",
         "baseline_direction_accuracy",
         "direction_edge",
         "positive_target_rate",
@@ -173,6 +176,22 @@ def _train_symbol_ml(
                     "trained_at": now,
                 }
             )
+
+    # Persist top 10 feature importances for this model
+    feat_imps = res.get("feature_importances", {})
+    if feat_imps:
+        sorted_imps = sorted(feat_imps.items(), key=lambda x: x[1], reverse=True)[:10]
+        for feat_name, imp_val in sorted_imps:
+            metric_rows.append(
+                {
+                    "model": "return_gb",
+                    "symbol": sym,
+                    "metric": f"feature_importance_{feat_name}",
+                    "value": float(imp_val),
+                    "trained_at": now,
+                }
+            )
+
     metric_rows.append(
         {
             "model": "return_gb",
