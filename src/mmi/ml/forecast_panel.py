@@ -193,13 +193,18 @@ class ForecastBacktest:
         if combined.empty:
             return _empty_panel_result()
 
-        full = first.get("dates", pd.Series())
-        if isinstance(full, pd.Series) and not full.empty:
-            y_true = pd.Series(index=full.values, dtype=float)
-        else:
-            y_true = pd.Series(dtype=float)
+        # Build y_true from the first valid horizon result, aligned with combined dates
+        y_true_series = pd.Series(dtype=float)
+        for r in valid_horizons.values():
+            if "y_true" in r and "dates" in r and isinstance(r["y_true"], pd.Series):
+                y_true_map = pd.Series(
+                    r["y_true"].to_numpy(), index=pd.to_datetime(r["dates"].to_numpy())
+                )
+                aligned = combined["date"].map(y_true_map)
+                y_true_series = aligned
+                break
 
-        return _compute_panel_metrics(combined, y_true, valid_horizons, ensemble_method)
+        return _compute_panel_metrics(combined, y_true_series, valid_horizons, ensemble_method)
 
     def run_universe(
         self,
@@ -279,22 +284,42 @@ def _compute_panel_metrics(
         return _empty_panel_result()
 
     ens_pred = combined["ensemble_pred"]
-    y_true_series = pd.Series(dtype=float)
+
+    # Drop rows where y_true is NaN
+    valid_mask = y_true.notna()
+    y_true_clean = y_true[valid_mask]
+    ens_pred_clean = ens_pred[valid_mask]
+
+    if len(y_true_clean) < 5:
+        return _empty_panel_result()
+
+    from scipy.stats import pearsonr
+
     ic = np.nan
     direction_accuracy = np.nan
     sharpe = np.nan
     r2 = np.nan
 
-    from scipy.stats import pearsonr
-
     try:
         ic_val, ic_pval = pearsonr(
-            ens_pred.to_numpy().astype(float),
-            y_true_series.to_numpy().astype(float),
+            ens_pred_clean.to_numpy().astype(float),
+            y_true_clean.to_numpy().astype(float),
         )
         ic = float(ic_val) if not pd.isna(ic_val) else 0.0
     except Exception:
         ic = 0.0
+
+    direction_tp = ((y_true_clean > 0) & (ens_pred_clean > 0)).sum()
+    direction_tn = ((y_true_clean < 0) & (ens_pred_clean < 0)).sum()
+    direction_accuracy = (direction_tp + direction_tn) / len(y_true_clean)
+
+    strategy_ret = np.sign(ens_pred_clean) * y_true_clean
+    if strategy_ret.std() > 0:
+        sharpe = strategy_ret.mean() / strategy_ret.std() * np.sqrt(252)
+
+    ss_res = ((y_true_clean - ens_pred_clean) ** 2).sum()
+    ss_tot = ((y_true_clean - y_true_clean.mean()) ** 2).sum()
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
 
     first = next(iter(valid_horizons.values()))
     return {
