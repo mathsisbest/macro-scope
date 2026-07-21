@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
 from pydantic import BaseModel, Field
 
 
@@ -11,12 +10,12 @@ class YahooPriceRow(BaseModel):
 
     symbol: str = Field(..., description="Ticker symbol")
     date: str = Field(..., description="Trading date (YYYY-MM-DD)")
-    open: Optional[float] = Field(None, description="Open price")
-    high: Optional[float] = Field(None, description="High price")
-    low: Optional[float] = Field(None, description="Low price")
+    open: float | None = Field(None, description="Open price")
+    high: float | None = Field(None, description="High price")
+    low: float | None = Field(None, description="Low price")
     close: float = Field(..., description="Close price")
-    volume: Optional[float] = Field(None, description="Trading volume")
-    daily_return: Optional[float] = Field(None, description="Daily simple return")
+    volume: float | None = Field(None, description="Trading volume")
+    daily_return: float | None = Field(None, description="Daily simple return")
 
 
 class FredObservationRow(BaseModel):
