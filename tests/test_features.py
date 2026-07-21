@@ -4,6 +4,7 @@ Covers feature_columns(), make_features(), _garman_klass_vol(),
 and edge cases across default / vol / vol_macro / vol_medium / vol_rich /
 vol_rich_plus / mom_rev feature sets.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -29,19 +30,22 @@ def _base_df(rows: int = 50) -> pd.DataFrame:
     np.random.seed(42)
     dates = pd.date_range("2024-01-01", periods=rows, freq="D")
     close = 100.0 * (1 + np.cumsum(np.random.normal(0, 0.01, rows)))
-    return pd.DataFrame({
-        "date": dates,
-        "open": close * (1 + np.random.normal(0, 0.001, rows)),
-        "high": close * (1 + np.abs(np.random.normal(0, 0.002, rows))),
-        "low": close * (1 - np.abs(np.random.normal(0, 0.002, rows))),
-        "close": close,
-        "daily_return": np.random.normal(0.0005, 0.01, rows),
-    })
+    return pd.DataFrame(
+        {
+            "date": dates,
+            "open": close * (1 + np.random.normal(0, 0.001, rows)),
+            "high": close * (1 + np.abs(np.random.normal(0, 0.002, rows))),
+            "low": close * (1 - np.abs(np.random.normal(0, 0.002, rows))),
+            "close": close,
+            "daily_return": np.random.normal(0.0005, 0.01, rows),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # feature_columns()
 # ---------------------------------------------------------------------------
+
 
 class TestFeatureColumns:
     def test_default_feature_set(self):
@@ -94,7 +98,15 @@ class TestFeatureColumns:
         assert "ret_lag1" in cols
 
     def test_no_duplicates_in_any_set(self):
-        for fs in ["default", "vol", "vol_macro", "vol_medium", "vol_rich", "vol_rich_plus", "mom_rev"]:
+        for fs in [
+            "default",
+            "vol",
+            "vol_macro",
+            "vol_medium",
+            "vol_rich",
+            "vol_rich_plus",
+            "mom_rev",
+        ]:
             cols = feature_columns(fs)
             assert len(cols) == len(set(cols)), f"duplicates in {fs}: {cols}"
 
@@ -102,6 +114,7 @@ class TestFeatureColumns:
 # ---------------------------------------------------------------------------
 # har_feature_names()
 # ---------------------------------------------------------------------------
+
 
 class TestHarFeatureNames:
     def test_returns_ordered_list(self):
@@ -115,6 +128,7 @@ class TestHarFeatureNames:
 # ---------------------------------------------------------------------------
 # _garman_klass_vol()
 # ---------------------------------------------------------------------------
+
 
 class TestGarmanKlassVol:
     def test_known_inputs(self):
@@ -174,6 +188,7 @@ class TestGarmanKlassVol:
 # make_features()
 # ---------------------------------------------------------------------------
 
+
 class TestMakeFeatures:
     def test_default_adds_base_features(self):
         df = _base_df(30)
@@ -218,11 +233,13 @@ class TestMakeFeatures:
 
     def test_vol_macro_with_macro_df(self):
         df = _base_df(60)
-        macro = pd.DataFrame({
-            "date": df["date"],
-            "T10Y2Y": np.random.uniform(0.0, 1.0, 60),
-            "VIXCLS": np.random.uniform(10, 30, 60),
-        })
+        macro = pd.DataFrame(
+            {
+                "date": df["date"],
+                "T10Y2Y": np.random.uniform(0.0, 1.0, 60),
+                "VIXCLS": np.random.uniform(10, 30, 60),
+            }
+        )
         out = make_features(df, feature_set="vol_macro", macro_df=macro)
         assert "yc_10y2y_lag1" in out.columns
         # Macro merges backward so first rows may be NaN
@@ -243,7 +260,8 @@ class TestMakeFeatures:
             "TLT": df[["date", "daily_return"]].copy(),
         }
         out = make_features(
-            df, feature_set="vol_macro",
+            df,
+            feature_set="vol_macro",
             macro_df=pd.DataFrame({"date": df["date"], "T10Y2Y": [0.5] * 60}),
             asset_dfs=asset_dfs,
         )
