@@ -6,12 +6,14 @@ import argparse
 import contextlib
 import sys
 import traceback
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import pandas as pd
+
+    from mmi.ingestion.base import Extractor
 
 from mmi.utils.db import connect
 from mmi.utils.logging import get_logger
@@ -87,11 +89,10 @@ def cmd_ingest(_: argparse.Namespace) -> int:
         loader = DuckDBLoader(con)
 
         # Phase 1: Parallel fetch (network I/O bound)
-        fetch_results: dict[str, tuple[Extractor, str, typing.Any]] = {}
+        fetch_results: dict[str, tuple[Extractor, str, Any]] = {}
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = {
-                executor.submit(_fetch_extractor, cls(loader)): cls(loader)
-                for cls in EXTRACTORS
+                executor.submit(_fetch_extractor, cls(loader)): cls(loader) for cls in EXTRACTORS
             }
 
             for future in as_completed(futures):
@@ -122,14 +123,10 @@ def cmd_ingest(_: argparse.Namespace) -> int:
                 loader.finish_run(run_id, 0, "failed", msg)
                 if getattr(extractor, "required", True):
                     required_failures += 1
-                    log.error(
-                        "REQUIRED source %s fetch failed: %s", extractor.source, msg[:100]
-                    )
+                    log.error("REQUIRED source %s fetch failed: %s", extractor.source, msg[:100])
                 else:
                     optional_failures += 1
-                    log.warning(
-                        "optional source %s fetch failed: %s", extractor.source, msg[:100]
-                    )
+                    log.warning("optional source %s fetch failed: %s", extractor.source, msg[:100])
                 continue
 
             # res_type == "ok"
@@ -149,21 +146,17 @@ def cmd_ingest(_: argparse.Namespace) -> int:
                 loader.finish_run(run_id, 0, "failed", msg)
                 if getattr(extractor, "required", True):
                     required_failures += 1
-                    log.error(
-                        "REQUIRED source %s load failed: %s", extractor.source, msg[:100]
-                    )
+                    log.error("REQUIRED source %s load failed: %s", extractor.source, msg[:100])
                 else:
                     optional_failures += 1
-                    log.warning(
-                        "optional source %s load failed: %s", extractor.source, msg[:100]
-                    )
+                    log.warning("optional source %s load failed: %s", extractor.source, msg[:100])
 
     if optional_failures:
         log.warning("%d optional source(s) failed; run still successful", optional_failures)
     return 1 if required_failures else 0
 
 
-def _fetch_extractor(extractor: Extractor) -> tuple[str, typing.Any]:
+def _fetch_extractor(extractor: Extractor) -> tuple[str, Any]:
     """Fetch data from an extractor (network I/O bound — safe to parallelize)."""
     reason = extractor.skip_reason()
     if reason:

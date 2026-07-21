@@ -2,6 +2,7 @@
 
 Covers compute_ml_mu_panel and compute_portfolio_returns with ML mu_panel.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -18,15 +19,17 @@ def _asset_daily(n: int = 252, symbols: list | None = None) -> pd.DataFrame:
     rows = []
     for sym in symbols:
         for d in dates:
-            rows.append({
-                "date": d,
-                "symbol": sym,
-                "daily_return": rng.normal(0.0004, 0.01),
-                "open": 100,
-                "high": 101,
-                "low": 99,
-                "close": 100,
-            })
+            rows.append(
+                {
+                    "date": d,
+                    "symbol": sym,
+                    "daily_return": rng.normal(0.0004, 0.01),
+                    "open": 100,
+                    "high": 101,
+                    "low": 99,
+                    "close": 100,
+                }
+            )
     return pd.DataFrame(rows)
 
 
