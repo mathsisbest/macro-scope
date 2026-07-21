@@ -482,7 +482,8 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         for sym in ["GLD", "TLT"]:
             try:
                 adf = con.execute(
-                    f"select date, daily_return from marts.fct_asset_daily where symbol='{sym}'"
+                    "select date, daily_return from marts.fct_asset_daily where symbol = ?",
+                    [sym],
                 ).df()
                 if not adf.empty:
                     adf["date"] = pd.to_datetime(adf["date"]).astype("datetime64[ns]")

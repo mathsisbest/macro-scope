@@ -300,7 +300,7 @@ def compute_portfolio_returns(
     # 3. Regime-aware ML: size up during negative momentum, size down during positive
     # Momentum regime: 63d rolling return of the equal-weight portfolio
     ew_series = panel.loc[common_dates].mean(axis=1)
-    mom_63d = ew_series.rolling(63, min_periods=20).mean()
+    mom_63d = ew_series.rolling(63, min_periods=20).sum()
 
     ml_regime = panel.loc[common_dates].copy()
     for date in common_dates:

@@ -22,13 +22,13 @@ def label_regimes(con) -> pd.DataFrame:
     # transform keeps the result aligned to the original rows (no apply-on-groups warning).
     out = df.copy()
     # Each symbol needs at least 3 rows for pd.qcut(..., 3) to succeed.
-    symbol_counts = out.groupby("symbol").size()
-    valid_symbols = symbol_counts[symbol_counts >= 3].index
+    valid_symbols = out.groupby("symbol").size()
+    valid_symbols = valid_symbols[valid_symbols >= 3].index
     out = out[out["symbol"].isin(valid_symbols)]
 
     if out.empty:
         log.warning("no symbol has enough rows for regime labelling (need >= 3 per symbol)")
-        return pd.DataFrame(columns=["symbol", "date", "vol_20d", "regime"])
+        return df[["symbol", "date", "vol_20d"]].copy().assign(regime="Medium")
 
     out["regime"] = (
         out.groupby("symbol")["vol_20d"]
