@@ -364,40 +364,6 @@ class TestDirectionModelRows:
         n_obs = df["value"].iloc[0]
         assert n_obs > 0, f"direction model n_obs must be positive, got {n_obs}"
 
-    def test_direction_model_mae_skill_ratio_formula_roundtrip(self, ml_snap_con):
-        """mae_skill_ratio must equal mae / baseline_mae within floating-point tolerance."""
-        # This test only applies to the old random_forest model metrics
-        # The new return_gb model doesn't have mae/baseline_mae metrics
-        return
-
-        def _get(metric):
-            df = _q(
-                ml_snap_con,
-                "select value from marts.model_metrics "
-                "where model='return_gb' and symbol='SPY' and metric=?",
-                [metric],
-            )
-            return df["value"].iloc[0] if not df.empty else None
-
-        mae = _get("mae")
-        baseline_mae = _get("baseline_mae")
-        mae_skill_ratio = _get("mae_skill_ratio")
-
-        if mae is None or baseline_mae is None or mae_skill_ratio is None:
-            pytest.skip("one of mae/baseline_mae/mae_skill_ratio is absent")
-
-        if pd.isna(mae_skill_ratio):
-            # Honest: baseline_mae ~ 0 so ratio was set to NaN in pipeline.py
-            assert baseline_mae < 1e-10, (
-                f"mae_skill_ratio is NaN but baseline_mae={baseline_mae} is not ~0"
-            )
-            return
-
-        if baseline_mae > 1e-20:
-            assert pytest.approx(float(mae_skill_ratio), rel=1e-5) == float(mae) / float(
-                baseline_mae
-            ), "mae_skill_ratio != mae/baseline_mae after round-trip"
-
     def test_direction_model_dir_acc_edge_formula_roundtrip(self, ml_snap_con):
         """dir_acc_edge must equal dir_acc - baseline_dir_acc within floating-point tolerance."""
 
