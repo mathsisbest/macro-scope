@@ -1,9 +1,9 @@
 """Tests for mmi.ml.regime — volatility-regime labelling."""
+
 from __future__ import annotations
 
 import duckdb
 import pandas as pd
-import pytest
 
 from mmi.ml.regime import label_regimes
 
@@ -48,7 +48,9 @@ class TestLabelRegimes:
     def test_empty_table_returns_empty_frame(self):
         con = _con_with_data(
             "create table marts.fct_asset_daily as "
-            "select * from (values (null::varchar, null::date, null::double)) t(symbol, date, vol_20d) "
+            "select * from (values "
+            "(null::varchar, null::date, null::double)"
+            ") t(symbol, date, vol_20d) "
             "where 1=0"
         )
         result = label_regimes(con)
