@@ -570,18 +570,19 @@ with tab_ml:
                     "accuracy, Sharpe, and observation count."
                 )
                 _chart(charts.return_performance_chart(perf, height=320))
+                perf_fmt = perf.copy()
+                for col_name, fmt_func in [
+                    ("ic", lambda v: "" if pd.isna(v) else f"{v:.3f}"),
+                    ("direction_accuracy", lambda v: "" if pd.isna(v) else f"{v:.1%}"),
+                    ("r2", lambda v: "" if pd.isna(v) else f"{v:.3f}"),
+                    ("sharpe", lambda v: "" if pd.isna(v) else f"{v:.2f}"),
+                    ("n_obs", lambda v: "" if pd.isna(v) else f"{v:,.0f}"),
+                ]:
+                    if col_name in perf_fmt.columns:
+                        perf_fmt[col_name] = perf_fmt[col_name].map(fmt_func)
+
                 st.dataframe(
-                    perf.assign(
-                        ic=lambda d: d["ic"].map(lambda v: "" if pd.isna(v) else f"{v:.3f}"),
-                        direction_accuracy=lambda d: d["direction_accuracy"].map(
-                            lambda v: "" if pd.isna(v) else f"{v:.1%}"
-                        ),
-                        r2=lambda d: d["r2"].map(lambda v: "" if pd.isna(v) else f"{v:.3f}"),
-                        sharpe=lambda d: d["sharpe"].map(
-                            lambda v: "" if pd.isna(v) else f"{v:.2f}"
-                        ),
-                        n_obs=lambda d: d["n_obs"].map(lambda v: "" if pd.isna(v) else f"{v:,.0f}"),
-                    ).rename(
+                    perf_fmt.rename(
                         columns={
                             "symbol": "Asset",
                             "ic": "IC",
