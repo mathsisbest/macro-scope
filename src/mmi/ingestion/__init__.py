@@ -3,6 +3,7 @@
 from mmi.ingestion.base import Extractor
 from mmi.ingestion.fred import FredExtractor
 from mmi.ingestion.loader import DuckDBLoader
+from mmi.ingestion.odds import OddsExtractor
 from mmi.ingestion.worldbank import WorldBankExtractor
 from mmi.ingestion.yahoo import YahooChartExtractor
 
@@ -11,6 +12,7 @@ EXTRACTORS: list[type[Extractor]] = [
     YahooChartExtractor,
     FredExtractor,
     WorldBankExtractor,
+    OddsExtractor,
 ]
 
 __all__ = [
@@ -19,5 +21,6 @@ __all__ = [
     "YahooChartExtractor",
     "FredExtractor",
     "WorldBankExtractor",
+    "OddsExtractor",
     "EXTRACTORS",
 ]
