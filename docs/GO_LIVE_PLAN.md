@@ -118,7 +118,7 @@ the same wave.
     and the check can only flip versus the old full-count behaviour in the narrow **~250–311-row band**
     (where carving ~20% drops the count below 250). Real-data runs are far above this band.
 - **Locked holdout = honest extra OOS readout, REPORTED not GATED.** Both the vol (`rv_har`) and direction
-  (`random_forest`) models carve the **last** `min(252, ⌊0.2·n⌋)` time-ordered rows as a locked holdout,
+  (`return_gb`) models carve the **last** `min(252, ⌊0.2·n⌋)` time-ordered rows as a locked holdout,
   final-fit on dev only, and score it once — emitting `holdout_*` long rows (vol: `holdout_oos_r2`,
   `holdout_qlike`, `holdout_qlike_skill_ratio`, `holdout_n_obs`; direction: `holdout_dir_acc`,
   `holdout_baseline_dir_acc`, `holdout_n_obs`). The forward **target is built per-slice** (dev and holdout
@@ -127,9 +127,9 @@ the same wave.
   tune the model, features, or thresholds. Skipped (no rows) when carving would leave `< 60` dev rows.
 - **Escape hatch (honest):** if not cleared, do not overfit — commit with the
   "no demonstrated out-of-sample edge — baseline-only" UI/brief state; no beats/outperforms phrasing.
-- **Next-day direction model** (`model='random_forest'`) is **retained, demoted** to an honestly-labelled
+- **Next-day direction model** (`model='return_gb'`) is **retained, demoted** to an honestly-labelled
   "no demonstrated short-horizon edge" secondary — **not** the gate. Shares the regularized
-  `make_regressor()` factory + frozen `SEED` with the 21-day `mvo_ml` model, but each is a distinct
+   regularized factory + frozen `SEED` with the 21-day `mvo_ml` model, but each is a distinct
   prediction problem; `mvo_ml` keeps its own `fct_portfolio_ml_gate`.
 - **Macro is volatility/regime context, never a return input.** The recession-risk panel is macro context.
 - **Confirmed non-goals (honest, recorded):** macro→return-level/direction prediction (Goyal-Welch
@@ -213,7 +213,7 @@ G=#50 hygiene · H=snapshot/bootstrap · O=owner go-live.
 | B7 | B | code | ML-tab honest **vol-skill** render (OOS R² vs persistence, regime prob, SPY scope) | `dashboard/components/charts.py`(*serialize*), `scripts/dashboard_smoke.py` | B3, C5 |
 | E3 | E | code | Macro-tab recession-risk panel (probability + caveats: term-premium + 2022–23 false positive) | `dashboard/components/charts.py`(*serialize*) | E2, C5 |
 | D3 | D | code | Keep FULL-branch `mmi ai` offline-safe (`weekly.yml`); daily path never invokes `mmi ai` (`daily.yml`) | `.github/workflows/daily.yml`(*serialize*), `.github/workflows/weekly.yml`(*serialize*) | D2 |
-| D4 | D/G | code | Warn-only `dbt source freshness` in the daily cron + prune unenforced config (#50 item 4) | `ingest.yml`(*serialize*), `transform/models/staging/_sources.yml` | D3 |
+| D4 | D/G | code | Warn-only `dbt source freshness` in the daily cron + prune unenforced config (#50 item 4) | `daily.yml`/`weekly.yml`(*serialize*), `transform/models/staging/_sources.yml` | D3 |
 | F1 | F | code | 12-month TSMOM overlay as a **gated experiment** strategy (must beat 1/N + buy-and-hold on bootstrap CI; labelled experiment otherwise) | `src/mmi/portfolio/compute.py`, `src/mmi/portfolio/backtest.py`, `dashboard/app.py`(*serialize*), `tests/...` | — |
 
 ### Wave 4 — render polish, snapshot cap, secrets

@@ -52,7 +52,7 @@ def compute_all_predictions(
             model=model,
             feature_set=feature_set,
             macro_df=macro_df,
-            asset_dfs=asset_dfs if sym == "SPY" else None,
+            asset_dfs=asset_dfs,
             target_type=target_type,
             target_horizon=target_horizon,
             ensemble_method=ensemble_method,

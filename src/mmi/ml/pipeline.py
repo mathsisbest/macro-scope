@@ -118,6 +118,15 @@ def _train_symbol_ml(
         )
         return metric_rows, forecast_rows
     test_size = min(504, max(252, available_test // 4))
+    # At least 3 walk-forward folds needed for a meaningful evaluation.
+    if available_test < test_size * 3:
+        log.warning(
+            "skip %s: too few walk-forward folds (available_test=%d < test_size=%d * 3)",
+            sym,
+            available_test,
+            test_size,
+        )
+        return metric_rows, forecast_rows
 
     try:
         res = evaluate_forecast(

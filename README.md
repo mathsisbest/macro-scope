@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/mathsisbest/macro-scope/actions/workflows/ci.yml/badge.svg)](https://github.com/mathsisbest/macro-scope/actions/workflows/ci.yml)
 [![Weekly refresh](https://github.com/mathsisbest/macro-scope/actions/workflows/weekly.yml/badge.svg)](https://github.com/mathsisbest/macro-scope/actions/workflows/weekly.yml)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230)](https://github.com/astral-sh/ruff)
 [![Cost](https://img.shields.io/badge/cost-%C2%A30%2Fmo-brightgreen)](#cost)
 
@@ -42,7 +42,7 @@ keys, no live database connection. The pipeline works as follows:
    `MMI_SNAPSHOT_MODE=1` to pin it explicitly if you ever need to.)
 
 Because this is a **public** repo, GitHub Actions gives free unlimited minutes and a 6-hour job cap,
-so even the heavy portfolio backtest (24 years × 3 windows × MVO + bootstrap, `n_boot=2000`) runs in
+so even the heavy portfolio backtest (24 years × 3 windows × MVO + bootstrap, `n_boot=200`) runs in
 the **weekly** Actions job — no laptop, no local data. The **daily** run is cheap (~3–5 min) and
 preserves the committed portfolio + brief Parquet between weekly runs. (`make refresh-full` remains
 available for an optional local run, but it isn't required.)

@@ -9,7 +9,7 @@ Design
 - Strictly out-of-sample: prediction for row t uses only information <= t-1.
 - Optional feature set selection
   (``feature_set`` = default / vol / vol_macro / vol_rich / vol_medium).
-- Optional ensemble method (average / median / ic_weighted).
+- Optional ensemble method (mean / median).
 - Optional target type (raw / vol_adjusted / excess).
 - Dynamic ``available_cols``: only columns present in the dataframe are used,
   so missing cross-asset data doesn't force NaN for all rows.
@@ -132,8 +132,7 @@ def evaluate_forecast(
     target_type:
         Target transformation: ``'raw'`` (default), ``'vol_adjusted'``, or ``'excess'``.
     ensemble_method:
-        How to combine predictions from overlapping windows: ``'mean'``, ``'median'``, or
-        ``'ic_weighted'``.
+        How to combine predictions from overlapping windows: ``'mean'`` or ``'median'``.
     use_all_train:
         If True, train on all data before the test window (expanding window).
     loss:
@@ -277,10 +276,9 @@ def evaluate_forecast(
                 clf.fit(X_train, y_train)
                 preds = clf.predict(X_test)
 
-            if ensemble_method == "mean" or ensemble_method == "median":
-                all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
-            else:
-                all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
+            if ensemble_method not in ("mean", "median"):
+                raise ValueError(f"Unknown ensemble_method: {ensemble_method}")
+            all_preds.iloc[test_idx] = all_preds.iloc[test_idx].add(preds, fill_value=0)
             model_count.iloc[test_idx] += 1
             train_rows_list.append(len(y_train))
 
@@ -445,10 +443,7 @@ def _compute_metrics(
     train_rows_list: list[int],
     target_horizon: int,
 ) -> dict:
-    if ensemble_method == "mean" or ensemble_method == "median" or ensemble_method == "ic_weighted":
-        preds = all_preds / model_count.replace(0, np.nan)
-    else:
-        preds = all_preds / model_count.replace(0, np.nan)
+    preds = all_preds / model_count.replace(0, np.nan)
 
     valid = (model_count > 0) & df["target_next_ret"].notna() & (df["target_next_ret"] != 0)
     y_true = df.loc[valid, "target_next_ret"]

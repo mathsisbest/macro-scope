@@ -12,6 +12,6 @@ watermarks + delete-then-insert give exactly-once-ish semantics; `raw.pipeline_r
 source freshness provide observability.
 
 **Consequences.**
-- £0, simple, reliable, and inside the 2,000 free Actions minutes/month for private repos.
+- £0, simple, reliable, and inside the unlimited free Actions minutes/month for public repos.
 - Not sub-second fresh — acceptable here. A genuine Kafka demo (e.g. Redpanda free tier) is
   documented as optional Phase-4 work for CV breadth, off the critical path.
