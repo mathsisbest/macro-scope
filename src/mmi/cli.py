@@ -118,8 +118,8 @@ def cmd_ingest(_: argparse.Namespace) -> int:
                 continue
 
             if res_type == "error":
-                exc = payload
-                msg = redact(str(exc))
+                err = payload
+                msg = redact(str(err))
                 loader.finish_run(run_id, 0, "failed", msg)
                 if getattr(extractor, "required", True):
                     required_failures += 1
