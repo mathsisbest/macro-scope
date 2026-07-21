@@ -1250,3 +1250,61 @@ def btc_effect_verdict(effect: pd.DataFrame) -> str:
         f"Adding BTC made a statistically distinguishable difference for {len(distinct)} of {n} "
         f"strategies (same-period paired comparison): it {'; '.join(parts)}."
     )
+
+
+def scenario_simulation_chart(
+    fc: pd.DataFrame,
+    delta_rate_bps: float = 0.0,
+    delta_vix: float = 0.0,
+    height: int = HEIGHT_MEDIUM,
+) -> go.Figure:
+    """Compare baseline 20-day predicted returns vs. macro-shocked 20-day predicted returns."""
+    fig = go.Figure()
+    if fc.empty or "symbol" not in fc.columns or "predicted_return" not in fc.columns:
+        fig.update_layout(title=dict(text="Scenario Simulator (no forecast data)", font=_TITLE_FONT))
+        return style_fig(fig, height=height)
+
+    df = fc.copy()
+    df["base"] = pd.to_numeric(df["predicted_return"], errors="coerce").fillna(0.0)
+
+    sensitivities = {
+        "SPY": {"rate": -0.05, "vix": -0.008},
+        "QQQ": {"rate": -0.08, "vix": -0.012},
+        "VEA": {"rate": -0.04, "vix": -0.007},
+        "GLD": {"rate": -0.03, "vix": +0.005},
+        "TLT": {"rate": -0.12, "vix": +0.004},
+        "BTC": {"rate": -0.10, "vix": -0.020},
+    }
+
+    shocked_returns = []
+    for row in df.itertuples(index=False):
+        sym = row.symbol
+        base_ret = float(row.predicted_return)
+        sens = sensitivities.get(sym, {"rate": -0.03, "vix": -0.005})
+        rate_impact = (delta_rate_bps / 100.0) * sens["rate"]
+        vix_impact = delta_vix * sens["vix"]
+        shocked_ret = base_ret + rate_impact + vix_impact
+        shocked_returns.append(shocked_ret)
+
+    df["shocked"] = shocked_returns
+
+    fig.add_bar(
+        x=df["symbol"],
+        y=df["base"],
+        name="Baseline 20d Forecast",
+        marker_color=SERIES_PRICE,
+    )
+    fig.add_bar(
+        x=df["symbol"],
+        y=df["shocked"],
+        name="Shocked 20d Forecast",
+        marker_color=PALETTE["accent"],
+    )
+
+    fig.update_layout(
+        title=dict(text="Macro Shock Sensitivity (Base vs. Shocked 20-Day Forecast)", font=_TITLE_FONT),
+        barmode="group",
+        yaxis=dict(title="20-Day Return", tickformat="+.1%"),
+    )
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=height)
