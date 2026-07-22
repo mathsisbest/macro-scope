@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import cast
 
 import pandas as pd
@@ -76,10 +75,6 @@ def _write(con, table: str, df: pd.DataFrame) -> None:
     con.register("_tmp", df)
     con.execute(f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM _tmp")
     con.unregister("_tmp")
-    pub_dir = Path("data/public")
-    if pub_dir.exists():
-        t_name = table.split(".")[-1]
-        df.to_parquet(pub_dir / f"{t_name}.parquet")
 
 
 def _train_symbol_ml(
