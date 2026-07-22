@@ -37,11 +37,11 @@
       "rows": 2
     },
     "ml_forecast": {
-      "rows": 16
+      "rows": 15
     },
     "model_metrics": {
-      "rows": 186
+      "rows": 255
     }
   },
-  "generated_at": "2026-07-22T14:58:56.799716+00:00"
+  "generated_at": "2026-07-22T15:00:56.666361+00:00"
 }

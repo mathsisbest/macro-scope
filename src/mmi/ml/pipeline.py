@@ -27,22 +27,22 @@ _MAX_WORKERS = 4
 _SYMBOL_ML_CONFIG: dict[str, dict] = {
     "SPY": {
         "model": "gb",
-        "train_size": 1260,
-        "target_horizon": 20,
+        "train_size": 2520,
+        "target_horizon": 2520,
         "use_all_train": True,
-        "feature_set": "vol_macro",
+        "feature_set": "vol_macro_shiller",
     },
     "GLD": {
         "model": "gb",
         "train_size": 1260,
-        "target_horizon": 20,
+        "target_horizon": 252,
         "use_all_train": True,
         "feature_set": "vol_macro",
     },
     "TLT": {
         "model": "lgb",
         "train_size": 1260,
-        "target_horizon": 20,
+        "target_horizon": 504,
         "use_all_train": True,
         "feature_set": "vol_macro",
     },
