@@ -300,6 +300,11 @@ def compute_portfolio_returns(
         }
     )
     result_ml["cumulative_return"] = (1 + result_ml["daily_return"]).cumprod() - 1
+    peak_ml = (1 + result_ml["cumulative_return"]).cummax()
+    result_ml["drawdown"] = (1 + result_ml["cumulative_return"] - peak_ml) / peak_ml
+    r_mean_ml = result_ml["daily_return"].rolling(252, min_periods=30).mean()
+    r_std_ml = result_ml["daily_return"].rolling(252, min_periods=30).std()
+    result_ml["rolling_sharpe_252"] = (r_mean_ml / r_std_ml.replace(0, np.nan)) * np.sqrt(252)
     frames.append(result_ml)
 
     # 3. Regime-aware ML: size up during negative momentum, size down during positive
@@ -346,6 +351,11 @@ def compute_portfolio_returns(
         }
     )
     result_regime["cumulative_return"] = (1 + result_regime["daily_return"]).cumprod() - 1
+    peak_reg = (1 + result_regime["cumulative_return"]).cummax()
+    result_regime["drawdown"] = (1 + result_regime["cumulative_return"] - peak_reg) / peak_reg
+    r_mean_reg = result_regime["daily_return"].rolling(252, min_periods=30).mean()
+    r_std_reg = result_regime["daily_return"].rolling(252, min_periods=30).std()
+    result_regime["rolling_sharpe_252"] = (r_mean_reg / r_std_reg.replace(0, np.nan)) * np.sqrt(252)
     frames.append(result_regime)
 
     return pd.concat(frames, ignore_index=True)

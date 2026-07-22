@@ -12,6 +12,9 @@
     "fct_market_macro": {
       "rows": 8416
     },
+    "fct_portfolio_returns": {
+      "rows": 0
+    },
     "fct_regime": {
       "rows": 52584
     },
@@ -25,5 +28,5 @@
       "rows": 186
     }
   },
-  "generated_at": "2026-07-22T06:50:44.495789+00:00"
+  "generated_at": "2026-07-22T06:54:59.174771+00:00"
 }

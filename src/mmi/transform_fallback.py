@@ -61,6 +61,36 @@ _SQL = [
     ASOF LEFT JOIN y10 ON spy.date >= y10.date
     ASOF LEFT JOIN y2  ON spy.date >= y2.date;
     """,
+    # fct_portfolio_returns ---------------------------------------------------
+    """
+    CREATE OR REPLACE TABLE marts.fct_portfolio_returns AS
+    WITH source AS (
+        SELECT
+            window_id,
+            strategy,
+            CAST(date AS DATE) AS date,
+            daily_return,
+            cumulative_return,
+            1 + cumulative_return AS wealth
+        FROM raw.portfolio_returns
+    )
+    SELECT
+        window_id,
+        strategy,
+        date,
+        daily_return,
+        cumulative_return,
+        wealth / MAX(wealth) OVER (
+            PARTITION BY window_id, strategy ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) - 1 AS drawdown,
+        AVG(daily_return) OVER w
+            / NULLIF(STDDEV_SAMP(daily_return) OVER w, 0)
+            * SQRT(252) AS rolling_sharpe_252
+    FROM source
+    WINDOW w AS (
+        PARTITION BY window_id, strategy ORDER BY date ROWS BETWEEN 251 PRECEDING AND CURRENT ROW
+    );
+    """,
 ]
 
 
