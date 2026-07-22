@@ -321,11 +321,11 @@ tab_digest, tab_mkt, tab_macro, tab_ml, tab_portfolio = st.tabs(
 with tab_digest:
     st.subheader("📰 Weekly Executive Digest & Actionable Market Signals")
     st.caption(
-        "Synthesized recap of macro environment, active regime shifts, "
-        "and walk-forward model tilts."
+        "Synthesized executive recap of macro environment, active regime shifts, "
+        "and quantitative market signals."
     )
 
-    # 1. Executive AI Brief
+    # Executive AI Brief
     brief = data.latest_brief()
     if not brief.empty:
         st.markdown(brief["brief"].iloc[0])
@@ -343,93 +343,6 @@ with tab_digest:
             con.close()
         st.cache_data.clear()
         st.rerun()
-
-    st.divider()
-
-    # 2. Active Model Tilts & Signals Table
-    st.subheader("🎯 Active Market & Model Signals")
-    st.caption(
-        "Walk-forward out-of-sample evaluated models. Green = Deployed tilt (OOS R² > 0); "
-        "Yellow = Directional / Regime Only; Red = Gated Out."
-    )
-    fc_table = charts.return_forecast_table(data.ml_forecast())
-    metrics_data = data.model_metrics()
-    if not fc_table.empty:
-        tilts = []
-        for row in fc_table.itertuples(index=False):
-            sym = row.symbol
-            pred = float(row.predicted_return)
-            h = int(row.horizon)
-            m_rows = (
-                metrics_data[
-                    (metrics_data["model"] == "return_gb") & (metrics_data["symbol"] == sym)
-                ]
-                if not metrics_data.empty
-                else pd.DataFrame()
-            )
-            r2_val = (
-                m_rows[m_rows["metric"] == "r2"]["value"].iloc[0]
-                if not m_rows.empty and "r2" in m_rows["metric"].to_numpy()
-                else np.nan
-            )
-            dir_acc = (
-                m_rows[m_rows["metric"] == "direction_accuracy"]["value"].iloc[0]
-                if not m_rows.empty and "direction_accuracy" in m_rows["metric"].to_numpy()
-                else np.nan
-            )
-
-            if pd.notna(r2_val) and r2_val > 0:
-                status = "🟢 Active Tilt (Skill Cleared)"
-            elif pd.notna(dir_acc) and dir_acc > 0.60:
-                status = "🟡 Directional / Regime Only"
-            else:
-                status = "🔴 Gated Out (Noise)"
-
-            tilts.append(
-                {
-                    "Asset": sym,
-                    "Horizon": f"{h}d",
-                    "Forecast Return": f"{pred:+.2%}",
-                    "OOS R²": f"{r2_val:+.3f}" if pd.notna(r2_val) else "N/A",
-                    "Direction Accuracy": f"{dir_acc:.1%}" if pd.notna(dir_acc) else "N/A",
-                    "Status": status,
-                }
-            )
-        st.dataframe(pd.DataFrame(tilts), hide_index=True, width="stretch")
-
-    st.divider()
-
-    # 3. Active Volatility Regimes
-    st.subheader("⚡ Current Volatility Regimes")
-    reg_cols = st.columns(3)
-    for idx, reg_sym in enumerate(["SPY", "TLT", "BTC"]):
-        rv = data.regimes(reg_sym)
-        if not rv.empty:
-            cur_reg = str(rv["regime"].iloc[-1])
-            with reg_cols[idx % 3]:
-                st.metric(label=f"{reg_sym} Regime", value=cur_reg)
-
-    st.divider()
-
-    # 4. Interactive Scenario Stress-Tester
-    with st.expander("⚡ Interactive Macro Scenario Stress-Tester", expanded=False):
-        st.caption(
-            "Simulate custom macro shocks (Fed Funds rate shift, VIX spike) "
-            "on 20-day predicted asset returns."
-        )
-        sim_col1, sim_col2 = st.columns(2)
-        with sim_col1:
-            rate_shock = st.slider("Fed Funds Rate Shift (bps)", -200, +200, 0, step=25)
-        with sim_col2:
-            vix_shock = st.slider("VIX Index Shift", -10, +20, 0, step=1)
-
-        sim_fc = charts.return_forecast_table(data.ml_forecast())
-        if not sim_fc.empty:
-            _chart(
-                charts.scenario_simulation_chart(
-                    sim_fc, delta_rate_bps=rate_shock, delta_vix=vix_shock, height=300
-                )
-            )
 
 with tab_mkt:
     # Cross-asset view spanning every class — equities, bonds, commodities, FX AND crypto (BTC has
@@ -626,6 +539,27 @@ with tab_macro:
         if rr_caption:
             st.caption(rr_caption)
 
+    # ---- Interactive Macro Scenario Stress-Tester ----
+    st.divider()
+    st.subheader("⚡ Interactive Macro Scenario Stress-Tester")
+    st.caption(
+        "Simulate custom macro shocks (Fed Funds rate shift, VIX spike) "
+        "on 20-day predicted asset returns."
+    )
+    sim_col1, sim_col2 = st.columns(2)
+    with sim_col1:
+        rate_shock = st.slider("Fed Funds Rate Shift (bps)", -200, +200, 0, step=25, key="macro_rate_shock")
+    with sim_col2:
+        vix_shock = st.slider("VIX Index Shift", -10, +20, 0, step=1, key="macro_vix_shock")
+
+    sim_fc = charts.return_forecast_table(data.ml_forecast())
+    if not sim_fc.empty:
+        _chart(
+            charts.scenario_simulation_chart(
+                sim_fc, delta_rate_bps=rate_shock, delta_vix=vix_shock, height=300
+            )
+        )
+
 with tab_ml:
     metrics = data.model_metrics()
     fc = data.ml_forecast()
@@ -692,6 +626,69 @@ with tab_ml:
                     hide_index=True,
                     width="stretch",
                 )
+
+            # Active Model Tilts & Signals Table
+            st.divider()
+            st.subheader("🎯 Active Market & Model Signals")
+            st.caption(
+                "Walk-forward out-of-sample evaluated models. Green = Deployed tilt (OOS R² > 0); "
+                "Yellow = Directional / Regime Only; Red = Gated Out."
+            )
+            fc_table = charts.return_forecast_table(fc)
+            metrics_data = data.model_metrics()
+            if not fc_table.empty:
+                tilts = []
+                for row in fc_table.itertuples(index=False):
+                    sym = row.symbol
+                    pred = float(row.predicted_return)
+                    h = int(row.horizon)
+                    m_rows = (
+                        metrics_data[
+                            (metrics_data["model"] == "return_gb") & (metrics_data["symbol"] == sym)
+                        ]
+                        if not metrics_data.empty
+                        else pd.DataFrame()
+                    )
+                    r2_val = (
+                        m_rows[m_rows["metric"] == "r2"]["value"].iloc[0]
+                        if not m_rows.empty and "r2" in m_rows["metric"].to_numpy()
+                        else np.nan
+                    )
+                    dir_acc = (
+                        m_rows[m_rows["metric"] == "direction_accuracy"]["value"].iloc[0]
+                        if not m_rows.empty and "direction_accuracy" in m_rows["metric"].to_numpy()
+                        else np.nan
+                    )
+
+                    if pd.notna(r2_val) and r2_val > 0:
+                        status = "🟢 Active Tilt (Skill Cleared)"
+                    elif pd.notna(dir_acc) and dir_acc > 0.60:
+                        status = "🟡 Directional / Regime Only"
+                    else:
+                        status = "🔴 Gated Out (Noise)"
+
+                    tilts.append(
+                        {
+                            "Asset": sym,
+                            "Horizon": f"{h}d",
+                            "Forecast Return": f"{pred:+.2%}",
+                            "OOS R²": f"{r2_val:+.3f}" if pd.notna(r2_val) else "N/A",
+                            "Direction Accuracy": f"{dir_acc:.1%}" if pd.notna(dir_acc) else "N/A",
+                            "Status": status,
+                        }
+                    )
+                st.dataframe(pd.DataFrame(tilts), hide_index=True, width="stretch")
+
+            # Active Volatility Regimes
+            st.divider()
+            st.subheader("⚡ Current Volatility Regimes")
+            reg_cols = st.columns(3)
+            for idx, reg_sym in enumerate(["SPY", "TLT", "BTC"]):
+                rv = data.regimes(reg_sym)
+                if not rv.empty:
+                    cur_reg = str(rv["regime"].iloc[-1])
+                    with reg_cols[idx % 3]:
+                        st.metric(label=f"{reg_sym} Regime", value=cur_reg)
 
             perf = charts.return_performance_table(metrics)
             if not perf.empty:
