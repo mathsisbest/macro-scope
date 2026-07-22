@@ -395,10 +395,12 @@ def train_latest_forecast(
         clf.fit(X_train, y_train)
 
     raw_pred = float(clf.predict(X_pred)[0])
-    # Volatility calibration: clip 20-day predicted return within 2.5-sigma expected volatility bounds
-    vol_20d = float(df["daily_return"].iloc[-60:].std() * np.sqrt(target_horizon)) if "daily_return" in df.columns else 0.05
-    max_bound = max(0.02, 2.5 * (vol_20d if pd.notna(vol_20d) and vol_20d > 0 else 0.05))
-    pred = float(np.clip(raw_pred, -max_bound, max_bound))
+    # Bayesian Shrinkage Calibration: shrink raw ML forecast toward historical mean return
+    hist_mu = float(y_train.mean()) if len(y_train) > 0 else 0.08
+    pred_calibrated = 0.50 * raw_pred + 0.50 * hist_mu
+    vol_bound = float(df["daily_return"].iloc[-60:].std() * np.sqrt(target_horizon)) if "daily_return" in df.columns else 0.15
+    max_bound = max(0.05, 1.5 * (vol_bound if pd.notna(vol_bound) and vol_bound > 0 else 0.15))
+    pred = float(np.clip(pred_calibrated, -max_bound, max_bound))
     feature_importances: dict[str, float] = {}
     if hasattr(clf, "feature_importances_"):
         fi = clf.feature_importances_
