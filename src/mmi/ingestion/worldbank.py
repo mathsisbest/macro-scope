@@ -43,12 +43,20 @@ class WorldBankExtractor(Extractor):
             return pd.DataFrame()
         rows = [
             {
+                "country_id": row["countryiso3code"],
                 "indicator_id": indicator,
                 "country": row["countryiso3code"],
-                "date": row["date"],  # year string; staging casts
-                "value": row["value"],
+                "date": str(row["date"]),  # year string; staging casts
+                "value": float(row["value"]) if row["value"] is not None else None,
                 "source": self.source,
             }
             for row in payload[1]
+            if row.get("value") is not None
         ]
         return pd.DataFrame(rows)
+
+    def validate(self, df: pd.DataFrame) -> pd.DataFrame:
+        from mmi.ingestion.models import WorldBankIndicatorRow
+
+        df = super().validate(df)
+        return self.validate_pydantic(df, WorldBankIndicatorRow)

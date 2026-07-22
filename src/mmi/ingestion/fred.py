@@ -60,3 +60,11 @@ class FredExtractor(Extractor):
         df["value"] = pd.to_numeric(df["value"], errors="coerce")  # FRED uses "." for missing
         df["source"] = self.source
         return df[["series_id", "date", "value", "source"]]
+
+    def validate(self, df: pd.DataFrame) -> pd.DataFrame:
+        from mmi.ingestion.models import FredObservationRow
+
+        df = super().validate(df)
+        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+        df = df.dropna(subset=["value"])
+        return self.validate_pydantic(df, FredObservationRow)

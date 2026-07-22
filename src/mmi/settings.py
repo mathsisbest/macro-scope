@@ -21,7 +21,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class Settings(BaseSettings):
     """All runtime configuration for the platform."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=str(REPO_ROOT / ".env"), env_file_encoding="utf-8", extra="ignore"
+    )
 
     # Storage.
     # ``duckdb_path`` is ALWAYS a local file (dev / CI / offline demo). MotherDuck — the

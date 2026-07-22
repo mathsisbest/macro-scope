@@ -98,4 +98,12 @@ class YahooChartExtractor(Extractor):
                 "source": self.source,
             }
         )
-        return df[df["close"].notna()].reset_index(drop=True)
+        df = df[df["close"].notna()].reset_index(drop=True)
+        return df
+
+    def validate(self, df: pd.DataFrame) -> pd.DataFrame:
+        from mmi.ingestion.models import YahooPriceRow
+
+        df = super().validate(df)
+        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+        return self.validate_pydantic(df, YahooPriceRow)
