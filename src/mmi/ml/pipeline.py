@@ -327,6 +327,8 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
                         "trained_at": now,
                     }
                 )
+            if vol_fc is not None:
+                forecast_rows.append(vol_fc)
 
     # 5. Write results
     if metric_rows:
