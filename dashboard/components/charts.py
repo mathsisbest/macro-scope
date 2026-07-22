@@ -1287,6 +1287,7 @@ def scenario_simulation_chart(
         shocked_ret = base_ret + rate_impact + vix_impact
         shocked_returns.append(shocked_ret)
 
+    df["shocked"] = shocked_returns
     delta_returns = [s - b for b, s in zip(df["base"], df["shocked"], strict=False)]
     df["delta"] = delta_returns
 
