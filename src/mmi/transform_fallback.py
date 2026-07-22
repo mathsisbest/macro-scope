@@ -32,7 +32,7 @@ _SQL = [
     SELECT *,
         STDDEV_SAMP(daily_return) OVER (
             PARTITION BY symbol ORDER BY date ROWS BETWEEN 20 PRECEDING AND CURRENT ROW
-        ) AS vol_20d,
+        ) * SQRT(252.0) AS vol_20d,
         AVG(close) OVER (
             PARTITION BY symbol ORDER BY date ROWS BETWEEN 49 PRECEDING AND CURRENT ROW
         ) AS ma_50

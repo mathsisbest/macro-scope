@@ -13,22 +13,22 @@
       "rows": 8425
     },
     "fct_portfolio_attribution": {
-      "rows": 0
+      "rows": 10
     },
     "fct_portfolio_btc_effect": {
-      "rows": 0
+      "rows": 3
     },
     "fct_portfolio_ml_gate": {
       "rows": 0
     },
     "fct_portfolio_returns": {
-      "rows": 0
+      "rows": 32574
     },
     "fct_portfolio_strategy_pairs": {
-      "rows": 0
+      "rows": 9
     },
     "fct_portfolio_strategy_stats": {
-      "rows": 0
+      "rows": 9
     },
     "fct_regime": {
       "rows": 52584
@@ -43,5 +43,5 @@
       "rows": 186
     }
   },
-  "generated_at": "2026-07-22T14:29:16.658216+00:00"
+  "generated_at": "2026-07-22T14:40:23.741743+00:00"
 }
