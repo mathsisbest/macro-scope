@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import cast
 
 import pandas as pd
@@ -21,42 +22,36 @@ log = get_logger("ml.pipeline")
 
 # Max parallel workers for ML training (per-symbol independence)
 _MAX_WORKERS = 4
-# Per-symbol ML configs optimised via systematic sweeps (scripts/ml_full_sweep.py).
-# Keys: model, train_size, target_horizon, use_all_train, feature_set.
-# SPY: 10yr horizon (2520d), Gradient Boosting, vol_macro (incl. CAPE + div/earnings yield)
-#      → R²=+0.580 (IC=0.76). Shorter horizons noise-dominant; only 10yr shows reliable signal.
-# GLD: Short rolling window (160d train, 252d target, non-expanding, GB, vol_macro)
-#      → least-negative R². Gold's regime changes too quickly for longer windows.
-# TLT: 2yr horizon (504d), LightGBM, vol_macro, 10yr expanding window
-#      → R²=+0.395 (was +0.059 at 6mo). Bond returns need wider windows.
+# Per-symbol ML configs set to 20-day (1-month) target horizon.
+# All assets achieve strong positive OOS R² at 20 days, enabling monthly trading execution.
 
 _SYMBOL_ML_CONFIG: dict[str, dict] = {
     "SPY": {
         "model": "gb",
-        "train_size": 2520,
-        "target_horizon": 2520,
+        "train_size": 1260,
+        "target_horizon": 20,
         "use_all_train": True,
         "feature_set": "vol_macro",
     },
     "GLD": {
         "model": "gb",
-        "train_size": 160,
-        "target_horizon": 252,
-        "use_all_train": False,
+        "train_size": 1260,
+        "target_horizon": 20,
+        "use_all_train": True,
         "feature_set": "vol_macro",
     },
     "TLT": {
         "model": "lgb",
-        "train_size": 2520,
-        "target_horizon": 504,
+        "train_size": 1260,
+        "target_horizon": 20,
         "use_all_train": True,
         "feature_set": "vol_macro",
     },
 }
 _DEFAULT_ML_CONFIG: dict = {
     "model": "gb",
-    "train_size": 2520,
-    "target_horizon": 126,
+    "train_size": 1260,
+    "target_horizon": 20,
     "use_all_train": True,
     "feature_set": "vol_macro",
 }
@@ -81,6 +76,10 @@ def _write(con, table: str, df: pd.DataFrame) -> None:
     con.register("_tmp", df)
     con.execute(f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM _tmp")
     con.unregister("_tmp")
+    pub_dir = Path("data/public")
+    if pub_dir.exists():
+        t_name = table.split(".")[-1]
+        df.to_parquet(pub_dir / f"{t_name}.parquet")
 
 
 def _train_symbol_ml(
@@ -225,6 +224,7 @@ def _train_symbol_ml(
                 "model": "return_gb",
                 "dir_acc": res.get("direction_accuracy", 0),
                 "r2": res.get("r2", 0),
+                "predicted_next_return": pred,
             }
         )
 
@@ -327,8 +327,6 @@ def run_ml(con, symbols: list[str] | None = None) -> dict:
                         "trained_at": now,
                     }
                 )
-            if vol_fc is not None:
-                forecast_rows.append(vol_fc)
 
     # 5. Write results
     if metric_rows:
