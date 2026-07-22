@@ -63,12 +63,15 @@ def _chart(fig, **kwargs):
 
 # --------------------------------------------------------------------------- hero / header
 st.title("📈 Macro Scope")
+
+
 def _get_data_freshness() -> str:
     """Retrieve max data timestamp for transparency badge."""
     try:
         manifest_path = settings.snapshot_dir / "_manifest.json"
         if manifest_path.exists():
             import json
+
             with open(manifest_path, encoding="utf-8") as fh:
                 manifest = json.load(fh)
                 gen_at = manifest.get("generated_at", "")[:10]
@@ -77,6 +80,7 @@ def _get_data_freshness() -> str:
     except Exception:
         pass
     return "🟢 Data Fresh · Live DB"
+
 
 st.caption(
     f"{_get_data_freshness()} · Live markets + macro · **ingest → dbt → ML → GenAI → BI** · "
