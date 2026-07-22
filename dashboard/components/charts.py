@@ -1287,33 +1287,45 @@ def scenario_simulation_chart(
         shocked_ret = base_ret + rate_impact + vix_impact
         shocked_returns.append(shocked_ret)
 
-    df["shocked"] = shocked_returns
+    delta_returns = [s - b for b, s in zip(df["base"], df["shocked"], strict=False)]
+    df["delta"] = delta_returns
 
+    # Distinct baseline color (sleek slate blue) vs shocked color (Emerald Green if positive shock, Coral Red if negative)
+    base_color = "#3B82F6"  # Blue for baseline
     shock_colors = [
-        PALETTE["up"] if s > b + 1e-6 else (PALETTE["down"] if s < b - 1e-6 else PALETTE["accent"])
-        for b, s in zip(df["base"], df["shocked"], strict=False)
+        "#10B981" if d > 1e-6 else ("#EF4444" if d < -1e-6 else "#F59E0B")
+        for d in df["delta"]
     ]
 
+    # Side-by-side grouped bars: Baseline vs Shocked
     fig.add_bar(
         x=df["symbol"],
         y=df["base"],
-        name="Baseline 20d Forecast",
-        marker_color=SERIES_PRICE,
+        name="Baseline Forecast",
+        marker_color=base_color,
+        hovertemplate="<b>%{x} Baseline</b><br>Return: %{y:+.2%}<extra></extra>",
+        text=[f"{b:+.2%}" for b in df["base"]],
+        textposition="auto",
     )
     fig.add_bar(
         x=df["symbol"],
         y=df["shocked"],
-        name="Shocked 20d Forecast",
+        name="Simulated Macro Shock",
         marker_color=shock_colors,
+        hovertemplate="<b>%{x} Shocked</b><br>Simulated Return: %{y:+.2%}<extra></extra>",
+        text=[f"{s:+.2%}" for s in df["shocked"]],
+        textposition="auto",
     )
 
     fig.update_layout(
         title=dict(
-            text="Macro Shock Sensitivity (Base vs. Shocked 20-Day Forecast)",
+            text="Macro Shock Simulator — Baseline vs. Simulated Return",
             font=_TITLE_FONT,
         ),
         barmode="group",
-        yaxis=dict(title="20-Day Return", tickformat="+.1%"),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        yaxis=dict(title="20-Day Forecast Return", tickformat="+.1%"),
     )
     _apply_axis_fonts(fig)
     return style_fig(fig, height=height)
