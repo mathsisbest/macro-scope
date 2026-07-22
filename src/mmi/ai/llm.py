@@ -17,7 +17,7 @@ log = get_logger("ai.llm")
 
 # Default models per provider (override here as model names evolve).
 MODELS = {
-    "gemini": "gemini-3.5-flash",
+    "gemini": "gemini-2.0-flash",
     "groq": "llama-3.3-70b-versatile",
     "claude": "claude-sonnet-4-6",
 }
