@@ -404,6 +404,13 @@ def train_latest_forecast(
         fi = clf.feature_importances_
         for col_name, val in zip(used_cols, fi, strict=False):
             feature_importances[col_name] = float(val)
+    elif len(X_train) > 0 and len(used_cols) > 0:
+        from sklearn.inspection import permutation_importance
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            perm = permutation_importance(clf, X_train, y_train, n_repeats=3, random_state=42)
+            for col_name, val in zip(used_cols, perm.importances_mean, strict=False):
+                feature_importances[col_name] = float(val)
 
     return {
         "as_of": last_row["date"].iloc[0],
