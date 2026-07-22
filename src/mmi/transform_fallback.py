@@ -92,6 +92,31 @@ _SQL = [
         PARTITION BY window_id, strategy ORDER BY date ROWS BETWEEN 251 PRECEDING AND CURRENT ROW
     );
     """,
+    # fct_portfolio_strategy_stats -------------------------------------------
+    """
+    CREATE OR REPLACE TABLE marts.fct_portfolio_strategy_stats AS
+    SELECT * FROM raw.portfolio_strategy_stats;
+    """,
+    # fct_portfolio_strategy_pairs -------------------------------------------
+    """
+    CREATE OR REPLACE TABLE marts.fct_portfolio_strategy_pairs AS
+    SELECT * FROM raw.portfolio_strategy_pairs;
+    """,
+    # fct_portfolio_attribution ----------------------------------------------
+    """
+    CREATE OR REPLACE TABLE marts.fct_portfolio_attribution AS
+    SELECT * FROM raw.portfolio_attribution;
+    """,
+    # fct_portfolio_btc_effect -----------------------------------------------
+    """
+    CREATE OR REPLACE TABLE marts.fct_portfolio_btc_effect AS
+    SELECT * FROM raw.portfolio_btc_effect;
+    """,
+    # fct_portfolio_ml_gate --------------------------------------------------
+    """
+    CREATE OR REPLACE TABLE marts.fct_portfolio_ml_gate AS
+    SELECT * FROM raw.portfolio_ml_gate;
+    """,
 ]
 
 
