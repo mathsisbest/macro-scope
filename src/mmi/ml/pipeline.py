@@ -27,43 +27,36 @@ _MAX_WORKERS = 4
 _SYMBOL_ML_CONFIG: dict[str, dict] = {
     "SPY": {
         "model": "gb",
-        "train_size": 2520,
-        "target_horizon": 252,
+        "train_size": 1260,
+        "target_horizon": 20,
         "use_all_train": True,
         "feature_set": "vol_macro_shiller",
-    },
-    "EURUSD": {
-        "model": "gb",
-        "train_size": 2520,
-        "target_horizon": 252,
-        "use_all_train": True,
-        "feature_set": "vol_macro",
     },
     "QQQ": {
         "model": "gb",
         "train_size": 1260,
-        "target_horizon": 252,
+        "target_horizon": 20,
         "use_all_train": True,
         "feature_set": "vol_macro",
     },
     "GLD": {
         "model": "gb",
         "train_size": 1260,
-        "target_horizon": 252,
+        "target_horizon": 20,
         "use_all_train": True,
         "feature_set": "vol_macro",
     },
     "TLT": {
         "model": "lgb",
         "train_size": 1260,
-        "target_horizon": 252,
+        "target_horizon": 20,
         "use_all_train": True,
         "feature_set": "vol_macro",
     },
     "BTC": {
         "model": "gb",
         "train_size": 1260,
-        "target_horizon": 252,
+        "target_horizon": 20,
         "use_all_train": True,
         "feature_set": "vol_macro",
     },
@@ -71,7 +64,7 @@ _SYMBOL_ML_CONFIG: dict[str, dict] = {
 _DEFAULT_ML_CONFIG: dict = {
     "model": "gb",
     "train_size": 1260,
-    "target_horizon": 252,
+    "target_horizon": 20,
     "use_all_train": True,
     "feature_set": "vol_macro",
 }
