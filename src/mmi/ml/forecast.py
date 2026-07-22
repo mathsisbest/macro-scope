@@ -394,7 +394,11 @@ def train_latest_forecast(
         clf = model_cls(**kw)
         clf.fit(X_train, y_train)
 
-    pred = float(clf.predict(X_pred)[0])
+    raw_pred = float(clf.predict(X_pred)[0])
+    # Volatility calibration: clip 20-day predicted return within 2.5-sigma expected volatility bounds
+    vol_20d = float(df["daily_return"].iloc[-60:].std() * np.sqrt(target_horizon)) if "daily_return" in df.columns else 0.05
+    max_bound = max(0.02, 2.5 * (vol_20d if pd.notna(vol_20d) and vol_20d > 0 else 0.05))
+    pred = float(np.clip(raw_pred, -max_bound, max_bound))
     feature_importances: dict[str, float] = {}
     if hasattr(clf, "feature_importances_"):
         fi = clf.feature_importances_

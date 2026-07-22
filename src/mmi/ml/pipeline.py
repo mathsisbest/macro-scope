@@ -171,8 +171,19 @@ def _train_symbol_ml(
                 }
             )
 
+    latest = train_latest_forecast(
+        df=df,
+        train_size=train_size,
+        model=model_name,
+        feature_set=feature_set,
+        macro_df=macro_df,
+        asset_dfs=asset_dfs,
+        target_type="raw",
+        target_horizon=target_horizon,
+    )
+
     # Persist top 10 feature importances for this model
-    feat_imps = res.get("feature_importances", {})
+    feat_imps = (latest.get("feature_importances", {}) if isinstance(latest, dict) else {}) or res.get("feature_importances", {})
     if feat_imps:
         sorted_imps = sorted(feat_imps.items(), key=lambda x: x[1], reverse=True)[:10]
         for feat_name, imp_val in sorted_imps:
@@ -194,17 +205,6 @@ def _train_symbol_ml(
             "value": float(res.get("prediction_count", 0)),
             "trained_at": now,
         }
-    )
-
-    latest = train_latest_forecast(
-        df=df,
-        train_size=train_size,
-        model=model_name,
-        feature_set=feature_set,
-        macro_df=macro_df,
-        asset_dfs=asset_dfs,
-        target_type="raw",
-        target_horizon=target_horizon,
     )
 
     if latest.get("prediction") is not None and pd.notna(latest.get("prediction")):

@@ -762,7 +762,8 @@ with tab_ml:
                 metrics.loc[metrics["model"] == "return_gb", "symbol"].dropna().unique()
             )
             if feat_syms:
-                sel_fi_sym = st.selectbox("Feature importance asset", feat_syms, index=0)
+                spy_idx = feat_syms.index("SPY") if "SPY" in feat_syms else 0
+                sel_fi_sym = st.selectbox("Feature importance asset", feat_syms, index=spy_idx)
                 _chart(charts.feature_importance_chart(metrics, symbol=sel_fi_sym, height=300))
         else:
             st.info("No return forecasts available. Run `mmi ml` to generate predictions.")
