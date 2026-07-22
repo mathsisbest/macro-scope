@@ -32,6 +32,13 @@ _SYMBOL_ML_CONFIG: dict[str, dict] = {
         "use_all_train": True,
         "feature_set": "vol_macro_shiller",
     },
+    "EURUSD": {
+        "model": "gb",
+        "train_size": 2520,
+        "target_horizon": 252,
+        "use_all_train": True,
+        "feature_set": "vol_macro",
+    },
     "QQQ": {
         "model": "gb",
         "train_size": 1260,
