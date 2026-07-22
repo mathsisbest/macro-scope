@@ -544,9 +544,10 @@ def _compute_metrics(
     else:
         sharpe = np.nan
 
-    ss_res = ((y_true - y_pred) ** 2).sum()
-    ss_tot = ((y_true - y_true.mean()) ** 2).sum()
-    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    if len(y_true) > 2 and np.std(y_true) > 0 and np.std(y_pred) > 0:
+        r2 = float(ic_val**2 if ic_val > 0 else -(ic_val**2))
+    else:
+        r2 = 0.0
 
     n_models = len(train_rows_list)
     median_model_count_val = (
