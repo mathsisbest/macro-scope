@@ -262,6 +262,11 @@ def compute_portfolio_returns(
         }
     )
     result["cumulative_return"] = (1 + result["daily_return"]).cumprod() - 1
+    peak = (1 + result["cumulative_return"]).cummax()
+    result["drawdown"] = (1 + result["cumulative_return"] - peak) / peak
+    r_mean = result["daily_return"].rolling(252, min_periods=30).mean()
+    r_std = result["daily_return"].rolling(252, min_periods=30).std()
+    result["rolling_sharpe_252"] = (r_mean / r_std.replace(0, np.nan)) * np.sqrt(252)
     frames.append(result)
 
     if ml_mu_panel is None or ml_mu_panel.empty:

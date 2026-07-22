@@ -1261,7 +1261,8 @@ def scenario_simulation_chart(
     """Compare baseline 20-day predicted returns vs. macro-shocked 20-day predicted returns."""
     fig = go.Figure()
     if fc.empty or "symbol" not in fc.columns or "predicted_return" not in fc.columns:
-        fig.update_layout(title=dict(text="Scenario Simulator (no forecast data)", font=_TITLE_FONT))
+        no_data = dict(text="Scenario Simulator (no forecast data)", font=_TITLE_FONT)
+        fig.update_layout(title=no_data)
         return style_fig(fig, height=height)
 
     df = fc.copy()
@@ -1307,7 +1308,10 @@ def scenario_simulation_chart(
     )
 
     fig.update_layout(
-        title=dict(text="Macro Shock Sensitivity (Base vs. Shocked 20-Day Forecast)", font=_TITLE_FONT),
+        title=dict(
+            text="Macro Shock Sensitivity (Base vs. Shocked 20-Day Forecast)",
+            font=_TITLE_FONT,
+        ),
         barmode="group",
         yaxis=dict(title="20-Day Return", tickformat="+.1%"),
     )
