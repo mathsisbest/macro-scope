@@ -1,0 +1,32 @@
+# --- Python & Virtual Environments ---
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+# --- Tool & Test Caches ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage*
+htmlcov/
+
+# --- Large Data Files & Local Databases ---
+data/*.duckdb
+data/*.duckdb.wal
+data/public/*.parquet
+data/scratch/
+data/briefs/
+
+# --- dbt Build Artifacts & Logs ---
+transform/target/
+transform/dbt_packages/
+transform/logs/
+
+# --- OS & IDE Files ---
+.DS_Store
+.idea/
+.vscode/

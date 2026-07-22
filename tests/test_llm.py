@@ -12,7 +12,7 @@ import respx
 import mmi.settings as settings_mod
 from mmi.ai import llm, narrative
 
-_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
+_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{llm.MODELS['gemini']}:generateContent"
 
 
 @respx.mock

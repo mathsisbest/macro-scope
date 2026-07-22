@@ -1,20 +1,71 @@
 {
-  "tables": {
-    "dim_asset": {
-      "rows": 9
-    },
-    "fct_asset_daily": {
-      "rows": 53334
-    },
-    "fct_macro_indicator": {
-      "rows": 93368
-    },
-    "fct_market_macro": {
-      "rows": 8424
-    },
-    "fct_recession_risk": {
-      "rows": 12528
-    }
+  "dim_asset.parquet": {
+    "rows": 9
   },
-  "generated_at": "2026-07-21T08:27:23.167807+00:00"
+  "fct_asset_daily.parquet": {
+    "rows": 52602
+  },
+  "fct_macro_indicator.parquet": {
+    "rows": 0
+  },
+  "fct_market_macro.parquet": {
+    "rows": 8416
+  },
+  "fct_performance_attribution.parquet": {
+    "rows": 10
+  },
+  "fct_portfolio_attribution.parquet": {
+    "rows": 0
+  },
+  "fct_portfolio_btc_effect.parquet": {
+    "rows": 0
+  },
+  "fct_portfolio_ml_gate.parquet": {
+    "rows": 0
+  },
+  "fct_portfolio_regime_performance.parquet": {
+    "rows": 27
+  },
+  "fct_portfolio_returns.parquet": {
+    "rows": 0
+  },
+  "fct_portfolio_strategy_pairs.parquet": {
+    "rows": 0
+  },
+  "fct_portfolio_strategy_stats.parquet": {
+    "rows": 0
+  },
+  "fct_recession_risk.parquet": {
+    "rows": 12528
+  },
+  "fct_regime.parquet": {
+    "rows": 3512
+  },
+  "market_brief.parquet": {
+    "rows": 1
+  },
+  "ml_forecast.parquet": {
+    "rows": 1
+  },
+  "model_metrics.parquet": {
+    "rows": 186
+  },
+  "portfolio_attribution.parquet": {
+    "rows": 10
+  },
+  "portfolio_btc_effect.parquet": {
+    "rows": 3
+  },
+  "portfolio_ml_gate.parquet": {
+    "rows": 0
+  },
+  "portfolio_returns.parquet": {
+    "rows": 31653
+  },
+  "portfolio_strategy_pairs.parquet": {
+    "rows": 9
+  },
+  "portfolio_strategy_stats.parquet": {
+    "rows": 9
+  }
 }

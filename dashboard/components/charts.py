@@ -109,7 +109,7 @@ def vol_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
         line=dict(color=SERIES_VOL),
     )
     fig.update_layout(
-        title=dict(text=f"{symbol} — rolling 20-day volatility", font=_TITLE_FONT),
+        title=dict(text=f"{symbol} — rolling 20-day volatility (annualised)", font=_TITLE_FONT),
     )
     _apply_axis_fonts(fig)
     # vol_20d is annualised; render axis + hover as a percentage.
@@ -1261,7 +1261,8 @@ def scenario_simulation_chart(
     """Compare baseline 20-day predicted returns vs. macro-shocked 20-day predicted returns."""
     fig = go.Figure()
     if fc.empty or "symbol" not in fc.columns or "predicted_return" not in fc.columns:
-        fig.update_layout(title=dict(text="Scenario Simulator (no forecast data)", font=_TITLE_FONT))
+        no_data = dict(text="Scenario Simulator (no forecast data)", font=_TITLE_FONT)
+        fig.update_layout(title=no_data)
         return style_fig(fig, height=height)
 
     df = fc.copy()
@@ -1288,6 +1289,11 @@ def scenario_simulation_chart(
 
     df["shocked"] = shocked_returns
 
+    shock_colors = [
+        PALETTE["up"] if s > b + 1e-6 else (PALETTE["down"] if s < b - 1e-6 else PALETTE["accent"])
+        for b, s in zip(df["base"], df["shocked"], strict=False)
+    ]
+
     fig.add_bar(
         x=df["symbol"],
         y=df["base"],
@@ -1298,11 +1304,14 @@ def scenario_simulation_chart(
         x=df["symbol"],
         y=df["shocked"],
         name="Shocked 20d Forecast",
-        marker_color=PALETTE["accent"],
+        marker_color=shock_colors,
     )
 
     fig.update_layout(
-        title=dict(text="Macro Shock Sensitivity (Base vs. Shocked 20-Day Forecast)", font=_TITLE_FONT),
+        title=dict(
+            text="Macro Shock Sensitivity (Base vs. Shocked 20-Day Forecast)",
+            font=_TITLE_FONT,
+        ),
         barmode="group",
         yaxis=dict(title="20-Day Return", tickformat="+.1%"),
     )
