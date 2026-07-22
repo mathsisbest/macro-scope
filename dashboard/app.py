@@ -583,13 +583,16 @@ with tab_ml:
             "relative signals, not absolute return predictions."
         )
 
+        CORE_SYMBOLS = ["SPY", "QQQ", "GLD", "TLT", "BTC"]
         return_fc = charts.return_forecast_table(fc)
-        if not return_fc.empty:
+        core_fc = return_fc[return_fc["symbol"].isin(CORE_SYMBOLS)] if not return_fc.empty else return_fc
+
+        if not core_fc.empty:
             st.caption(
                 "Sorted by forecast return; each card uses the latest available row per asset."
             )
-            for chunk_start in range(0, len(return_fc), 3):
-                chunk = return_fc.iloc[chunk_start : chunk_start + 3]
+            for chunk_start in range(0, len(core_fc), 3):
+                chunk = core_fc.iloc[chunk_start : chunk_start + 3]
                 cols = st.columns(len(chunk))
                 for col, row in zip(cols, chunk.itertuples(index=False), strict=True):
                     pred = float(row.predicted_return)
@@ -616,7 +619,7 @@ with tab_ml:
                             unsafe_allow_html=True,
                         )
 
-            with st.expander("Forecast table", expanded=False):
+            with st.expander("Full universe forecast table (all assets)", expanded=False):
                 st.dataframe(
                     return_fc.assign(
                         predicted_return=lambda d: d["predicted_return"].map(lambda v: f"{v:.2%}"),
@@ -634,7 +637,7 @@ with tab_ml:
                 "Walk-forward out-of-sample evaluated models. Green = Deployed tilt (OOS R² > 0); "
                 "Yellow = Directional / Regime Only; Red = Gated Out."
             )
-            fc_table = charts.return_forecast_table(fc)
+            fc_table = core_fc
             metrics_data = data.model_metrics()
             if not fc_table.empty:
                 tilts = []
