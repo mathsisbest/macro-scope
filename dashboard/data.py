@@ -61,7 +61,7 @@ def query(sql: str, params: tuple | None = None) -> pd.DataFrame:
         return pd.DataFrame()
     try:
         con = _snapshot_connection() if settings.snapshot_mode else connect(read_only=True)
-    except (duckdb.IOException, duckdb.Error):
+    except Exception:
         con = _snapshot_connection()
     try:
         return con.execute(sql, list(params) if params else []).df()
