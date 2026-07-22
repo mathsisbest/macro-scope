@@ -662,7 +662,7 @@ with tab_ml:
 
                     if pd.notna(r2_val) and r2_val > 0:
                         status = "🟢 Active Tilt (Skill Cleared)"
-                    elif pd.notna(dir_acc) and dir_acc > 0.60:
+                    elif pd.notna(dir_acc) and dir_acc > 0.50:
                         status = "🟡 Directional / Regime Only"
                     else:
                         status = "🔴 Gated Out (Noise)"
