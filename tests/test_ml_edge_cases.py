@@ -83,3 +83,16 @@ class TestEdgeCases:
             feature_set="default",
         )
         assert result.get("model") == "gb"
+
+    def test_hyperparameter_auto_tuning(self):
+        result = evaluate_forecast(
+            _series(200),
+            train_size=60,
+            test_size=20,
+            horizon=1,
+            model="gb",
+            feature_set="default",
+            tune_hyperparameters=True,
+            single_split=True,
+        )
+        assert result.get("prediction_count", 0) > 0

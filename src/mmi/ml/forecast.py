@@ -63,6 +63,31 @@ def _model_kwargs(model_name: str, loss: str = "squared_error") -> dict:
     return kw
 
 
+def tune_model_kwargs(model_name: str, X_train: np.ndarray, y_train: np.ndarray, loss: str = "squared_error") -> dict:
+    """Perform TimeSeriesSplit GridSearchCV to find optimal hyperparameters out-of-sample."""
+    from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
+
+    kw = _model_kwargs(model_name, loss=loss)
+    if len(X_train) < 60:
+        return kw
+
+    tscv = TimeSeriesSplit(n_splits=3)
+    if model_name == "lgb":
+        param_grid = {"learning_rate": [0.03, 0.08], "max_depth": [3, 4], "num_leaves": [7, 15]}
+        model_inst = lgb.LGBMRegressor(**kw)
+    else:
+        param_grid = {"learning_rate": [0.03, 0.08], "max_depth": [3, 4], "l2_regularization": [0.0, 0.1]}
+        model_inst = HistGradientBoostingRegressor(**kw)
+
+    try:
+        grid = GridSearchCV(model_inst, param_grid=param_grid, cv=tscv, scoring="neg_mean_squared_error", n_jobs=-1)
+        grid.fit(X_train, y_train)
+        kw.update(grid.best_params_)
+    except Exception:
+        pass
+    return kw
+
+
 def _build_target(
     df_cut: pd.DataFrame,
     target_type: str,
@@ -116,6 +141,7 @@ def evaluate_forecast(
     use_all_train: bool = False,
     loss: str = "squared_error",
     single_split: bool = False,
+    tune_hyperparameters: bool = False,
     **model_kwargs,
 ) -> dict:
     """Walk-forward or single-split out-of-sample forecast evaluation."""
@@ -180,7 +206,8 @@ def evaluate_forecast(
             model_cls = _MODELS[model]
         except KeyError:
             raise ValueError(f"Unknown model '{model}'; choose from {list(_MODELS)}") from None
-        kw = {**_model_kwargs(model, loss=loss), **model_kwargs}
+        base_kw = tune_model_kwargs(model, X_train, y_train, loss=loss) if tune_hyperparameters else _model_kwargs(model, loss=loss)
+        kw = {**base_kw, **model_kwargs}
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=UserWarning, message=".*early_stopping.*")
             clf = model_cls(**kw)
@@ -241,7 +268,8 @@ def evaluate_forecast(
             except KeyError:
                 raise ValueError(f"Unknown model '{model}'; choose from {list(_MODELS)}") from None
 
-            kw = {**_model_kwargs(model, loss=loss), **model_kwargs}
+            base_kw = tune_model_kwargs(model, X_train, y_train, loss=loss) if tune_hyperparameters else _model_kwargs(model, loss=loss)
+            kw = {**base_kw, **model_kwargs}
 
             with warnings.catch_warnings():
                 warnings.filterwarnings(
