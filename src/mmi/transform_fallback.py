@@ -81,7 +81,8 @@ _SQL = [
         daily_return,
         cumulative_return,
         wealth / MAX(wealth) OVER (
-            PARTITION BY window_id, strategy ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            PARTITION BY window_id, strategy
+            ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         ) - 1 AS drawdown,
         AVG(daily_return) OVER w
             / NULLIF(STDDEV_SAMP(daily_return) OVER w, 0)
