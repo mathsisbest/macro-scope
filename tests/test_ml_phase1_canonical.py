@@ -239,3 +239,34 @@ def test_transform_fallback_marts(tmp_path):
     assert "fct_portfolio_regime_performance" in tables
     assert "fct_recession_risk" in tables
     assert "fct_market_macro" in tables
+
+
+def test_vol_rich_plus_core_assets_features():
+    from mmi.ml.features import feature_columns, make_features
+
+    dates = pd.date_range("2020-01-01", periods=100, freq="D")
+    df_spy = pd.DataFrame(
+        {
+            "date": dates,
+            "open": np.linspace(300, 400, 100),
+            "high": np.linspace(305, 405, 100),
+            "low": np.linspace(295, 395, 100),
+            "close": np.linspace(300, 400, 100),
+            "daily_return": np.random.randn(100) * 0.01,
+            "ret": np.random.randn(100) * 0.01,
+        }
+    )
+    df_tlt = pd.DataFrame({"date": dates, "daily_return": np.random.randn(100) * 0.01})
+    df_gld = pd.DataFrame({"date": dates, "daily_return": np.random.randn(100) * 0.01})
+    df_btc = pd.DataFrame({"date": dates, "daily_return": np.random.randn(100) * 0.02})
+
+    asset_dfs = {"TLT": df_tlt, "GLD": df_gld, "BTC": df_btc}
+    feats = make_features(df_spy, feature_set="vol_rich_plus", asset_dfs=asset_dfs)
+
+    cols = feature_columns("vol_rich_plus")
+    assert "spy_tlt_spread_20d" in cols
+    assert "spy_gld_spread_20d" in cols
+    assert "btc_spy_spread_20d" in cols
+    assert "spy_tlt_spread_20d" in feats.columns
+    assert "btc_spy_spread_20d" in feats.columns
+

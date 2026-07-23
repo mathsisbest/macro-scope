@@ -157,10 +157,12 @@ _EXTENDED_FEATURE_NAMES: list[str] = [
     "recession_prob_change_20d",
     # Cross-asset return spreads
     "spy_gld_spread_20d",
+    "spy_tlt_spread_20d",
     "gld_tlt_spread_20d",
     "vea_spy_spread_20d",
     "spy_tip_spread_20d",
     "btc_spy_spread_20d",
+
     # Momentum features not in vol_rich (unique ones from mom_rev set)
     "mom_21d",
     "mom_accel",
@@ -688,6 +690,7 @@ def _add_extended_features(
 
         for _sym, label, feat_name in [
             ("GLD", "gld", "spy_gld_spread_20d"),
+            ("TLT", "tlt", "spy_tlt_spread_20d"),
             ("VEA", "vea", "vea_spy_spread_20d"),
             ("TIP", "tip", "spy_tip_spread_20d"),
             ("BTC", "btc", "btc_spy_spread_20d"),
@@ -695,6 +698,7 @@ def _add_extended_features(
             if f"{label}_ret" in out.columns:
                 spread = (ret - out[f"{label}_ret"]).rolling(20, min_periods=10).mean()
                 out[feat_name] = spread.shift(1)
+
 
         if "gld_ret" in out.columns and "tlt_ret" in out.columns:
             spread = (out["gld_ret"] - out["tlt_ret"]).rolling(20, min_periods=10).mean()
