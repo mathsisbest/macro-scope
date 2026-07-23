@@ -147,3 +147,86 @@ def test_train_latest_forecast_tuning():
     )
     assert "prediction" in result
     assert result["as_of"] == dates[-1]
+
+
+def test_return_forecast_skill_verdict():
+    from mmi.ml.skill_gate import return_forecast_skill_verdict
+
+    df = pd.DataFrame(
+        [
+            {"model": "return_gb", "symbol": "SPY", "metric": "r2", "value": 0.05},
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "direction_accuracy",
+                "value": 0.58,
+            },
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "prediction_count",
+                "value": 150,
+            },
+        ]
+    )
+    verdict = return_forecast_skill_verdict(df, symbol="SPY", model="return_gb")
+    assert verdict["cleared"] is True
+    assert verdict["oos_r2"] == 0.05
+
+    # Failing case: negative R2
+    df_fail = pd.DataFrame(
+        [
+            {"model": "return_gb", "symbol": "SPY", "metric": "r2", "value": -0.01},
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "direction_accuracy",
+                "value": 0.58,
+            },
+        ]
+    )
+    verdict_fail = return_forecast_skill_verdict(df_fail, symbol="SPY", model="return_gb")
+    assert verdict_fail["cleared"] is False
+
+
+def test_transform_fallback_marts(tmp_path):
+    import duckdb
+    from mmi.transform_fallback import build_marts
+
+    db_path = tmp_path / "test.db"
+    con = duckdb.connect(str(db_path))
+
+    # Create dummy raw tables
+    con.execute("CREATE SCHEMA raw;")
+    con.execute(
+        "CREATE TABLE raw.asset_prices (symbol VARCHAR, asset_class VARCHAR, date VARCHAR, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, volume DOUBLE, source VARCHAR);"
+    )
+    con.execute(
+        "CREATE TABLE raw.macro_series (series_id VARCHAR, date VARCHAR, value DOUBLE, source VARCHAR, loaded_at TIMESTAMP);"
+    )
+    con.execute(
+        "CREATE TABLE raw.portfolio_returns (window_id VARCHAR, strategy VARCHAR, date VARCHAR, daily_return DOUBLE, cumulative_return DOUBLE);"
+    )
+    con.execute(
+        "CREATE TABLE raw.portfolio_strategy_stats (window_id VARCHAR, strategy VARCHAR, ann_return DOUBLE);"
+    )
+    con.execute(
+        "CREATE TABLE raw.portfolio_strategy_pairs (window_id VARCHAR, strategy_a VARCHAR, strategy_b VARCHAR, corr DOUBLE);"
+    )
+    con.execute(
+        "CREATE TABLE raw.portfolio_attribution (window_id VARCHAR, strategy VARCHAR, factor VARCHAR, beta DOUBLE);"
+    )
+    con.execute(
+        "CREATE TABLE raw.portfolio_btc_effect (window_id VARCHAR, btc_alloc DOUBLE, sharpe DOUBLE);"
+    )
+    con.execute(
+        "CREATE TABLE raw.portfolio_ml_gate (window_id VARCHAR, model VARCHAR, cleared BOOLEAN);"
+    )
+
+    build_marts(con)
+
+    tables = [r[0] for r in con.execute("SHOW TABLES FROM marts;").fetchall()]
+    assert "fct_portfolio_regime_performance" in tables
+    assert "fct_recession_risk" in tables
+    assert "fct_market_macro" in tables
+
