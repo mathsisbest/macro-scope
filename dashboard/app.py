@@ -109,16 +109,19 @@ FRED, World Bank, DuckDB, scikit-learn, a local or serverless LLM).
 
 **ML Return Forecast — 20-Day Horizon Engine**
 
-All ML return forecasts operate on a standardized **20-day (1-month) forward horizon**, providing actionable short-term tactical signals while securing positive Out-of-Sample (OOS) R² and positive Information Coefficients (IC) across core assets:
+All ML return forecasts operate on a standardized **20-day (1-month) forward horizon**,
+providing actionable short-term tactical signals while securing positive Out-of-Sample
+(OOS) R² and positive Information Coefficients (IC) across core assets:
 
-| Asset | Model | Target Horizon | OOS R² | Directional Accuracy | Feature Set |
-|-------|-------|----------------|-----------|----------------------|-------------|
-| **SPY** | Gradient Boosting | **20 Days** | **+0.0002** | **60.13%** | `vol_rich_plus` (Macro, Spreads, Shiller) |
-| **TLT** | LightGBM | **20 Days** | **+0.0024** | **53.09%** | `vol_rich_plus` (Macro, Yield Curve) |
-| **GLD** | Gradient Boosting | **20 Days** | **+0.0108** | **53.65%** | `vol_rich_plus` (Macro, Cross-Spreads) |
-| **BTC** | Gradient Boosting | **20 Days** | **+0.0058** | **52.57%** | `vol_rich_plus` (Momentum, Vol, Spreads) |
+| Asset | Model | Horizon | OOS R² | Dir. Acc. | Feature Set |
+|-------|-------|---------|-----------|-----------|-------------|
+| **SPY** | Gradient Boosting | **20D** | **+0.0002** | **60.13%** | vol_rich+ (Macro/Spreads) |
+| **TLT** | LightGBM | **20D** | **+0.0024** | **53.09%** | vol_rich+ (Yield Curve) |
+| **GLD** | Gradient Boosting | **20D** | **+0.0108** | **53.65%** | vol_rich+ (Cross-Spreads) |
+| **BTC** | Gradient Boosting | **20D** | **+0.0058** | **52.57%** | vol_rich+ (Momentum/Vol) |
 
-All forecasts are computed using strict walk-forward out-of-sample evaluations with zero look-ahead bias and Bayesian shrinkage calibration toward historical return means.
+All forecasts are computed using strict walk-forward out-of-sample evaluations with
+zero look-ahead bias and Bayesian shrinkage calibration toward historical return means.
 
 **Skill Gate Protocol**
 
@@ -582,11 +585,11 @@ with tab_ml:
             "20-day (1-month) forward return horizons."
         )
         st.info(
-            "ℹ️ All forecasts target a standardized 20-day (1-month) horizon, calibrated via Bayesian "
-            "shrinkage toward historical return means. Out-of-Sample evaluation metrics (IC, R², hit rate) "
+            "ℹ️ All forecasts target a standardized 20-day (1-month) horizon, "
+            "calibrated via Bayesian shrinkage toward historical return means. "
+            "Out-of-Sample evaluation metrics (IC, R², hit rate) "
             "reflect strict walk-forward performance."
         )
-
 
         CORE_SYMBOLS = ["SPY", "QQQ", "GLD", "TLT", "BTC"]
         return_fc = charts.return_forecast_table(fc)

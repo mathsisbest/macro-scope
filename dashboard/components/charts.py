@@ -552,9 +552,9 @@ def ml_gate_chart(gate: pd.DataFrame) -> go.Figure:
 
 #: Scope caption for the ML forecast tab.
 ML_SCOPE_CAPTION: str = (
-    "Models: cross-asset 20-day return forecaster (autotuned Gradient Boosting & LightGBM with vol_rich_plus features)"
+    "Models: cross-asset 20-day return forecaster "
+    "(autotuned Gradient Boosting & LightGBM with vol_rich_plus features)"
 )
-
 
 
 def return_forecast_table(fc: pd.DataFrame) -> pd.DataFrame:
