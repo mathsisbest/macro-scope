@@ -398,7 +398,11 @@ def train_latest_forecast(
     # Bayesian Shrinkage Calibration: shrink raw ML forecast toward historical mean return
     hist_mu = float(y_train.mean()) if len(y_train) > 0 else 0.08
     pred_calibrated = 0.50 * raw_pred + 0.50 * hist_mu
-    vol_bound = float(df["daily_return"].iloc[-60:].std() * np.sqrt(target_horizon)) if "daily_return" in df.columns else 0.15
+    vol_bound = (
+        float(df["daily_return"].iloc[-60:].std() * np.sqrt(target_horizon))
+        if "daily_return" in df.columns
+        else 0.15
+    )
     max_bound = max(0.05, 1.5 * (vol_bound if pd.notna(vol_bound) and vol_bound > 0 else 0.15))
     pred = float(np.clip(pred_calibrated, -max_bound, max_bound))
     feature_importances: dict[str, float] = {}
@@ -408,6 +412,7 @@ def train_latest_forecast(
             feature_importances[col_name] = float(val)
     elif len(X_train) > 0 and len(used_cols) > 0:
         from sklearn.inspection import permutation_importance
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             perm = permutation_importance(clf, X_train, y_train, n_repeats=3, random_state=42)

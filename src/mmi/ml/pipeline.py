@@ -197,7 +197,9 @@ def _train_symbol_ml(
     )
 
     # Persist top 10 feature importances for this model
-    feat_imps = (latest.get("feature_importances", {}) if isinstance(latest, dict) else {}) or res.get("feature_importances", {})
+    feat_imps = (
+        latest.get("feature_importances", {}) if isinstance(latest, dict) else {}
+    ) or res.get("feature_importances", {})
     if feat_imps:
         sorted_imps = sorted(feat_imps.items(), key=lambda x: x[1], reverse=True)[:10]
         for feat_name, imp_val in sorted_imps:

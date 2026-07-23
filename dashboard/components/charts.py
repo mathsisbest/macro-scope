@@ -1291,11 +1291,10 @@ def scenario_simulation_chart(
     delta_returns = [s - b for b, s in zip(df["base"], df["shocked"], strict=False)]
     df["delta"] = delta_returns
 
-    # Distinct baseline color (sleek slate blue) vs shocked color (Emerald Green if positive shock, Coral Red if negative)
+    # Distinct baseline (slate blue) vs shocked (green if positive, coral if negative)
     base_color = "#3B82F6"  # Blue for baseline
     shock_colors = [
-        "#10B981" if d > 1e-6 else ("#EF4444" if d < -1e-6 else "#F59E0B")
-        for d in df["delta"]
+        "#10B981" if d > 1e-6 else ("#EF4444" if d < -1e-6 else "#F59E0B") for d in df["delta"]
     ]
 
     # Side-by-side grouped bars: Baseline vs Shocked

@@ -548,7 +548,9 @@ with tab_macro:
     )
     sim_col1, sim_col2 = st.columns(2)
     with sim_col1:
-        rate_shock = st.slider("Fed Funds Rate Shift (bps)", -200, +200, 0, step=25, key="macro_rate_shock")
+        rate_shock = st.slider(
+            "Fed Funds Rate Shift (bps)", -200, +200, 0, step=25, key="macro_rate_shock"
+        )
     with sim_col2:
         vix_shock = st.slider("VIX Index Shift", -10, +20, 0, step=1, key="macro_vix_shock")
 
@@ -585,7 +587,9 @@ with tab_ml:
 
         CORE_SYMBOLS = ["SPY", "QQQ", "GLD", "TLT", "BTC"]
         return_fc = charts.return_forecast_table(fc)
-        core_fc = return_fc[return_fc["symbol"].isin(CORE_SYMBOLS)] if not return_fc.empty else return_fc
+        core_fc = (
+            return_fc[return_fc["symbol"].isin(CORE_SYMBOLS)] if not return_fc.empty else return_fc
+        )
 
         if not core_fc.empty:
             st.caption(
