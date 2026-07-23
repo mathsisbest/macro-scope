@@ -23,6 +23,7 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.linear_model import Ridge
 
 from . import features as feat
 from .metrics import (
@@ -40,7 +41,9 @@ from .splitters import feasible_date_range, walk_forward_split
 _MODELS = {
     "gb": HistGradientBoostingRegressor,
     "lgb": lgb.LGBMRegressor,
+    "ridge": Ridge,
 }
+
 
 _TARGET_TYPES = ("raw", "vol_adjusted", "excess")
 
@@ -83,14 +86,23 @@ def tune_model_kwargs(
         return kw
 
     tscv = TimeSeriesSplit(n_splits=3)
-    if model_name == "lgb":
-        param_grid = {"learning_rate": [0.03, 0.08], "max_depth": [3, 4], "num_leaves": [7, 15]}
+    if model_name == "ridge":
+        param_grid = {"alpha": [0.1, 1.0, 10.0, 100.0]}
+        model_inst = Ridge()
+    elif model_name == "lgb":
+        param_grid = {
+            "learning_rate": [0.03, 0.08],
+            "max_depth": [3, 4],
+            "num_leaves": [7, 15],
+            "n_estimators": [50, 100],
+        }
         model_inst = lgb.LGBMRegressor(**kw)
     else:
         param_grid = {
             "learning_rate": [0.03, 0.08],
             "max_depth": [3, 4],
-            "l2_regularization": [0.0, 0.1],
+            "l2_regularization": [0.0, 0.1, 1.0],
+            "max_iter": [50, 100],
         }
         model_inst = HistGradientBoostingRegressor(**kw)
 

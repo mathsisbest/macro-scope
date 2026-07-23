@@ -269,3 +269,16 @@ def test_vol_rich_plus_core_assets_features():
     assert "btc_spy_spread_20d" in cols
     assert "spy_tlt_spread_20d" in feats.columns
     assert "btc_spy_spread_20d" in feats.columns
+
+
+def test_tune_model_kwargs_ridge_and_tree_models():
+    from mmi.ml.forecast import tune_model_kwargs
+
+    X_train = np.random.randn(100, 5)
+    y_train = np.random.randn(100)
+
+    kw_ridge = tune_model_kwargs("ridge", X_train, y_train)
+    assert "alpha" in kw_ridge
+
+    kw_gb = tune_model_kwargs("gb", X_train, y_train)
+    assert "learning_rate" in kw_gb
