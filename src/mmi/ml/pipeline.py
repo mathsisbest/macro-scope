@@ -126,7 +126,7 @@ def _train_symbol_ml(
             target_horizon,
         )
         return metric_rows, forecast_rows
-    test_size = min(504, max(252, available_test // 4))
+    test_size = min(252, max(20, available_test // 5))
     # At least 3 walk-forward folds needed for a meaningful evaluation.
     if available_test < test_size * 3:
         log.warning(
@@ -136,6 +136,7 @@ def _train_symbol_ml(
             test_size,
         )
         return metric_rows, forecast_rows
+
 
     try:
         res = evaluate_forecast(
