@@ -387,7 +387,6 @@ def train_latest_forecast(
     )
     kw = {**base_kw, **model_kwargs}
 
-
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=UserWarning, message=".*early_stopping.*")
         clf = model_cls(**kw)

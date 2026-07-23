@@ -147,4 +147,3 @@ def test_train_latest_forecast_tuning():
     )
     assert "prediction" in result
     assert result["as_of"] == dates[-1]
-
