@@ -35,7 +35,6 @@ from .metrics import (
 )
 from .splitters import feasible_date_range, walk_forward_split
 
-
 # ---------- public constants ----------
 
 _MODELS = {
@@ -243,7 +242,6 @@ def evaluate_forecast(
         for train_idx, test_idx in walk_forward_split(
             n, train_size, test_size, single_split=False, use_all_train=use_all_train
         ):
-
             df_train = df.iloc[train_idx]
             df_test = df.iloc[test_idx]
 
@@ -423,7 +421,9 @@ def train_latest_forecast(
 # ---------- internal: helpers ----------
 
 
-def _empty_result(df, model, feature_set, target_type, ensemble_method, loss, horizon) -> ForecastEvaluationResult:
+def _empty_result(
+    df, model, feature_set, target_type, ensemble_method, loss, horizon
+) -> ForecastEvaluationResult:
     return ForecastEvaluationResult(
         horizon=horizon,
         model=model,
@@ -513,4 +513,3 @@ def _compute_metrics(
         feature_cols=feat.feature_columns(feature_set),
         available_feature_cols=available_cols,
     )
-

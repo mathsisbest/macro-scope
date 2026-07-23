@@ -16,7 +16,6 @@ from .forecast import evaluate_forecast
 from .metrics import compute_directional_accuracy, compute_ic, compute_r2, compute_sharpe
 from .splitters import walk_forward_split
 
-
 _FORECAST_MODEL = "gb"
 _HORIZONS = (1, 5, 10, 20)
 _TRAIN_ROWS = 1260
@@ -309,4 +308,3 @@ def _compute_panel_metrics(
         "ensemble_pred": combined["ensemble_pred"],
         "ensemble_method": ensemble_method,
     }
-

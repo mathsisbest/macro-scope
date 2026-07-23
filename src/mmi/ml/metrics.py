@@ -73,8 +73,6 @@ class ForecastEvaluationResult:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
 
 
-
-
 def compute_ic(
     y_true: pd.Series | np.ndarray,
     y_pred: pd.Series | np.ndarray,
