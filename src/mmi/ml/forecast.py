@@ -335,6 +335,7 @@ def train_latest_forecast(
     target_type: str = "raw",
     target_horizon: int = 1,
     loss: str = "squared_error",
+    tune_hyperparameters: bool = True,
     **model_kwargs,
 ) -> dict:
     """Train on the most recent `train_size` rows and produce a single latest prediction."""
@@ -379,7 +380,13 @@ def train_latest_forecast(
     except KeyError:
         raise ValueError(f"Unknown model '{model}'; choose from {list(_MODELS)}") from None
 
-    kw = {**_model_kwargs(model, loss=loss), **model_kwargs}
+    base_kw = (
+        tune_model_kwargs(model, X_train, y_train, loss=loss)
+        if tune_hyperparameters
+        else _model_kwargs(model, loss=loss)
+    )
+    kw = {**base_kw, **model_kwargs}
+
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=UserWarning, message=".*early_stopping.*")

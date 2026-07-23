@@ -121,3 +121,30 @@ def test_forecast_evaluation_result_schema():
     assert isinstance(d, dict)
     assert d["ic"] == 0.15
     assert d["r2"] == 0.0225
+
+
+def test_train_latest_forecast_tuning():
+    from mmi.ml.forecast import train_latest_forecast
+
+    dates = pd.date_range("2020-01-01", periods=300, freq="D")
+    df = pd.DataFrame(
+        {
+            "date": dates,
+            "open": np.linspace(100, 200, 300),
+            "high": np.linspace(101, 201, 300),
+            "low": np.linspace(99, 199, 300),
+            "close": np.linspace(100, 200, 300),
+            "daily_return": np.random.randn(300) * 0.01,
+            "ret": np.random.randn(300) * 0.01,
+        }
+    )
+
+    result = train_latest_forecast(
+        df=df,
+        train_size=100,
+        model="gb",
+        tune_hyperparameters=True,
+    )
+    assert "prediction" in result
+    assert result["as_of"] == dates[-1]
+
