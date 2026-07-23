@@ -191,37 +191,47 @@ def test_return_forecast_skill_verdict():
 
 def test_transform_fallback_marts(tmp_path):
     import duckdb
+
     from mmi.transform_fallback import build_marts
 
     db_path = tmp_path / "test.db"
     con = duckdb.connect(str(db_path))
 
-    # Create dummy raw tables
     con.execute("CREATE SCHEMA raw;")
-    con.execute(
-        "CREATE TABLE raw.asset_prices (symbol VARCHAR, asset_class VARCHAR, date VARCHAR, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, volume DOUBLE, source VARCHAR);"
-    )
-    con.execute(
-        "CREATE TABLE raw.macro_series (series_id VARCHAR, date VARCHAR, value DOUBLE, source VARCHAR, loaded_at TIMESTAMP);"
-    )
-    con.execute(
-        "CREATE TABLE raw.portfolio_returns (window_id VARCHAR, strategy VARCHAR, date VARCHAR, daily_return DOUBLE, cumulative_return DOUBLE);"
-    )
-    con.execute(
-        "CREATE TABLE raw.portfolio_strategy_stats (window_id VARCHAR, strategy VARCHAR, ann_return DOUBLE);"
-    )
-    con.execute(
-        "CREATE TABLE raw.portfolio_strategy_pairs (window_id VARCHAR, strategy_a VARCHAR, strategy_b VARCHAR, corr DOUBLE);"
-    )
-    con.execute(
-        "CREATE TABLE raw.portfolio_attribution (window_id VARCHAR, strategy VARCHAR, factor VARCHAR, beta DOUBLE);"
-    )
-    con.execute(
-        "CREATE TABLE raw.portfolio_btc_effect (window_id VARCHAR, btc_alloc DOUBLE, sharpe DOUBLE);"
-    )
-    con.execute(
-        "CREATE TABLE raw.portfolio_ml_gate (window_id VARCHAR, model VARCHAR, cleared BOOLEAN);"
-    )
+    ddl = """
+        CREATE TABLE raw.asset_prices (
+            symbol VARCHAR, asset_class VARCHAR, date VARCHAR,
+            open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,
+            volume DOUBLE, source VARCHAR
+        );
+        CREATE TABLE raw.macro_series (
+            series_id VARCHAR, date VARCHAR, value DOUBLE,
+            source VARCHAR, loaded_at TIMESTAMP
+        );
+        CREATE TABLE raw.portfolio_returns (
+            window_id VARCHAR, strategy VARCHAR, date VARCHAR,
+            daily_return DOUBLE, cumulative_return DOUBLE
+        );
+        CREATE TABLE raw.portfolio_strategy_stats (
+            window_id VARCHAR, strategy VARCHAR, ann_return DOUBLE
+        );
+        CREATE TABLE raw.portfolio_strategy_pairs (
+            window_id VARCHAR, strategy_a VARCHAR, strategy_b VARCHAR, corr DOUBLE
+        );
+        CREATE TABLE raw.portfolio_attribution (
+            window_id VARCHAR, strategy VARCHAR, factor VARCHAR, beta DOUBLE
+        );
+        CREATE TABLE raw.portfolio_btc_effect (
+            window_id VARCHAR, btc_alloc DOUBLE, sharpe DOUBLE
+        );
+        CREATE TABLE raw.portfolio_ml_gate (
+            window_id VARCHAR, model VARCHAR, cleared BOOLEAN
+        );
+    """
+    for stmt in ddl.strip().split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            con.execute(stmt + ";")
 
     build_marts(con)
 
@@ -229,4 +239,3 @@ def test_transform_fallback_marts(tmp_path):
     assert "fct_portfolio_regime_performance" in tables
     assert "fct_recession_risk" in tables
     assert "fct_market_macro" in tables
-

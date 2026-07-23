@@ -349,4 +349,3 @@ def return_forecast_skill_verdict(
         n_folds=1,
         n_obs=int(metric_map.get("prediction_count", 0)),
     )
-

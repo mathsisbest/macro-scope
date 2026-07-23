@@ -236,18 +236,20 @@ _SQL = [
             spread_10y_3m,
             model,
             z,
-            1.0 / (1.0 + 0.2316419 * ABS(z))                    AS t,
-            EXP(-0.5 * z * z) / SQRT(2.0 * 3.141592653589793)   AS pdf
+            1.0 / (1.0 + 0.2316419 * ABS(z))                  AS t,
+            EXP(-0.5 * z * z) / SQRT(2.0 * 3.141592653589793) AS pdf,
+            t * (0.319381530
+                + t * (-0.356563782
+                    + t * (1.781477937
+                        + t * (-1.821255978
+                            + t * 1.330274429))))             AS cdf_approx
         FROM with_index
     )
     SELECT
         date,
         spread_10y_3m,
-        CASE
-            WHEN z >= 0 THEN
-                1.0 - pdf * (t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429)))))
-            ELSE
-                    pdf * (t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429)))))
+        CASE WHEN z >= 0 THEN 1.0 - pdf * cdf_approx
+             ELSE                 pdf * cdf_approx
         END AS recession_prob,
         model
     FROM with_prob
