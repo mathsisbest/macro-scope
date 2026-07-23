@@ -41,9 +41,30 @@ class ForecastEvaluationResult:
     loss: str = "squared_error"
     feature_cols: list[str] = field(default_factory=list)
     available_feature_cols: list[str] = field(default_factory=list)
+    feature_importances: dict[str, float] = field(default_factory=dict)
 
     def __getitem__(self, item: str) -> Any:
         return getattr(self, item)
+
+    def __setitem__(self, item: str, value: Any) -> None:
+        setattr(self, item, value)
+
+    def __contains__(self, item: object) -> bool:
+        if isinstance(item, str):
+            return hasattr(self, item) or item in self.__dataclass_fields__
+        return False
+
+    def __iter__(self):
+        return iter(self.__dataclass_fields__)
+
+    def keys(self):
+        return self.__dataclass_fields__.keys()
+
+    def values(self):
+        return [getattr(self, k) for k in self.__dataclass_fields__]
+
+    def items(self):
+        return [(k, getattr(self, k)) for k in self.__dataclass_fields__]
 
     def get(self, item: str, default: Any = None) -> Any:
         return getattr(self, item, default)

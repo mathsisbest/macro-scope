@@ -9,10 +9,14 @@ Provides the ``ForecastBacktest`` class that:
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
 from .forecast import evaluate_forecast
+from .metrics import compute_directional_accuracy, compute_ic, compute_r2, compute_sharpe
+from .splitters import walk_forward_split
 
 _FORECAST_MODEL = "gb"
 _HORIZONS = (1, 5, 10, 20)
@@ -56,12 +60,8 @@ class ForecastBacktest:
         train_size: int,
         test_size: int,
     ):
-        """Yield (train_idx, test_idx) tuples over ``df``."""
-        total = len(df)
-        for start in range(0, total - train_size, test_size):
-            train_end = start + train_size
-            test_end = min(train_end + test_size, total)
-            yield list(range(start, train_end)), list(range(train_end, test_end))
+        """Yield (train_idx, test_idx) tuples over ``df`` using canonical walk-forward splitter."""
+        yield from walk_forward_split(len(df), train_size, test_size)
 
     def run_forecast(
         self,
@@ -108,7 +108,7 @@ class ForecastBacktest:
         macro_df = getattr(self.macro_db, "macro_df", None)
         asset_dfs = getattr(self.macro_db, "asset_dfs", None)
 
-        horizon_results: dict[int, dict] = {}
+        horizon_results: dict[int, Any] = {}
         for h in horizons:
             h_res = evaluate_forecast(
                 df=df,
@@ -131,7 +131,7 @@ class ForecastBacktest:
 
     def _combine_horizons(
         self,
-        horizon_results: dict[int, dict],
+        horizon_results: dict[int, Any],
         ensemble_method: str,
     ) -> dict:
         """Combine predictions across horizons into a single ensemble.
@@ -257,7 +257,7 @@ def _empty_panel_result() -> dict:
     }
 
 
-def _calc_ic_weights(horizon_results: dict[int, dict]) -> dict[int, float]:
+def _calc_ic_weights(horizon_results: dict[int, Any]) -> dict[int, float]:
     """Weight each horizon by its historical IC, with exponential decay."""
     MIN_WARMUP = 5
     ic_vals = {}
@@ -276,10 +276,10 @@ def _calc_ic_weights(horizon_results: dict[int, dict]) -> dict[int, float]:
 def _compute_panel_metrics(
     combined: pd.DataFrame,
     y_true: pd.Series,
-    valid_horizons: dict[int, dict],
+    valid_horizons: dict[int, Any],
     ensemble_method: str,
 ) -> dict:
-    """Compute final performance metrics from ensemble predictions."""
+    """Compute final performance metrics from ensemble predictions using canonical metrics."""
     if len(combined) < 5:
         return _empty_panel_result()
 
@@ -293,38 +293,15 @@ def _compute_panel_metrics(
     if len(y_true_clean) < 5:
         return _empty_panel_result()
 
-    from scipy.stats import pearsonr
-
-    ic = np.nan
-    direction_accuracy = np.nan
-    sharpe = np.nan
-    r2 = np.nan
-
-    try:
-        ic_val, ic_pval = pearsonr(
-            ens_pred_clean.to_numpy().astype(float),
-            y_true_clean.to_numpy().astype(float),
-        )
-        ic = float(ic_val) if not pd.isna(ic_val) else 0.0
-    except Exception:
-        ic = 0.0
-
-    direction_tp = ((y_true_clean > 0) & (ens_pred_clean > 0)).sum()
-    direction_tn = ((y_true_clean < 0) & (ens_pred_clean < 0)).sum()
-    direction_accuracy = (direction_tp + direction_tn) / len(y_true_clean)
-
-    strategy_ret = np.sign(ens_pred_clean) * y_true_clean
-    if strategy_ret.std() > 0:
-        sharpe = strategy_ret.mean() / strategy_ret.std() * np.sqrt(252)
-
-    ss_res = ((y_true_clean - ens_pred_clean) ** 2).sum()
-    ss_tot = ((y_true_clean - y_true_clean.mean()) ** 2).sum()
-    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    ic_val, _ = compute_ic(y_true_clean, ens_pred_clean)
+    dir_metrics = compute_directional_accuracy(y_true_clean, ens_pred_clean)
+    sharpe = compute_sharpe(y_true_clean, ens_pred_clean, target_horizon=1)
+    r2 = compute_r2(y_true_clean, ens_pred_clean, method="regression")
 
     first = next(iter(valid_horizons.values()))
     return {
-        "ic": ic,
-        "direction_accuracy": direction_accuracy,
+        "ic": ic_val,
+        "direction_accuracy": dir_metrics["direction_accuracy"],
         "prediction_count": len(combined),
         "sharpe": sharpe,
         "r2": r2,

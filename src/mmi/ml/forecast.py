@@ -25,6 +25,15 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 
 from . import features as feat
+from .metrics import (
+    ForecastEvaluationResult,
+    compute_directional_accuracy,
+    compute_ic,
+    compute_r2,
+    compute_regime_directional_accuracy,
+    compute_sharpe,
+)
+from .splitters import feasible_date_range, walk_forward_split
 
 # ---------- public constants ----------
 
@@ -126,9 +135,7 @@ def _build_target(
 def _feasible_date_range(df: pd.DataFrame, train_size: int) -> tuple[pd.Timestamp, pd.Timestamp]:
     """Return (first_test_date, last_test_date) so that at least one full walk-forward
     window exists.  Returns NaT-NaT when no feasible range exists."""
-    if len(df) < train_size + 1:
-        return pd.NaT, pd.NaT
-    return df["date"].iloc[train_size], df["date"].iloc[-1]
+    return feasible_date_range(df, train_size)
 
 
 # ---------- public API ----------
@@ -151,7 +158,7 @@ def evaluate_forecast(
     single_split: bool = False,
     tune_hyperparameters: bool = False,
     **model_kwargs,
-) -> dict:
+) -> ForecastEvaluationResult:
     """Walk-forward or single-split out-of-sample forecast evaluation."""
     df = df.copy()
 
@@ -232,24 +239,9 @@ def evaluate_forecast(
                 for col_name, val in zip(used_cols, fi, strict=False):
                     last_feature_importances[col_name] = float(val)
     else:
-        for start in range(0, n - train_size, test_size):
-            if use_all_train:
-                # Expanding window: always train from row 0 to current position
-                train_start = 0
-                train_end = start + train_size
-            else:
-                # Rolling window: fixed-size training window that slides forward
-                train_start = start
-                train_end = start + train_size
-
-            train_end = min(train_end, n - 1)
-            test_end = min(train_end + test_size, n)
-
-            train_idx = list(range(train_start, train_end))
-            test_idx = list(range(train_end, test_end))
-            if not test_idx:
-                break
-
+        for train_idx, test_idx in walk_forward_split(
+            n, train_size, test_size, single_split=False, use_all_train=use_all_train
+        ):
             df_train = df.iloc[train_idx]
             df_test = df.iloc[test_idx]
 
@@ -429,39 +421,19 @@ def train_latest_forecast(
 # ---------- internal: helpers ----------
 
 
-def _empty_result(df, model, feature_set, target_type, ensemble_method, loss, horizon) -> dict:
-    return {
-        "horizon": horizon,
-        "ic": np.nan,
-        "ic_pvalue": np.nan,
-        "direction_accuracy": np.nan,
-        "baseline_direction_accuracy": np.nan,
-        "direction_edge": np.nan,
-        "positive_target_rate": np.nan,
-        "positive_prediction_rate": np.nan,
-        "direction_accuracy_low": np.nan,
-        "direction_accuracy_medium": np.nan,
-        "direction_accuracy_high": np.nan,
-        "prediction_count": 0,
-        "predictions": pd.Series(dtype=float),
-        "y_true": pd.Series(dtype=float),
-        "dates": pd.Series(dtype=object),
-        "sharpe": np.nan,
-        "r2": np.nan,
-        "train_size": 0,
-        "test_size": 0,
-        "n_models": 0,
-        "median_model_count": 0,
-        "mean_train_rows": 0,
-        "model": model,
-        "feature_set": feature_set,
-        "target_type": target_type,
-        "ensemble_method": ensemble_method,
-        "loss": loss,
-        "feature_cols": feat.feature_columns(feature_set),
-        "available_feature_cols": [],
-        "feature_importances": {},
-    }
+def _empty_result(
+    df, model, feature_set, target_type, ensemble_method, loss, horizon
+) -> ForecastEvaluationResult:
+    return ForecastEvaluationResult(
+        horizon=horizon,
+        model=model,
+        feature_set=feature_set,
+        target_type=target_type,
+        ensemble_method=ensemble_method,
+        loss=loss,
+        feature_cols=feat.feature_columns(feature_set),
+        available_feature_cols=[],
+    )
 
 
 def _compute_metrics(
@@ -481,7 +453,7 @@ def _compute_metrics(
     train_rows_list: list[int],
     target_horizon: int,
     median_preds: dict[int | str, list[float]] | None = None,
-) -> dict:
+) -> ForecastEvaluationResult:
     if ensemble_method == "median":
         preds = pd.Series(dtype=float, index=df.index)
         for idx, vals in (median_preds or {}).items():
@@ -496,65 +468,13 @@ def _compute_metrics(
     if len(y_true) < 5:
         return _empty_result(df, model, feature_set, target_type, ensemble_method, loss, horizon)
 
-    from scipy.stats import pearsonr
-
-    ic_val, ic_pval = pearsonr(y_true, y_pred)
-    ic_val = float(ic_val) if not pd.isna(ic_val) else 0.0
-    ic_pval = float(ic_pval) if not pd.isna(ic_pval) else 1.0
-
-    direction_tp = ((y_true > 0) & (y_pred > 0)).sum()
-    direction_tn = ((y_true < 0) & (y_pred < 0)).sum()
-    direction_accuracy = (direction_tp + direction_tn) / len(y_true) if len(y_true) > 0 else np.nan
-    positive_target_rate = float((y_true > 0).mean()) if len(y_true) > 0 else np.nan
-    positive_prediction_rate = float((y_pred > 0).mean()) if len(y_pred) > 0 else np.nan
-    negative_target_rate = float((y_true < 0).mean()) if len(y_true) > 0 else np.nan
-    baseline_direction_accuracy = max(positive_target_rate, negative_target_rate)
-    direction_edge = direction_accuracy - baseline_direction_accuracy
-
-    # Regime-specific directional accuracy
-    dir_acc_low, dir_acc_med, dir_acc_high = np.nan, np.nan, np.nan
-    if "ret" in df.columns:
-        vol_20d = df["ret"].rolling(20, min_periods=5).std()
-        valid_vol = vol_20d.loc[valid]
-        if len(valid_vol.dropna()) >= 6:
-            try:
-                regimes = pd.qcut(
-                    valid_vol,
-                    q=3,
-                    labels=["low", "medium", "high"],
-                    duplicates="drop",
-                )
-                for reg_key, _reg_label in [
-                    ("low", "direction_accuracy_low"),
-                    ("medium", "direction_accuracy_medium"),
-                    ("high", "direction_accuracy_high"),
-                ]:
-                    mask = regimes == reg_key
-                    if mask.sum() > 0:
-                        yt = y_true[mask]
-                        yp = y_pred[mask]
-                        tp = ((yt > 0) & (yp > 0)).sum()
-                        tn = ((yt < 0) & (yp < 0)).sum()
-                        acc = (tp + tn) / len(yt) if len(yt) > 0 else np.nan
-                        if reg_key == "low":
-                            dir_acc_low = acc
-                        elif reg_key == "medium":
-                            dir_acc_med = acc
-                        elif reg_key == "high":
-                            dir_acc_high = acc
-            except Exception:
-                pass
-
-    strategy_target_ret = np.sign(y_pred) * y_true
-    if target_horizon == 1 and strategy_target_ret.std() > 0:
-        sharpe = strategy_target_ret.mean() / strategy_target_ret.std() * np.sqrt(252)
-    else:
-        sharpe = np.nan
-
-    if len(y_true) > 2 and np.std(y_true) > 0 and np.std(y_pred) > 0:
-        r2 = float(ic_val**2 if ic_val > 0 else -(ic_val**2))
-    else:
-        r2 = 0.0
+    ic_val, ic_pval = compute_ic(y_true, y_pred)
+    dir_metrics = compute_directional_accuracy(y_true, y_pred)
+    dir_acc_low, dir_acc_med, dir_acc_high = compute_regime_directional_accuracy(
+        df, valid, y_true, y_pred
+    )
+    sharpe = compute_sharpe(y_true, y_pred, target_horizon=target_horizon)
+    r2 = compute_r2(y_true, y_pred, ic_val=ic_val, method="ic_signed_sq")
 
     n_models = len(train_rows_list)
     median_model_count_val = (
@@ -562,34 +482,34 @@ def _compute_metrics(
     )
     mean_train_rows = int(np.mean(train_rows_list)) if train_rows_list else 0
 
-    return {
-        "horizon": horizon,
-        "ic": ic_val,
-        "ic_pvalue": ic_pval,
-        "direction_accuracy": direction_accuracy,
-        "baseline_direction_accuracy": baseline_direction_accuracy,
-        "direction_edge": direction_edge,
-        "positive_target_rate": positive_target_rate,
-        "positive_prediction_rate": positive_prediction_rate,
-        "direction_accuracy_low": dir_acc_low,
-        "direction_accuracy_medium": dir_acc_med,
-        "direction_accuracy_high": dir_acc_high,
-        "prediction_count": len(y_true),
-        "predictions": y_pred,
-        "y_true": y_true,
-        "dates": df.loc[valid, "date"],
-        "sharpe": sharpe,
-        "r2": r2,
-        "train_size": train_size,
-        "test_size": test_size,
-        "n_models": n_models,
-        "median_model_count": median_model_count_val,
-        "mean_train_rows": mean_train_rows,
-        "model": model,
-        "feature_set": feature_set,
-        "target_type": target_type,
-        "ensemble_method": ensemble_method,
-        "loss": loss,
-        "feature_cols": feat.feature_columns(feature_set),
-        "available_feature_cols": available_cols,
-    }
+    return ForecastEvaluationResult(
+        horizon=horizon,
+        ic=ic_val,
+        ic_pvalue=ic_pval,
+        direction_accuracy=dir_metrics["direction_accuracy"],
+        baseline_direction_accuracy=dir_metrics["baseline_direction_accuracy"],
+        direction_edge=dir_metrics["direction_edge"],
+        positive_target_rate=dir_metrics["positive_target_rate"],
+        positive_prediction_rate=dir_metrics["positive_prediction_rate"],
+        direction_accuracy_low=dir_acc_low,
+        direction_accuracy_medium=dir_acc_med,
+        direction_accuracy_high=dir_acc_high,
+        prediction_count=len(y_true),
+        predictions=y_pred,
+        y_true=y_true,
+        dates=df.loc[valid, "date"],
+        sharpe=sharpe,
+        r2=r2,
+        train_size=train_size,
+        test_size=test_size,
+        n_models=n_models,
+        median_model_count=median_model_count_val,
+        mean_train_rows=mean_train_rows,
+        model=model,
+        feature_set=feature_set,
+        target_type=target_type,
+        ensemble_method=ensemble_method,
+        loss=loss,
+        feature_cols=feat.feature_columns(feature_set),
+        available_feature_cols=available_cols,
+    )
