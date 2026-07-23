@@ -9,7 +9,6 @@ from mmi.ml.metrics import (
     compute_directional_accuracy,
     compute_ic,
     compute_r2,
-    compute_regime_directional_accuracy,
     compute_sharpe,
 )
 from mmi.ml.splitters import feasible_date_range, walk_forward_split

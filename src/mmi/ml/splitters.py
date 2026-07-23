@@ -1,6 +1,7 @@
 """Time-series walk-forward and train/test splitters for Macro Scope ML forecasting."""
 
-from typing import Generator
+from collections.abc import Generator
+
 import pandas as pd
 
 
