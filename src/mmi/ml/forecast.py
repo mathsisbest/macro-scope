@@ -158,7 +158,7 @@ def evaluate_forecast(
     single_split: bool = False,
     tune_hyperparameters: bool = False,
     **model_kwargs,
-) -> dict:
+) -> ForecastEvaluationResult:
     """Walk-forward or single-split out-of-sample forecast evaluation."""
     df = df.copy()
 

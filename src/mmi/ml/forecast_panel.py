@@ -9,6 +9,8 @@ Provides the ``ForecastBacktest`` class that:
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -106,7 +108,7 @@ class ForecastBacktest:
         macro_df = getattr(self.macro_db, "macro_df", None)
         asset_dfs = getattr(self.macro_db, "asset_dfs", None)
 
-        horizon_results: dict[int, dict] = {}
+        horizon_results: dict[int, Any] = {}
         for h in horizons:
             h_res = evaluate_forecast(
                 df=df,
@@ -129,7 +131,7 @@ class ForecastBacktest:
 
     def _combine_horizons(
         self,
-        horizon_results: dict[int, dict],
+        horizon_results: dict[int, Any],
         ensemble_method: str,
     ) -> dict:
         """Combine predictions across horizons into a single ensemble.
@@ -255,7 +257,7 @@ def _empty_panel_result() -> dict:
     }
 
 
-def _calc_ic_weights(horizon_results: dict[int, dict]) -> dict[int, float]:
+def _calc_ic_weights(horizon_results: dict[int, Any]) -> dict[int, float]:
     """Weight each horizon by its historical IC, with exponential decay."""
     MIN_WARMUP = 5
     ic_vals = {}
@@ -274,7 +276,7 @@ def _calc_ic_weights(horizon_results: dict[int, dict]) -> dict[int, float]:
 def _compute_panel_metrics(
     combined: pd.DataFrame,
     y_true: pd.Series,
-    valid_horizons: dict[int, dict],
+    valid_horizons: dict[int, Any],
     ensemble_method: str,
 ) -> dict:
     """Compute final performance metrics from ensemble predictions using canonical metrics."""
