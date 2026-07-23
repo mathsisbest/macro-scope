@@ -282,3 +282,35 @@ def test_tune_model_kwargs_ridge_and_tree_models():
 
     kw_gb = tune_model_kwargs("gb", X_train, y_train)
     assert "learning_rate" in kw_gb
+
+
+def test_sprint_pipeline_execution_core_assets(tmp_path):
+    from mmi.ml.pipeline import _train_symbol_ml
+
+    dates = pd.date_range("2010-01-01", periods=3000, freq="D")
+    df_spy = pd.DataFrame(
+        {
+            "date": dates,
+            "open": np.linspace(100, 200, 3000),
+            "high": np.linspace(101, 201, 3000),
+            "low": np.linspace(99, 199, 3000),
+            "close": np.linspace(100, 200, 3000),
+            "daily_return": np.random.randn(3000) * 0.01,
+            "ret": np.random.randn(3000) * 0.01,
+        }
+    )
+
+    m_rows, f_rows = _train_symbol_ml(
+        sym="SPY",
+        df=df_spy,
+        macro_df=pd.DataFrame(),
+        asset_dfs={},
+        now="2026-01-01T00:00:00Z",
+    )
+
+    assert len(m_rows) > 0
+    metrics_found = {r["metric"] for r in m_rows}
+    assert "ic" in metrics_found
+    assert "r2" in metrics_found
+    assert len(f_rows) == 1
+    assert "predicted_return" in f_rows[0]
