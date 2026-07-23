@@ -27,40 +27,41 @@ _MAX_WORKERS = 4
 _SYMBOL_ML_CONFIG: dict[str, dict] = {
     "SPY": {
         "model": "gb",
-        "train_size": 1260,
+        "train_size": 2520,
         "target_horizon": 20,
         "use_all_train": True,
-        "feature_set": "vol_macro_shiller",
+        "feature_set": "vol_rich_plus",
     },
     "QQQ": {
         "model": "gb",
         "train_size": 1260,
         "target_horizon": 20,
         "use_all_train": True,
-        "feature_set": "vol_macro",
+        "feature_set": "vol_rich_plus",
     },
     "GLD": {
         "model": "gb",
-        "train_size": 1260,
+        "train_size": 1512,
         "target_horizon": 20,
         "use_all_train": True,
-        "feature_set": "vol_macro",
+        "feature_set": "vol_rich_plus",
     },
     "TLT": {
         "model": "lgb",
-        "train_size": 1260,
+        "train_size": 1764,
         "target_horizon": 20,
         "use_all_train": True,
-        "feature_set": "vol_macro",
+        "feature_set": "vol_rich_plus",
     },
     "BTC": {
         "model": "gb",
-        "train_size": 1260,
+        "train_size": 1008,
         "target_horizon": 20,
         "use_all_train": True,
-        "feature_set": "vol_macro",
+        "feature_set": "vol_rich_plus",
     },
 }
+
 _DEFAULT_ML_CONFIG: dict = {
     "model": "gb",
     "train_size": 1260,
