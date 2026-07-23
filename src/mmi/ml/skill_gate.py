@@ -286,3 +286,66 @@ def skill_verdict(
         n_folds=n_folds,
         n_obs=n_obs,
     )
+
+
+def return_forecast_skill_verdict(
+    model_metrics_df: pd.DataFrame,
+    symbol: str = "SPY",
+    model: str = "return_gb",
+) -> SkillVerdict:
+    """Return skill verdict for Return Forecast models (R2 > 0, Directional Accuracy > 0.50)."""
+    for col in ("model", "symbol", "metric", "value"):
+        if col not in model_metrics_df.columns:
+            return SkillVerdict(
+                cleared=False,
+                reasons=[f"model_metrics_df is missing required column '{col}'"],
+                oos_r2=None,
+                qlike_skill_ratio=None,
+                folds_passed=None,
+                n_folds=None,
+                n_obs=None,
+            )
+
+    subset = model_metrics_df[
+        (model_metrics_df["model"] == model) & (model_metrics_df["symbol"] == symbol)
+    ]
+    if subset.empty:
+        return SkillVerdict(
+            cleared=False,
+            reasons=[f"no rows found for model='{model}', symbol='{symbol}'"],
+            oos_r2=None,
+            qlike_skill_ratio=None,
+            folds_passed=None,
+            n_folds=None,
+            n_obs=None,
+        )
+
+    if "trained_at" in subset.columns:
+        subset = subset.sort_values("trained_at", ascending=True)
+
+    metric_map: dict[str, float] = (
+        subset.drop_duplicates(subset=["metric"], keep="last")
+        .set_index("metric")["value"]
+        .to_dict()
+    )
+
+    r2 = _to_finite_float(metric_map.get("r2"))
+    dir_acc = _to_finite_float(metric_map.get("direction_accuracy"))
+
+    reasons: list[str] = []
+    if r2 is None or r2 <= 0:
+        reasons.append(f"r2={r2} <= 0 — model does not produce positive out-of-sample R2")
+    if dir_acc is None or dir_acc <= 0.50:
+        reasons.append(
+            f"direction_accuracy={dir_acc} <= 0.50 — directional accuracy is at or below coin flip"
+        )
+
+    return SkillVerdict(
+        cleared=len(reasons) == 0,
+        reasons=reasons,
+        oos_r2=r2,
+        qlike_skill_ratio=None,
+        folds_passed=1 if len(reasons) == 0 else 0,
+        n_folds=1,
+        n_obs=int(metric_map.get("prediction_count", 0)),
+    )
