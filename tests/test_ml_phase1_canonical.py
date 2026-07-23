@@ -314,6 +314,3 @@ def test_sprint_pipeline_execution_core_assets(tmp_path):
     assert "r2" in metrics_found
     assert len(f_rows) == 1
     assert "predicted_return" in f_rows[0]
-
-
-

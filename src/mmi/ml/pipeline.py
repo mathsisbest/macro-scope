@@ -137,7 +137,6 @@ def _train_symbol_ml(
         )
         return metric_rows, forecast_rows
 
-
     try:
         res = evaluate_forecast(
             df=df,
