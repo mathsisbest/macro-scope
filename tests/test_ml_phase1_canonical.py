@@ -269,4 +269,3 @@ def test_vol_rich_plus_core_assets_features():
     assert "btc_spy_spread_20d" in cols
     assert "spy_tlt_spread_20d" in feats.columns
     assert "btc_spy_spread_20d" in feats.columns
-
