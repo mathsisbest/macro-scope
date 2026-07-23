@@ -24,7 +24,6 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import Ridge
-from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 
 from . import features as feat
 from .metrics import (
@@ -116,7 +115,6 @@ def tune_model_kwargs(
     except Exception:
         pass
     return kw
-
 
 
 def _build_target(

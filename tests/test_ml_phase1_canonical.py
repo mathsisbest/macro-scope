@@ -282,4 +282,3 @@ def test_tune_model_kwargs_ridge_and_tree_models():
 
     kw_gb = tune_model_kwargs("gb", X_train, y_train)
     assert "learning_rate" in kw_gb
-
