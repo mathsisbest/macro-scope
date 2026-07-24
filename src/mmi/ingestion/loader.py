@@ -12,7 +12,6 @@ import contextlib
 import uuid
 from datetime import datetime, timezone
 
-
 import pandas as pd
 
 from mmi.utils.db import init_schemas

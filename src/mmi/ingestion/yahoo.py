@@ -53,7 +53,7 @@ class YahooChartExtractor(Extractor):
             if start_after:
                 self.log.info("yahoo: no new data since %s", start_after)
                 return pd.DataFrame()
-            # Fail LOUD: a non-JSON / empty response on full load must not masquerade as a successful empty load.
+            # Fail LOUD: empty response must not masquerade as a successful empty load.
             raise ValueError("Yahoo returned no usable data for any symbol")
         return pd.concat(frames, ignore_index=True)
 
