@@ -57,7 +57,6 @@ class YahooChartExtractor(Extractor):
             raise ValueError("Yahoo returned no usable data for any symbol")
         return pd.concat(frames, ignore_index=True)
 
-
     def _fetch_one(self, symbol: str, kind: str, start_after: str | None = None) -> pd.DataFrame:
         yahoo_symbol = f"{symbol}=X" if kind == "fx" else symbol
         # crypto_daily holds Yahoo crypto tickers (e.g. BTC-USD); store them as a clean symbol
@@ -89,7 +88,6 @@ class YahooChartExtractor(Extractor):
         adjclose_list = indicators.get("adjclose") or []
         adjnode = adjclose_list[0] if (adjclose_list and isinstance(adjclose_list[0], dict)) else {}
         adjclose = adjnode.get("adjclose") if isinstance(adjnode, dict) else None
-
 
         # Adjusted close = total return; fall back to raw close (FX has no adjclose).
         closes = adjclose if adjclose is not None else quote.get("close")

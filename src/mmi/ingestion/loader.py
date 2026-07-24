@@ -84,7 +84,6 @@ def ensure_raw_tables(con) -> None:
         con.execute("ALTER TABLE raw.asset_prices ADD COLUMN IF NOT EXISTS daily_return DOUBLE")
 
 
-
 def reset_portfolio_raw_tables(con) -> None:
     """Drop + recreate the portfolio landing tables with the current canonical schema.
 
