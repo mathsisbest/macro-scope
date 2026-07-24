@@ -28,7 +28,8 @@ _AUDIT_TABLE = "raw.pipeline_runs"
 _RAW_TABLES = {
     "raw.asset_prices": (
         "symbol VARCHAR, asset_class VARCHAR, date TIMESTAMPTZ, open DOUBLE, high DOUBLE, "
-        "low DOUBLE, close DOUBLE, volume DOUBLE, source VARCHAR, loaded_at TIMESTAMPTZ"
+        "low DOUBLE, close DOUBLE, volume DOUBLE, daily_return DOUBLE, "
+        "source VARCHAR, loaded_at TIMESTAMPTZ"
     ),
     "raw.macro_series": (
         "series_id VARCHAR, date TIMESTAMPTZ, value DOUBLE, source VARCHAR, loaded_at TIMESTAMPTZ"

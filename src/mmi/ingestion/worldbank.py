@@ -57,8 +57,6 @@ class WorldBankExtractor(Extractor):
         from mmi.ingestion.models import WorldBankIndicatorRow
 
         df = super().validate(df)
-        df_valid = df.copy()
-        df_valid["country_id"] = df_valid["country"]
-        df_valid["value"] = df_valid["value"].fillna(0.0)
-        validated = self.validate_pydantic(df_valid, WorldBankIndicatorRow)
-        return validated.drop(columns=["country_id"], errors="ignore")
+        df = df.copy()
+        df["value"] = df["value"].fillna(0.0)
+        return self.validate_pydantic(df, WorldBankIndicatorRow)

@@ -29,10 +29,11 @@ class FredObservationRow(BaseModel):
 class WorldBankIndicatorRow(BaseModel):
     """Schema validation for raw World Bank indicator rows."""
 
-    country_id: str = Field(..., description="ISO country code")
+    country: str = Field(..., description="ISO country code")
     indicator_id: str = Field(..., description="World Bank indicator code")
     date: str = Field(..., description="Year (YYYY)")
     value: float = Field(..., description="Indicator value")
+    source: str = Field(..., description="Source identifier")
 
 
 class OddsRow(BaseModel):
