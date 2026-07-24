@@ -48,7 +48,6 @@ class FredExtractor(Extractor):
                 self.log.warning("fred: series %s failed: %s", sid, exc)
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
-
     def _fetch_series(self, series_id: str, start_after: str | None = None) -> pd.DataFrame:
         params: dict = {
             "series_id": series_id,
