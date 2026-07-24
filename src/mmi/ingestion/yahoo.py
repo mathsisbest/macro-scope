@@ -50,7 +50,10 @@ class YahooChartExtractor(Extractor):
                 else:
                     frames.append(df)
         if not frames:
-            # Fail LOUD: a non-JSON / empty response must not masquerade as a successful empty load.
+            if start_after:
+                self.log.info("yahoo: no new data since %s", start_after)
+                return pd.DataFrame()
+            # Fail LOUD: empty response must not masquerade as a successful empty load.
             raise ValueError("Yahoo returned no usable data for any symbol")
         return pd.concat(frames, ignore_index=True)
 
@@ -79,8 +82,13 @@ class YahooChartExtractor(Extractor):
             raise ValueError(f"no chart result for {yahoo_symbol}")
         node = result[0]
         timestamps = node.get("timestamp") or []
-        quote = (node.get("indicators", {}).get("quote") or [{}])[0]
-        adjclose = (node.get("indicators", {}).get("adjclose") or [{}])[0].get("adjclose")
+        indicators = node.get("indicators") or {}
+        quote_list = indicators.get("quote") or []
+        quote = quote_list[0] if (quote_list and isinstance(quote_list[0], dict)) else {}
+        adjclose_list = indicators.get("adjclose") or []
+        adjnode = adjclose_list[0] if (adjclose_list and isinstance(adjclose_list[0], dict)) else {}
+        adjclose = adjnode.get("adjclose") if isinstance(adjnode, dict) else None
+
         # Adjusted close = total return; fall back to raw close (FX has no adjclose).
         closes = adjclose if adjclose is not None else quote.get("close")
         if not timestamps or not closes:

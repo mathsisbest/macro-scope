@@ -8,6 +8,7 @@ Design goals (data-engineering best practice):
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from datetime import datetime, timezone
 
@@ -79,6 +80,8 @@ def ensure_raw_tables(con) -> None:
     """Create the raw source tables (empty) if absent, so dbt always has its sources."""
     for table, schema in _RAW_TABLES.items():
         con.execute(f"CREATE TABLE IF NOT EXISTS {table} ({schema})")
+    with contextlib.suppress(Exception):
+        con.execute("ALTER TABLE raw.asset_prices ADD COLUMN IF NOT EXISTS daily_return DOUBLE")
 
 
 def reset_portfolio_raw_tables(con) -> None:

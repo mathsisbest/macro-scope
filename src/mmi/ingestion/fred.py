@@ -38,7 +38,14 @@ class FredExtractor(Extractor):
 
     def fetch(self, start_after: str | None = None) -> pd.DataFrame:
         series_list = [s["id"] for s in load_assets()["macro"] if isinstance(s, dict)]
-        frames = [self._fetch_series(sid, start_after=start_after) for sid in series_list]
+        frames: list[pd.DataFrame] = []
+        for sid in series_list:
+            try:
+                df_s = self._fetch_series(sid, start_after=start_after)
+                if not df_s.empty:
+                    frames.append(df_s)
+            except Exception as exc:
+                self.log.warning("fred: series %s failed: %s", sid, exc)
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
     def _fetch_series(self, series_id: str, start_after: str | None = None) -> pd.DataFrame:
@@ -51,7 +58,8 @@ class FredExtractor(Extractor):
             # FRED API accepts observation_start as YYYY-MM-DD
             params["observation_start"] = str(start_after)[:10]
         resp = get_json(_URL, params=params)
-        obs = resp.get("observations", []) if isinstance(resp, dict) else []
+        obs = (resp or {}).get("observations", []) if isinstance(resp, dict) else []
+
         df = pd.DataFrame(obs)
         if df.empty:
             return df
