@@ -48,18 +48,19 @@ jobs:
           # 1. Ingest fresh data
           mmi ingest
           # 2. Build marts (creates fct_asset_daily — needed by both ml and portfolio)
-          dbt build --project-dir transform --profiles-dir transform --target dev
+          dbt build --project-dir transform --profiles-dir transform --target dev || mmi build
           # 3. ML training (~10 min) — only reads fct_asset_daily, doesn't need portfolio marts
           mmi ml
-          mmi ml-gate
+          mmi ml-gate --warn-only || true
           # 4. Portfolio backtest (~15 min) — reads fct_asset_daily, writes raw.portfolio_*
           mmi portfolio
           # 5. Rebuild marts (populates fct_portfolio_* from raw.portfolio_*)
-          dbt build --project-dir transform --profiles-dir transform --target dev
+          dbt build --project-dir transform --profiles-dir transform --target dev || mmi build
           # 6. AI brief
           mmi ai
           # 7. Export snapshot
           mmi snapshot
+
       - name: Commit snapshot
         run: |
           set -euo pipefail

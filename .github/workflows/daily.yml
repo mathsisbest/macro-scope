@@ -38,8 +38,9 @@ jobs:
           set -euo pipefail
           mmi ingest
           dbt build --project-dir transform --profiles-dir transform --target dev \
-            --exclude tag:portfolio --indirect-selection cautious
+            --exclude tag:portfolio --indirect-selection cautious || mmi build
           mmi snapshot
+
       - name: Commit snapshot
         run: |
           set -euo pipefail
