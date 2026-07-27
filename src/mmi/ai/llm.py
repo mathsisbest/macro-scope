@@ -33,16 +33,7 @@ def _key() -> str:
 
 def available() -> bool:
     """True if the selected provider has an API key configured."""
-    key = _key()
-    if not key:
-        return False
-    if settings.llm_provider == "gemini" and not key.startswith("AIza"):
-        log.warning(
-            "GEMINI_API_KEY %s... is not a valid AI Studio key (should start with AIza)",
-            key[:8],
-        )
-        return False
-    return True
+    return bool(_key())
 
 
 def provider_model() -> str:
