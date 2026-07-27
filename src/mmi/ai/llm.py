@@ -119,7 +119,7 @@ def _groq(prompt: str, system: str | None, max_tokens: int) -> str:
     with httpx.Client(timeout=60) as client:
         r = client.post(
             "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {_key()}"},
+            headers={"Authorization": f"Bearer {settings.groq_api_key}"},
             json={"model": MODELS["groq"], "messages": messages, "max_tokens": max_tokens},
         )
         r.raise_for_status()
@@ -137,7 +137,7 @@ def _claude(prompt: str, system: str | None, max_tokens: int) -> str:
     with httpx.Client(timeout=60) as client:
         r = client.post(
             "https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": _key(), "anthropic-version": "2023-06-01"},
+            headers={"x-api-key": settings.anthropic_api_key, "anthropic-version": "2023-06-01"},
             json=body,
         )
         r.raise_for_status()
