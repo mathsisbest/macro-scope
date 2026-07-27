@@ -374,7 +374,10 @@ with tab_mkt:
             lb_cols = st.columns(min(len(board), 3))
             for i, row in enumerate(board.itertuples(index=False)):
                 with lb_cols[i % len(lb_cols)]:
-                    dot = charts.asset_class_color(row.asset_class)
+                    if row.asset_class:
+                        dot = charts.asset_class_color(row.asset_class)
+                    else:
+                        dot = charts.PALETTE["series"][i % 6]
                     ret_color = charts.leaderboard_return_color(row.period_return)
                     st.markdown(
                         f"<div style='line-height:1.35'>"
