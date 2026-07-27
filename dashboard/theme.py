@@ -97,7 +97,7 @@ def style_fig(fig: go.Figure, height: int = 360) -> go.Figure:
     # margin they collide (the SPY "price & 50d moving average" title overlapped its legend). Give
     # titled figures extra top headroom and pin the title to the very top so the legend sits below
     # it, not on top of it. Title-less figures keep the compact margin.
-    has_title = bool(fig.layout.title.text)
+    has_title = bool(fig.layout.title and fig.layout.title.text)
     fig.update_layout(
         template="plotly_dark",
         height=height,

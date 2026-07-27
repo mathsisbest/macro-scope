@@ -221,7 +221,7 @@ with st.sidebar:
             st.caption("**Asset universe**")
             assets = data.asset_universe()
             if not assets.empty:
-                for cls in assets["asset_class"].unique():
+                for cls in assets["asset_class"].dropna().unique():
                     syms = assets[assets["asset_class"] == cls]
                     sym_list = ", ".join(syms["symbol"].tolist())
                     st.caption(f"**{cls.title()}**: {sym_list}")
