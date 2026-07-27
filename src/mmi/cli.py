@@ -88,11 +88,24 @@ def cmd_ingest(_: argparse.Namespace) -> int:
     with connect() as con:
         loader = DuckDBLoader(con)
 
+        # Phase 0: Compute watermarks sequentially (DuckDB connection is NOT thread-safe).
+        start_afters: dict[str, str | None] = {}
+        for cls in EXTRACTORS:
+            ext = cls(loader)
+            wm: str | None = None
+            if ext.watermark_col:
+                with contextlib.suppress(Exception):
+                    wm = loader.watermark(ext.table, ext.watermark_col)
+            start_afters[ext.source] = wm
+
         # Phase 1: Parallel fetch (network I/O bound)
         fetch_results: dict[str, tuple[Extractor, str, Any]] = {}
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = {
-                executor.submit(_fetch_extractor, cls(loader)): cls(loader) for cls in EXTRACTORS
+                executor.submit(
+                    _fetch_extractor, cls(loader), start_afters[cls(loader).source]
+                ): cls(loader)
+                for cls in EXTRACTORS
             }
 
             for future in as_completed(futures):
@@ -156,16 +169,15 @@ def cmd_ingest(_: argparse.Namespace) -> int:
     return 1 if required_failures else 0
 
 
-def _fetch_extractor(extractor: Extractor) -> tuple[str, Any]:
-    """Fetch data from an extractor (network I/O bound — safe to parallelize)."""
+def _fetch_extractor(extractor: Extractor, start_after: str | None = None) -> tuple[str, Any]:
+    """Fetch data from an extractor (network I/O bound — safe to parallelize).
+
+    ``start_after`` is computed **sequentially** before the parallel phase so the
+    shared DuckDB connection is never queried concurrently from multiple threads.
+    """
     reason = extractor.skip_reason()
     if reason:
         return ("skip", reason)
-    start_after = None
-    if extractor.watermark_col:
-        wm = extractor.loader.watermark(extractor.table, extractor.watermark_col)
-        if wm:
-            start_after = wm
     df = extractor.fetch(start_after=start_after)
     return ("ok", df)
 
