@@ -42,9 +42,7 @@ def available() -> bool:
     wait=wait_exponential(min=1, max=10),
     reraise=True,
 )
-def complete(
-    prompt: str, *, system: str | None = None, max_tokens: int = 800
-) -> tuple[str, str]:
+def complete(prompt: str, *, system: str | None = None, max_tokens: int = 800) -> tuple[str, str]:
     """Return ``(text, engine)`` with multi-provider failover fallback.
 
     ``engine`` is the provider:model that actually served the response
