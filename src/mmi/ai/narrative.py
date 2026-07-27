@@ -484,7 +484,9 @@ def generate_brief(con) -> str:
     if llm.available():
         try:
             # 4096 so medium thinking has room before the 6-10 sentence narrative answer.
-            raw_text = llm.complete(_build_prompt(facts), system=_SYSTEM, max_tokens=4096)
+            raw_text, engine = llm.complete(
+                _build_prompt(facts), system=_SYSTEM, max_tokens=4096
+            )
             rejection = _validate_llm_output(raw_text)
             if rejection is not None:
                 log.warning(
@@ -495,7 +497,6 @@ def generate_brief(con) -> str:
                 engine = "offline-template (llm-rejected)"
             else:
                 text = raw_text
-                engine = llm.provider_model()
         except Exception as exc:  # noqa: BLE001 - GenAI is best-effort; template is the floor
             # redact: the provider key rides in the request URL/headers, so it can surface in the
             # httpx error string — never let it reach the logs (see utils/redact.py).
