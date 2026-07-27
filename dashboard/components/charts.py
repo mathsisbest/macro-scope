@@ -239,18 +239,24 @@ def rebased_performance_chart(perf_long: pd.DataFrame, height: int = HEIGHT_TALL
     """One class-coloured line per symbol over the window, each rebased to 0% at the start.
 
     The legend shows each symbol with its final % so the chart reads without hovering. Line
-    colour comes from the asset-class colour map (``theme.asset_class_color``)."""
+    colour comes from the asset-class colour map (``theme.asset_class_color``). Falls back to
+    the Plotly colourway cycle when ``asset_class`` is missing or None in the data."""
     fig = go.Figure()
+    colorway = PALETTE["series"]
     if not perf_long.empty:
-        for symbol, grp in perf_long.groupby("symbol", sort=False):
+        for idx, (symbol, grp) in enumerate(perf_long.groupby("symbol", sort=False)):
             g = grp.sort_values("date")
             asset_class = str(g["asset_class"].iloc[0]) if "asset_class" in g else ""
             final = float(g["perf"].iloc[-1]) if not g["perf"].empty else 0.0
+            if asset_class and asset_class != "None":
+                color = asset_class_color(asset_class)
+            else:
+                color = colorway[idx % len(colorway)]
             fig.add_scatter(
                 x=g["date"],
                 y=g["perf"],
                 name=f"{symbol}  {final * 100:+.1f}%",
-                line=dict(color=asset_class_color(asset_class)),
+                line=dict(color=color),
             )
     fig.add_hline(y=0, line_color=PALETTE["muted"], line_dash="dot")
     fig.update_yaxes(tickformat=".0%")

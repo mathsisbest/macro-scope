@@ -17,7 +17,7 @@ log = get_logger("ai.llm")
 
 # Default models per provider (override here as model names evolve).
 MODELS = {
-    "gemini": "gemini-2.0-flash",
+    "gemini": "gemini-2.5-flash",
     "groq": "llama-3.3-70b-versatile",
     "claude": "claude-sonnet-4-6",
 }
@@ -33,7 +33,16 @@ def _key() -> str:
 
 def available() -> bool:
     """True if the selected provider has an API key configured."""
-    return bool(_key())
+    key = _key()
+    if not key:
+        return False
+    if settings.llm_provider == "gemini" and not key.startswith("AIza"):
+        log.warning(
+            "GEMINI_API_KEY %s... is not a valid AI Studio key (should start with AIza)",
+            key[:8],
+        )
+        return False
+    return True
 
 
 def provider_model() -> str:
@@ -91,8 +100,7 @@ def _gemini(prompt: str, system: str | None, max_tokens: int) -> str:
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "maxOutputTokens": max_tokens,
-            # Gemini 3.x thinking effort (low|medium|high). NOTE: 2.5-era models use
-            # thinkingBudget (int) instead — adjust if MODELS["gemini"] is pinned back to 2.5.
+            # Gemini thinking effort (low|medium|high).
             "thinkingConfig": {"thinkingLevel": settings.gemini_thinking_level},
         },
     }
