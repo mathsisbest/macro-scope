@@ -331,7 +331,7 @@ def test_generate_brief_rejects_empty_llm_output(monkeypatch, tmp_path, caplog):
     con = _make_minimal_con()
     monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
     monkeypatch.setattr(narrative.llm, "available", lambda: True)
-    monkeypatch.setattr(narrative.llm, "complete", lambda *_a, **_k: "")
+    monkeypatch.setattr(narrative.llm, "complete", lambda *_a, **_k: ("", "mock:test"))
     with caplog.at_level(logging.WARNING):
         text = narrative.generate_brief(con)
     try:
@@ -349,7 +349,9 @@ def test_generate_brief_rejects_key_shaped_llm_output(monkeypatch, tmp_path, cap
     monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
     monkeypatch.setattr(narrative.llm, "available", lambda: True)
     monkeypatch.setattr(
-        narrative.llm, "complete", lambda *_a, **_k: "Summary. api_key=SUPER_SECRET_XYZ here."
+        narrative.llm,
+        "complete",
+        lambda *_a, **_k: ("Summary. api_key=SUPER_SECRET_XYZ here.", "mock:test"),
     )
     with caplog.at_level(logging.WARNING):
         text = narrative.generate_brief(con)
