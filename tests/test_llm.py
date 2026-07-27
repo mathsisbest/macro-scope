@@ -26,7 +26,9 @@ def test_gemini_request_carries_configured_thinking_level(monkeypatch):
         )
     )
 
-    assert llm.complete("prompt", system="sys") == "hi"  # parses the answer text
+    text, engine = llm.complete("prompt", system="sys")
+    assert text == "hi"
+    assert engine == "gemini:gemini-2.5-flash"
     body = json.loads(route.calls.last.request.content)
     assert (
         body["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "high"
@@ -93,6 +95,7 @@ def test_complete_does_not_retry_a_deterministic_empty_output(monkeypatch):
     # one call, fail fast (vs. burning 3x backoff + free quota on a deterministic failure).
     monkeypatch.setattr(settings_mod.settings, "llm_provider", "gemini")
     monkeypatch.setattr(settings_mod.settings, "gemini_api_key", "k")
+    monkeypatch.setattr(settings_mod.settings, "groq_api_key", "")
     route = respx.post(_URL).mock(
         return_value=httpx.Response(200, json={"candidates": [{"finishReason": "MAX_TOKENS"}]})
     )
