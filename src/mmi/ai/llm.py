@@ -36,27 +36,18 @@ def available() -> bool:
     return bool(_key())
 
 
-def provider_model() -> str:
-    return f"{settings.llm_provider}:{MODELS[settings.llm_provider]}"
-
-
 @retry(
-    # Retry on transient HTTP failures (rate limits / 429, 5xx, network).  A deterministic
-    # RuntimeError (e.g. Gemini returned no text) is NOT retried — it would just burn ~11s of
-    # backoff + free quota before failing the same way, so we fail fast to the template.
-    #
-    # HTTP 429 (Too Many Requests) is an httpx.HTTPStatusError, which is a subclass of
-    # httpx.HTTPError.  After stop_after_attempt(3) exhausts retries, reraise=True propagates
-    # the exception to the caller (generate_brief's except clause) which logs it via redact()
-    # and sets engine = 'offline-template (llm-failed)'.  This guarantees a 429 never crashes
-    # the brief; it always degrades to the offline template.
     retry=retry_if_exception_type(httpx.HTTPError),
     stop=stop_after_attempt(3),
     wait=wait_exponential(min=1, max=10),
     reraise=True,
 )
-def complete(prompt: str, *, system: str | None = None, max_tokens: int = 800) -> str:
-    """Return a completion with multi-provider failover fallback.
+def complete(prompt: str, *, system: str | None = None, max_tokens: int = 800) -> tuple[str, str]:
+    """Return ``(text, engine)`` with multi-provider failover fallback.
+
+    ``engine`` is the provider:model that actually served the response
+    (e.g. ``"groq:llama-3.3-70b-versatile"``), which may differ from
+    ``settings.llm_provider`` when a fallback was used.
 
     Tries configured primary provider (settings.llm_provider), and falls over
     to secondary providers (gemini -> groq -> claude) if primary API is unavailable
@@ -69,11 +60,11 @@ def complete(prompt: str, *, system: str | None = None, max_tokens: int = 800) -
     for p in providers_order:
         try:
             if p == "gemini" and settings.gemini_api_key:
-                return _gemini(prompt, system, max_tokens)
+                return _gemini(prompt, system, max_tokens), f"{p}:{MODELS[p]}"
             if p == "groq" and settings.groq_api_key:
-                return _groq(prompt, system, max_tokens)
+                return _groq(prompt, system, max_tokens), f"{p}:{MODELS[p]}"
             if p == "claude" and settings.anthropic_api_key:
-                return _claude(prompt, system, max_tokens)
+                return _claude(prompt, system, max_tokens), f"{p}:{MODELS[p]}"
         except Exception as exc:  # noqa: BLE001
             log.warning("LLM provider '%s' failed: %s; trying next provider...", p, exc)
             last_error = exc
