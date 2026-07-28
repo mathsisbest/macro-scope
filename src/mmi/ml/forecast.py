@@ -251,8 +251,14 @@ def evaluate_forecast(
                 for col_name, val in zip(used_cols, fi, strict=False):
                     last_feature_importances[col_name] = float(val)
     else:
+        embargo_gap = max(0, target_horizon - 1)
         for train_idx, test_idx in walk_forward_split(
-            n, train_size, test_size, single_split=False, use_all_train=use_all_train
+            n,
+            train_size,
+            test_size,
+            single_split=False,
+            use_all_train=use_all_train,
+            embargo=embargo_gap,
         ):
             df_train = df.iloc[train_idx]
             df_test = df.iloc[test_idx]
