@@ -621,11 +621,24 @@ def _add_extended_features(
     """Add extended features for vol_rich_plus: unused FRED, breakeven inflation,
     recession probability, cross-asset spreads, and unique mom_rev features.
 
-    All features are leakage-free (shifted by 1). The function gracefully handles
-    missing data sources — if a required FRED column or asset isn't available, the
-    corresponding features are filled as NaN.
+    All features are leakage-free (shifted by 1 or series-specific publication lag).
+    The function gracefully handles missing data sources — if a required FRED column
+    or asset isn't available, the corresponding features are filled as NaN.
     """
     ret = out["ret"]
+
+    # Publication lag (trading days) mapping for FRED monthly/quarterly series
+    fred_pub_lags = {
+        "INDPRO": 30,
+        "CPIAUCSL": 30,
+        "PCEPILFE": 30,
+        "UNRATE": 22,
+        "PAYEMS": 22,
+        "M2SL": 22,
+        "WALCL": 5,
+        "UMCSENT": 15,
+        "SAHMREALTIME": 22,
+    }
 
     # --- Unused FRED macro series ---
     fred_unused = [
@@ -645,7 +658,8 @@ def _add_extended_features(
     ]
     for fred_col, feat_name, transform in fred_unused:
         if fred_col in out.columns:
-            out[feat_name] = transform(out[fred_col]).shift(1)
+            lag = fred_pub_lags.get(fred_col, 1)
+            out[feat_name] = transform(out[fred_col]).shift(lag)
 
     # --- Breakeven inflation (TLT - TIP return spread) ---
     if asset_dfs:
