@@ -11,6 +11,7 @@ def walk_forward_split(
     test_size: int,
     single_split: bool = False,
     use_all_train: bool = False,
+    embargo: int = 0,
 ) -> Generator[tuple[list[int], list[int]], None, None]:
     """Generate (train_indices, test_indices) tuples for walk-forward or single-split backtests.
 
@@ -26,6 +27,8 @@ def walk_forward_split(
         If True, returns a single split with all remaining samples in the test set.
     use_all_train : bool, default False
         If True, expanding window training is used (train_start is always 0).
+    embargo : int, default 0
+        Number of samples to gap between end of training and test set to prevent leakage.
 
     Yields
     ------
@@ -37,20 +40,22 @@ def walk_forward_split(
 
     if single_split:
         train_idx = list(range(0, train_size))
-        test_idx = list(range(train_size, total_len))
+        test_start = min(train_size + embargo, total_len)
+        test_idx = list(range(test_start, total_len))
         if test_idx:
             yield train_idx, test_idx
         return
 
     step = test_size
-    starts = range(0, total_len - train_size, step)
+    starts = range(0, total_len - train_size - embargo, step)
     for start in starts:
         train_start = 0 if use_all_train else start
         train_end = start + train_size
-        test_end = min(train_end + test_size, total_len)
-        if test_end <= train_end:
+        test_start = train_end + embargo
+        test_end = min(test_start + test_size, total_len)
+        if test_end <= test_start:
             break
-        yield list(range(train_start, train_end)), list(range(train_end, test_end))
+        yield list(range(train_start, train_end)), list(range(test_start, test_end))
 
 
 def feasible_date_range(df: pd.DataFrame, train_size: int) -> tuple[pd.Timestamp, pd.Timestamp]:

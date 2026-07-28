@@ -27,6 +27,20 @@ def test_walk_forward_split_standard():
         assert train_idx[-1] + 1 == test_idx[0]
 
 
+def test_walk_forward_split_embargo():
+    total_len = 100
+    train_size = 50
+    test_size = 10
+    embargo = 5
+
+    splits = list(walk_forward_split(total_len, train_size, test_size, embargo=embargo))
+    assert len(splits) > 0
+    for train_idx, test_idx in splits[:-1]:
+        assert len(train_idx) == 50
+        assert len(test_idx) == 10
+        assert test_idx[0] == train_idx[-1] + 1 + embargo
+
+
 def test_walk_forward_split_single():
     total_len = 100
     train_size = 50
