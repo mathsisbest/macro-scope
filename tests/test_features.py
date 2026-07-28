@@ -285,11 +285,18 @@ class TestMakeFeatures:
         assert "indpro_growth_1y" in out.columns
 
     def test_vol_rich_plus_fred_pub_lag(self):
-        df = _base_df(100)
-        df["INDPRO"] = np.linspace(100, 110, 100)
+        df = _base_df(300)
+        df["INDPRO"] = np.linspace(100, 110, 300)
+        df["UNRATE"] = np.linspace(3.5, 4.5, 300)
         out = make_features(df, feature_set="vol_rich_plus")
-        # With 30-day publication lag for INDPRO, the first 30 rows of indpro_growth_1y are NaN
-        assert out["indpro_growth_1y"].iloc[:30].isna().all()
+        # UNRATE lag is 22 days (transform is identity):
+        assert out["unrate_level"].iloc[:22].isna().all()
+        assert not out["unrate_level"].iloc[22:].isna().any()
+        assert out["unrate_level"].iloc[22] == df["UNRATE"].iloc[0]
+
+        # INDPRO lag is 30 days (transform is pct_change(252)):
+        assert out["indpro_growth_1y"].iloc[:282].isna().all()  # 252 + 30 = 282
+        assert not out["indpro_growth_1y"].iloc[282:].isna().any()
 
     def test_empty_dataframe(self):
         df = pd.DataFrame(columns=["date", "open", "high", "low", "close", "daily_return"])

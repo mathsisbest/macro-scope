@@ -621,9 +621,9 @@ def _add_extended_features(
     """Add extended features for vol_rich_plus: unused FRED, breakeven inflation,
     recession probability, cross-asset spreads, and unique mom_rev features.
 
-    All features are leakage-free (shifted by 1). The function gracefully handles
-    missing data sources — if a required FRED column or asset isn't available, the
-    corresponding features are filled as NaN.
+    All features are leakage-free (shifted by 1 or series-specific publication lag).
+    The function gracefully handles missing data sources — if a required FRED column
+    or asset isn't available, the corresponding features are filled as NaN.
     """
     ret = out["ret"]
 
