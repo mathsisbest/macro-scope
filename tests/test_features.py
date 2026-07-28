@@ -284,6 +284,13 @@ class TestMakeFeatures:
         out = make_features(df, feature_set="vol_rich_plus")
         assert "indpro_growth_1y" in out.columns
 
+    def test_vol_rich_plus_fred_pub_lag(self):
+        df = _base_df(100)
+        df["INDPRO"] = np.linspace(100, 110, 100)
+        out = make_features(df, feature_set="vol_rich_plus")
+        # With 30-day publication lag for INDPRO, the first 30 rows of indpro_growth_1y are NaN
+        assert out["indpro_growth_1y"].iloc[:30].isna().all()
+
     def test_empty_dataframe(self):
         df = pd.DataFrame(columns=["date", "open", "high", "low", "close", "daily_return"])
         out = make_features(df, feature_set="default")

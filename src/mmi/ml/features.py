@@ -627,6 +627,19 @@ def _add_extended_features(
     """
     ret = out["ret"]
 
+    # Publication lag (trading days) mapping for FRED monthly/quarterly series
+    fred_pub_lags = {
+        "INDPRO": 30,
+        "CPIAUCSL": 30,
+        "PCEPILFE": 30,
+        "UNRATE": 22,
+        "PAYEMS": 22,
+        "M2SL": 22,
+        "WALCL": 5,
+        "UMCSENT": 15,
+        "SAHMREALTIME": 22,
+    }
+
     # --- Unused FRED macro series ---
     fred_unused = [
         # (FRED column, feature name, transform)
@@ -645,7 +658,8 @@ def _add_extended_features(
     ]
     for fred_col, feat_name, transform in fred_unused:
         if fred_col in out.columns:
-            out[feat_name] = transform(out[fred_col]).shift(1)
+            lag = fred_pub_lags.get(fred_col, 1)
+            out[feat_name] = transform(out[fred_col]).shift(lag)
 
     # --- Breakeven inflation (TLT - TIP return spread) ---
     if asset_dfs:
