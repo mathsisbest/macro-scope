@@ -214,6 +214,18 @@ def _train_symbol_ml(
                 }
             )
 
+    for metric_key in ("n_folds", "folds_passed"):
+        if metric_key in res:
+            metric_rows.append(
+                {
+                    "model": "return_gb",
+                    "symbol": sym,
+                    "metric": metric_key,
+                    "value": float(res[metric_key]),
+                    "trained_at": now,
+                }
+            )
+
     metric_rows.append(
         {
             "model": "return_gb",

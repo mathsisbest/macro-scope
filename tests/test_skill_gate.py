@@ -540,7 +540,7 @@ def test_skill_verdict_ignores_holdout_rows(kwargs):
 def test_return_forecast_skill_verdict_hardened_checks():
     from mmi.ml.skill_gate import return_forecast_skill_verdict
 
-    # Valid passing case
+    # Valid passing case with all required metrics
     df_pass = pd.DataFrame(
         [
             {
@@ -574,8 +574,22 @@ def test_return_forecast_skill_verdict_hardened_checks():
             {
                 "model": "return_gb",
                 "symbol": "SPY",
-                "metric": "prediction_count",
+                "metric": "n_obs",
                 "value": 300.0,
+                "trained_at": "2025-01-01",
+            },
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "annualised_alpha",
+                "value": 0.02,
+                "trained_at": "2025-01-01",
+            },
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "turnover_adjusted_sharpe",
+                "value": 0.80,
                 "trained_at": "2025-01-01",
             },
         ]
@@ -586,8 +600,32 @@ def test_return_forecast_skill_verdict_hardened_checks():
     assert v_pass["n_folds"] == 5
     assert v_pass["n_obs"] == 300
 
-    # Failing due to unsustained folds and low n_obs
-    df_fail = pd.DataFrame(
+    # Failing due to missing fold metrics and missing economic metrics
+    df_missing = pd.DataFrame(
+        [
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "r2",
+                "value": 0.05,
+                "trained_at": "2025-01-01",
+            },
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "direction_accuracy",
+                "value": 0.55,
+                "trained_at": "2025-01-01",
+            },
+        ]
+    )
+    v_missing = return_forecast_skill_verdict(df_missing)
+    assert v_missing["cleared"] is False
+    assert any("n_folds" in r for r in v_missing["reasons"])
+    assert any("annualised_alpha" in r for r in v_missing["reasons"])
+
+    # Failing due to folds_passed=0
+    df_zero_folds = pd.DataFrame(
         [
             {
                 "model": "return_gb",
@@ -607,7 +645,7 @@ def test_return_forecast_skill_verdict_hardened_checks():
                 "model": "return_gb",
                 "symbol": "SPY",
                 "metric": "folds_passed",
-                "value": 1.0,
+                "value": 0.0,
                 "trained_at": "2025-01-01",
             },
             {
@@ -620,13 +658,26 @@ def test_return_forecast_skill_verdict_hardened_checks():
             {
                 "model": "return_gb",
                 "symbol": "SPY",
-                "metric": "prediction_count",
-                "value": 100.0,
+                "metric": "n_obs",
+                "value": 300.0,
+                "trained_at": "2025-01-01",
+            },
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "annualised_alpha",
+                "value": 0.02,
+                "trained_at": "2025-01-01",
+            },
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "turnover_adjusted_sharpe",
+                "value": 0.80,
                 "trained_at": "2025-01-01",
             },
         ]
     )
-    v_fail = return_forecast_skill_verdict(df_fail)
-    assert v_fail["cleared"] is False
-    assert any("folds_passed" in r for r in v_fail["reasons"])
-    assert any("n_obs" in r for r in v_fail["reasons"])
+    v_zero = return_forecast_skill_verdict(df_zero_folds)
+    assert v_zero["cleared"] is False
+    assert any("folds_passed=0" in r for r in v_zero["reasons"])
