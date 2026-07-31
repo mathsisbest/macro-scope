@@ -202,6 +202,7 @@ def evaluate_forecast(
     all_preds: pd.Series = pd.Series(index=df.index, dtype=float)
     model_count: pd.Series = pd.Series(0, index=df.index, dtype=int)
     train_rows_list: list[int] = []
+    fold_evaluations: list[bool] = []
     median_preds: dict[int | str, list[float]] = {}  # index -> list of predictions for median
     last_feature_importances: dict[str, float] = {}
 
@@ -310,6 +311,12 @@ def evaluate_forecast(
                 for col_name, val in zip(used_cols, fi, strict=False):
                     last_feature_importances[col_name] = float(val)
 
+            fold_y_true = _build_target(df_test, target_type, "target_next_ret").to_numpy().ravel()
+            fold_valid = ~np.isnan(fold_y_true)
+            if fold_valid.sum() >= 3:
+                fold_r2 = compute_r2(fold_y_true[fold_valid], preds_fold[fold_valid])
+                fold_evaluations.append(fold_r2 > 0)
+
             if ensemble_method == "median":
                 for i_pos, row_idx in enumerate(test_idx):
                     median_preds.setdefault(row_idx, []).append(float(preds_fold[i_pos]))
@@ -338,6 +345,7 @@ def evaluate_forecast(
         train_rows_list=train_rows_list,
         target_horizon=target_horizon,
         median_preds=median_preds if ensemble_method == "median" else None,
+        fold_evaluations=fold_evaluations,
     )
     res["feature_importances"] = last_feature_importances
     return res
@@ -477,6 +485,7 @@ def _compute_metrics(
     train_rows_list: list[int],
     target_horizon: int,
     median_preds: dict[int | str, list[float]] | None = None,
+    fold_evaluations: list[bool] | None = None,
 ) -> ForecastEvaluationResult:
     if ensemble_method == "median":
         preds = pd.Series(dtype=float, index=df.index)
@@ -506,6 +515,27 @@ def _compute_metrics(
     )
     mean_train_rows = int(np.mean(train_rows_list)) if train_rows_list else 0
 
+    # Calculate fold counts (fail closed if no folds evaluated)
+    n_folds_val = len(fold_evaluations) if fold_evaluations else 0
+    folds_passed_val = sum(fold_evaluations) if fold_evaluations else 0
+
+    # Realized annualized alpha: mean directional strategy return annualized
+    strat_ret = np.sign(y_pred.to_numpy()) * y_true.to_numpy()
+    if target_horizon > 1 and len(strat_ret) >= target_horizon:
+        strat_ret_sample = strat_ret[::target_horizon]
+    else:
+        strat_ret_sample = strat_ret
+    ann_alpha_val = (
+        float(np.mean(strat_ret_sample) * (252.0 / max(1, target_horizon)))
+        if len(strat_ret_sample) > 0
+        else 0.0
+    )
+
+    # Turnover-adjusted Sharpe (using signal turnover drag)
+    signal_diff = y_pred.diff().abs().mean()
+    cost_drag = signal_diff * 0.0005 if pd.notna(signal_diff) else 0.0
+    turnover_sharpe_val = float(sharpe - cost_drag) if pd.notna(sharpe) else np.nan
+
     return ForecastEvaluationResult(
         horizon=horizon,
         ic=ic_val,
@@ -529,6 +559,10 @@ def _compute_metrics(
         n_models=n_models,
         median_model_count=median_model_count_val,
         mean_train_rows=mean_train_rows,
+        n_folds=n_folds_val,
+        folds_passed=folds_passed_val,
+        annualised_alpha=ann_alpha_val,
+        turnover_adjusted_sharpe=turnover_sharpe_val,
         model=model,
         feature_set=feature_set,
         target_type=target_type,

@@ -175,11 +175,15 @@ def test_return_forecast_skill_verdict():
                 "metric": "direction_accuracy",
                 "value": 0.58,
             },
+            {"model": "return_gb", "symbol": "SPY", "metric": "n_folds", "value": 5},
+            {"model": "return_gb", "symbol": "SPY", "metric": "folds_passed", "value": 4},
+            {"model": "return_gb", "symbol": "SPY", "metric": "n_obs", "value": 300},
+            {"model": "return_gb", "symbol": "SPY", "metric": "annualised_alpha", "value": 0.03},
             {
                 "model": "return_gb",
                 "symbol": "SPY",
-                "metric": "prediction_count",
-                "value": 150,
+                "metric": "turnover_adjusted_sharpe",
+                "value": 0.75,
             },
         ]
     )
