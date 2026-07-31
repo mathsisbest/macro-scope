@@ -41,6 +41,10 @@ class ForecastEvaluationResult:
     loss: str = "squared_error"
     feature_cols: list[str] = field(default_factory=list)
     available_feature_cols: list[str] = field(default_factory=list)
+    n_folds: int = 0
+    folds_passed: int = 0
+    annualised_alpha: float = np.nan
+    turnover_adjusted_sharpe: float = np.nan
     feature_importances: dict[str, float] = field(default_factory=dict)
 
     def __getitem__(self, item: str) -> Any:

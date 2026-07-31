@@ -214,8 +214,8 @@ def _train_symbol_ml(
                 }
             )
 
-    for metric_key in ("n_folds", "folds_passed"):
-        if metric_key in res:
+    for metric_key in ("n_folds", "folds_passed", "annualised_alpha", "turnover_adjusted_sharpe"):
+        if metric_key in res and pd.notna(res[metric_key]):
             metric_rows.append(
                 {
                     "model": "return_gb",
