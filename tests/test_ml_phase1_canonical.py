@@ -179,7 +179,7 @@ def test_return_forecast_skill_verdict():
                 "model": "return_gb",
                 "symbol": "SPY",
                 "metric": "prediction_count",
-                "value": 150,
+                "value": 300,
             },
         ]
     )

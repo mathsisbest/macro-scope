@@ -292,8 +292,17 @@ def return_forecast_skill_verdict(
     model_metrics_df: pd.DataFrame,
     symbol: str = "SPY",
     model: str = "return_gb",
+    min_transaction_cost_bps: float = 5.0,
 ) -> SkillVerdict:
-    """Return skill verdict for Return Forecast models (R2 > 0, Directional Accuracy > 0.50)."""
+    """Return skill verdict for Return Forecast models.
+
+    Requires:
+    1. Positive OOS R2 (r2 > 0)
+    2. Directional accuracy > 0.50
+    3. Sustained skill across >= 60% of walk-forward folds (folds_passed / n_folds >= SUSTAIN_FRAC)
+    4. Minimum prediction count >= 252 (n_obs >= 252)
+    5. Economic significance: annualised alpha > transaction costs (min_transaction_cost_bps)
+    """
     for col in ("model", "symbol", "metric", "value"):
         if col not in model_metrics_df.columns:
             return SkillVerdict(
@@ -331,6 +340,11 @@ def return_forecast_skill_verdict(
 
     r2 = _to_finite_float(metric_map.get("r2"))
     dir_acc = _to_finite_float(metric_map.get("direction_accuracy"))
+    folds_passed = _to_finite_int(metric_map.get("folds_passed")) or (1 if r2 and r2 > 0 else 0)
+    n_folds = _to_finite_int(metric_map.get("n_folds")) or 1
+    n_obs = _to_finite_int(metric_map.get("prediction_count")) or 0
+    ann_alpha = _to_finite_float(metric_map.get("annualised_alpha"))
+    turnover_sharpe = _to_finite_float(metric_map.get("turnover_adjusted_sharpe"))
 
     reasons: list[str] = []
     if r2 is None or r2 <= 0:
@@ -340,12 +354,36 @@ def return_forecast_skill_verdict(
             f"direction_accuracy={dir_acc} <= 0.50 — directional accuracy is at or below coin flip"
         )
 
+    min_folds_needed = math.ceil(SUSTAIN_FRAC * n_folds)
+    if folds_passed < min_folds_needed:
+        reasons.append(
+            f"folds_passed={folds_passed} < ceil({SUSTAIN_FRAC}x{n_folds})={min_folds_needed} — "
+            "skill is not sustained across enough cross-validation folds"
+        )
+
+    if n_obs < 252:
+        reasons.append(
+            f"n_obs={n_obs} < 252 — prediction count is less than 1 year of trading days"
+        )
+
+    min_alpha_pct = min_transaction_cost_bps / 10000.0
+    if ann_alpha is not None and abs(ann_alpha) <= min_alpha_pct:
+        reasons.append(
+            f"abs(annualised_alpha)={abs(ann_alpha):.4f} <= {min_alpha_pct:.4f} — "
+            f"alpha does not exceed transaction cost threshold of {min_transaction_cost_bps} bps"
+        )
+
+    if turnover_sharpe is not None and turnover_sharpe <= 0:
+        reasons.append(
+            f"turnover_adjusted_sharpe={turnover_sharpe:.4f} <= 0 — turnover Sharpe non-positive"
+        )
+
     return SkillVerdict(
         cleared=len(reasons) == 0,
         reasons=reasons,
         oos_r2=r2,
         qlike_skill_ratio=None,
-        folds_passed=1 if len(reasons) == 0 else 0,
-        n_folds=1,
-        n_obs=int(metric_map.get("prediction_count", 0)),
+        folds_passed=folds_passed,
+        n_folds=n_folds,
+        n_obs=n_obs,
     )

@@ -535,3 +535,98 @@ def test_skill_verdict_ignores_holdout_rows(kwargs):
         "skill_verdict changed when holdout_* rows were added — the gate is NOT supposed to "
         "see the holdout (it is reported, not gated)"
     )
+
+
+def test_return_forecast_skill_verdict_hardened_checks():
+    from mmi.ml.skill_gate import return_forecast_skill_verdict
+
+    # Valid passing case
+    df_pass = pd.DataFrame(
+        [
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "r2",
+                "value": 0.05,
+                "trained_at": "2025-01-01",
+            },
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "direction_accuracy",
+                "value": 0.55,
+                "trained_at": "2025-01-01",
+            },
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "folds_passed",
+                "value": 4.0,
+                "trained_at": "2025-01-01",
+            },
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "n_folds",
+                "value": 5.0,
+                "trained_at": "2025-01-01",
+            },
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "prediction_count",
+                "value": 300.0,
+                "trained_at": "2025-01-01",
+            },
+        ]
+    )
+    v_pass = return_forecast_skill_verdict(df_pass)
+    assert v_pass["cleared"] is True
+    assert v_pass["folds_passed"] == 4
+    assert v_pass["n_folds"] == 5
+    assert v_pass["n_obs"] == 300
+
+    # Failing due to unsustained folds and low n_obs
+    df_fail = pd.DataFrame(
+        [
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "r2",
+                "value": 0.05,
+                "trained_at": "2025-01-01",
+            },
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "direction_accuracy",
+                "value": 0.55,
+                "trained_at": "2025-01-01",
+            },
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "folds_passed",
+                "value": 1.0,
+                "trained_at": "2025-01-01",
+            },
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "n_folds",
+                "value": 5.0,
+                "trained_at": "2025-01-01",
+            },
+            {
+                "model": "return_gb",
+                "symbol": "SPY",
+                "metric": "prediction_count",
+                "value": 100.0,
+                "trained_at": "2025-01-01",
+            },
+        ]
+    )
+    v_fail = return_forecast_skill_verdict(df_fail)
+    assert v_fail["cleared"] is False
+    assert any("folds_passed" in r for r in v_fail["reasons"])
+    assert any("n_obs" in r for r in v_fail["reasons"])
