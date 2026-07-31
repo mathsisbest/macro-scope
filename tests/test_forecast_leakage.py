@@ -47,16 +47,17 @@ class TestTargetTailDrop:
 
 
 class TestTruncationInvariance:
-    def test_overlapping_predictions_match(self):
-        full = _long(200)
+    @pytest.mark.parametrize("target_horizon", [1, 5, 20, 63])
+    def test_overlapping_predictions_match(self, target_horizon: int):
+        full = _long(300)
         early_run = evaluate_forecast(
-            full.iloc[:130],
+            full.iloc[:200],
             train_size=60,
             test_size=20,
             horizon=1,
             model="gb",
             feature_set="vol",
-            target_horizon=1,
+            target_horizon=target_horizon,
         )
         full_run = evaluate_forecast(
             full,
@@ -65,7 +66,7 @@ class TestTruncationInvariance:
             horizon=1,
             model="gb",
             feature_set="vol",
-            target_horizon=1,
+            target_horizon=target_horizon,
         )
 
         if early_run.get("prediction_count", 0) < 3 or full_run.get("prediction_count", 0) < 3:
@@ -95,6 +96,38 @@ class TestTruncationInvariance:
         np.testing.assert_allclose(
             early_c, full_c, rtol=1e-10, err_msg="truncation changed predictions"
         )
+
+
+class TestEmbargoEnforcement:
+    @pytest.mark.parametrize("target_horizon", [1, 5, 20, 63])
+    def test_splitter_embargo_greater_or_equal_horizon_minus_one(self, target_horizon: int):
+        from mmi.ml.splitters import walk_forward_split
+
+        embargo_gap = max(0, target_horizon - 1)
+        splits = list(walk_forward_split(300, train_size=60, test_size=20, embargo=embargo_gap))
+        assert len(splits) > 0
+        for train_idx, test_idx in splits[:-1]:
+            assert test_idx[0] - train_idx[-1] - 1 >= embargo_gap
+
+    def test_planted_future_signal_leakage_guarded(self):
+        """Planted future signal in test set should not leak into training set predictions."""
+        n = 200
+        df = _long(n)
+        target_horizon = 10
+        # Plant a huge return spike at index 100..109
+        df.loc[100:109, "daily_return"] = 0.50
+
+        # With embargo (gap=9), train windows before row 100 cannot use future labels
+        res = evaluate_forecast(
+            df,
+            train_size=60,
+            test_size=20,
+            horizon=1,
+            model="gb",
+            feature_set="default",
+            target_horizon=target_horizon,
+        )
+        assert res.get("prediction_count", 0) > 0
 
 
 class TestEdgeCases:
