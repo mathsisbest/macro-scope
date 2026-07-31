@@ -182,13 +182,21 @@ def compute_sharpe(
     y_pred: pd.Series | np.ndarray,
     target_horizon: int = 1,
 ) -> float:
-    """Compute annualized Sharpe ratio for directional return strategy."""
+    """Compute annualized Sharpe ratio for directional return strategy.
+
+    For overlapping target horizons (target_horizon > 1), downsamples by stride
+    step=target_horizon to evaluate non-overlapping strategy returns.
+    """
     yt = np.asarray(y_true, dtype=float)
     yp = np.asarray(y_pred, dtype=float)
     strategy_ret = np.sign(yp) * yt
 
-    if target_horizon == 1 and strategy_ret.std() > 0:
-        return float(strategy_ret.mean() / strategy_ret.std() * np.sqrt(252))
+    if target_horizon > 1 and len(strategy_ret) >= target_horizon:
+        strategy_ret = strategy_ret[::target_horizon]
+
+    ann_factor = np.sqrt(252.0 / max(1, target_horizon))
+    if len(strategy_ret) > 1 and strategy_ret.std() > 0:
+        return float(strategy_ret.mean() / strategy_ret.std() * ann_factor)
     return float(np.nan)
 
 

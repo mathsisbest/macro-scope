@@ -515,16 +515,25 @@ def _compute_metrics(
     )
     mean_train_rows = int(np.mean(train_rows_list)) if train_rows_list else 0
 
-    # Calculate fold counts and economic metrics
-    n_folds_val = len(fold_evaluations) if fold_evaluations else 1
-    folds_passed_val = sum(fold_evaluations) if fold_evaluations else (1 if r2 > 0 else 0)
+    # Calculate fold counts (fail closed if no folds evaluated)
+    n_folds_val = len(fold_evaluations) if fold_evaluations else 0
+    folds_passed_val = sum(fold_evaluations) if fold_evaluations else 0
 
-    # Annualised alpha (assuming ~252 trading days/yr)
-    ann_alpha_val = float(y_pred.mean() * (252.0 / max(1, target_horizon)))
+    # Realized annualized alpha: mean directional strategy return annualized
+    strat_ret = np.sign(y_pred.to_numpy()) * y_true.to_numpy()
+    if target_horizon > 1 and len(strat_ret) >= target_horizon:
+        strat_ret_sample = strat_ret[::target_horizon]
+    else:
+        strat_ret_sample = strat_ret
+    ann_alpha_val = (
+        float(np.mean(strat_ret_sample) * (252.0 / max(1, target_horizon)))
+        if len(strat_ret_sample) > 0
+        else 0.0
+    )
 
-    # Turnover-adjusted Sharpe (using simple signal turnover proxy)
+    # Turnover-adjusted Sharpe (using signal turnover drag)
     signal_diff = y_pred.diff().abs().mean()
-    cost_drag = signal_diff * 0.0005  # 5 bps cost drag per turnover unit
+    cost_drag = signal_diff * 0.0005 if pd.notna(signal_diff) else 0.0
     turnover_sharpe_val = float(sharpe - cost_drag) if pd.notna(sharpe) else np.nan
 
     return ForecastEvaluationResult(
