@@ -78,3 +78,12 @@ class TestComputePortfolioReturns:
         result = compute_portfolio_returns(panel)
         ew = result[result["strategy"] == "equal_weight"]
         assert ew["daily_return"].notna().all()
+
+    def test_ml_tilt_signal_proportional_weighting(self):
+        panel = _asset_daily(504, symbols=["SPY", "TLT", "GLD"])
+        mu, gate = compute_ml_mu_panel(panel)
+        result = compute_portfolio_returns(panel, ml_mu_panel=mu)
+        ml_tilt = result[result["strategy"] == "ml_tilt"]
+        assert not ml_tilt.empty
+        assert ml_tilt["daily_return"].notna().all()
+        assert ml_tilt["cumulative_return"].notna().all()
