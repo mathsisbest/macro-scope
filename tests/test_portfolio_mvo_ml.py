@@ -90,11 +90,14 @@ class TestComputePortfolioReturns:
 
     def test_ml_tilt_concentration_cap(self):
         # Construct synthetic panel with highly skewed signals [0.9, 0.05, 0.05]
+        # and differentiated returns (SPY=0.002, others=0.0)
+        # so top weight is observable in daily_return
         dates = pd.bdate_range("2020-01-01", periods=100)
         panel_rows = []
-        for sym in ["SPY", "TLT", "GLD"]:
-            for d in dates:
-                panel_rows.append({"date": d, "symbol": sym, "daily_return": 0.001})
+        for d in dates:
+            panel_rows.append({"date": d, "symbol": "SPY", "daily_return": 0.002})
+            panel_rows.append({"date": d, "symbol": "TLT", "daily_return": 0.000})
+            panel_rows.append({"date": d, "symbol": "GLD", "daily_return": 0.000})
         panel_df = pd.DataFrame(panel_rows)
 
         mu_rows = []
@@ -104,7 +107,9 @@ class TestComputePortfolioReturns:
             mu_rows.append({"date": d, "symbol": "GLD", "mu": 0.05})
         mu_df = pd.DataFrame(mu_rows)
 
-        # Run compute_portfolio_returns
         res = compute_portfolio_returns(panel_df, ml_mu_panel=mu_df)
-        assert not res.empty
-        assert "ml_tilt" in res["strategy"].to_numpy()
+        ml_tilt = res[res["strategy"] == "ml_tilt"]
+        assert not ml_tilt.empty
+        # SPY weight capped at 0.40 -> daily return = 0.40 * 0.002 = 0.00080
+        # (uncapped buggy gave 0.80 * 0.002 = 0.00160)
+        np.testing.assert_allclose(ml_tilt["daily_return"].iloc[30:], 0.00080, atol=1e-5)
