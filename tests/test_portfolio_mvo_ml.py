@@ -113,3 +113,18 @@ class TestComputePortfolioReturns:
         # SPY weight capped at 0.40 -> daily return = 0.40 * 0.002 = 0.00080
         # (uncapped buggy gave 0.80 * 0.002 = 0.00160)
         np.testing.assert_allclose(ml_tilt["daily_return"].iloc[30:], 0.00080, atol=1e-5)
+
+    def test_ml_regime_configurable_multipliers_and_leverage_limit(self):
+        panel = _asset_daily(504, symbols=["SPY", "TLT", "GLD"])
+        mu, gate = compute_ml_mu_panel(panel)
+        res = compute_portfolio_returns(
+            panel,
+            ml_mu_panel=mu,
+            regime_mult_negative=1.5,
+            regime_mult_positive=0.7,
+            max_leverage=1.0,
+        )
+        ml_regime = res[res["strategy"] == "ml_regime"]
+        assert not ml_regime.empty
+        assert ml_regime["daily_return"].notna().all()
+        assert ml_regime["cumulative_return"].notna().all()

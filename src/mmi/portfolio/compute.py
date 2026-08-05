@@ -244,8 +244,21 @@ def compute_portfolio_returns(
     ml_mu_panel: pd.DataFrame | None = None,
     window: str = "",
     asset_daily_full: pd.DataFrame | None = None,
+    regime_mult_negative: float = 1.2,
+    regime_mult_positive: float = 0.8,
+    max_leverage: float = 1.0,
 ) -> pd.DataFrame:
-    """Compute portfolio returns: equal-weight + ML-tilted + regime-aware ML."""
+    """Compute portfolio returns: equal-weight + ML-tilted + regime-aware ML.
+
+    Parameters
+    ----------
+    regime_mult_negative:
+        Position size multiplier during negative momentum regime (default 1.2x).
+    regime_mult_positive:
+        Position size multiplier during positive momentum regime (default 0.8x).
+    max_leverage:
+        Maximum total portfolio leverage limit (default 1.0 for long-only).
+    """
     panel = asset_daily.pivot_table(index="date", columns="symbol", values="daily_return")
     panel = panel.sort_index().dropna(how="all")
 
@@ -331,7 +344,7 @@ def compute_portfolio_returns(
     result_ml["cumulative_return"] = (1 + result_ml["daily_return"]).cumprod() - 1
     frames.append(result_ml)
 
-    # 3. Regime-aware ML: size up during negative momentum, size down during positive
+    # 3. Regime-aware ML strategy (configurable regime multipliers + max_leverage constraint)
     # Momentum regime: 63d rolling return of the equal-weight portfolio
     ew_series = panel.loc[common_dates].mean(axis=1)
     mom_63d = ew_series.rolling(63, min_periods=20).sum()
@@ -339,7 +352,7 @@ def compute_portfolio_returns(
     ml_regime = panel.loc[common_dates].copy()
     for date in common_dates:
         if date in ml_pivot.index and date in mom_63d.index:
-            signals = ml_pivot.loc[date]
+            signals = ml_pivot.loc[date].dropna()
             mom = mom_63d.loc[date]
 
             if pd.isna(mom):
@@ -347,19 +360,27 @@ def compute_portfolio_returns(
                 ml_regime.loc[date] = panel.loc[date] / len(panel.columns)
                 continue
 
-            # Regime multiplier: 2x during negative momentum, 0.5x during positive
-            regime_mult = 2.0 if mom < 0 else 0.5
+            # Configurable regime multiplier
+            regime_mult = regime_mult_negative if mom < 0 else regime_mult_positive
 
             pos_signals = signals[signals > 0]
             if len(pos_signals) > 0:
-                # Apply regime multiplier to position sizing
-                raw_weights = pos_signals / pos_signals.sum()
-                # Scale up: increase concentration during negative momentum
-                adjusted_weights = raw_weights * regime_mult
-                # Normalize to sum to 1 (cap at 3x any single position)
-                adjusted_weights = adjusted_weights.clip(upper=1.0 / len(pos_signals) * 3)
-                adjusted_weights = adjusted_weights / adjusted_weights.sum()
-                ml_regime.loc[date] = panel.loc[date] * adjusted_weights.reindex(
+                # Apply signal-proportional base weighting
+                vols = trailing_vol.loc[date].reindex(pos_signals.index).fillna(0.01)
+                pred_sharpe = (pos_signals / vols).clip(lower=0.0)
+                raw_weights = (
+                    pred_sharpe / pred_sharpe.sum()
+                    if pred_sharpe.sum() > 0
+                    else pd.Series(1.0 / len(pos_signals), index=pos_signals.index)
+                )
+
+                # Scale by regime multiplier and enforce max_leverage limit (default 1.0)
+                scaled_weights = raw_weights * regime_mult
+                total_alloc = scaled_weights.sum()
+                if total_alloc > max_leverage:
+                    scaled_weights = scaled_weights * (max_leverage / total_alloc)
+
+                ml_regime.loc[date] = panel.loc[date] * scaled_weights.reindex(
                     panel.columns, fill_value=0
                 )
             else:
