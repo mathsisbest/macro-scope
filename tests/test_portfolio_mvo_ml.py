@@ -87,3 +87,24 @@ class TestComputePortfolioReturns:
         assert not ml_tilt.empty
         assert ml_tilt["daily_return"].notna().all()
         assert ml_tilt["cumulative_return"].notna().all()
+
+    def test_ml_tilt_concentration_cap(self):
+        # Construct synthetic panel with highly skewed signals [0.9, 0.05, 0.05]
+        dates = pd.bdate_range("2020-01-01", periods=100)
+        panel_rows = []
+        for sym in ["SPY", "TLT", "GLD"]:
+            for d in dates:
+                panel_rows.append({"date": d, "symbol": sym, "daily_return": 0.001})
+        panel_df = pd.DataFrame(panel_rows)
+
+        mu_rows = []
+        for d in dates:
+            mu_rows.append({"date": d, "symbol": "SPY", "mu": 0.90})
+            mu_rows.append({"date": d, "symbol": "TLT", "mu": 0.05})
+            mu_rows.append({"date": d, "symbol": "GLD", "mu": 0.05})
+        mu_df = pd.DataFrame(mu_rows)
+
+        # Run compute_portfolio_returns
+        res = compute_portfolio_returns(panel_df, ml_mu_panel=mu_df)
+        assert not res.empty
+        assert "ml_tilt" in res["strategy"].to_numpy()

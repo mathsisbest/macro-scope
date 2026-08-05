@@ -290,14 +290,30 @@ def compute_portfolio_returns(
                 vols = trailing_vol.loc[date].reindex(pos_signals.index).fillna(0.01)
                 # Predicted Sharpe ratio = mu / sigma
                 pred_sharpe = (pos_signals / vols).clip(lower=0.0)
-                if pred_sharpe.sum() > 0:
-                    raw_weights = pred_sharpe / pred_sharpe.sum()
-                else:
-                    raw_weights = pd.Series(1.0 / len(pos_signals), index=pos_signals.index)
-
-                # Apply max weight concentration cap (40%)
-                capped_weights = raw_weights.clip(upper=max_weight)
-                weights = capped_weights / capped_weights.sum()
+                # Iteratively cap weights at max_weight (40%) and re-normalize un-capped weights
+                effective_cap = (
+                    min(max_weight, 1.0 / len(pos_signals))
+                    if max_weight * len(pos_signals) < 1.0
+                    else max_weight
+                )
+                weights = pred_sharpe / pred_sharpe.sum()
+                for _ in range(10):
+                    if weights.max() <= effective_cap + 1e-6:
+                        break
+                    capped_mask = weights >= effective_cap
+                    uncapped_mask = ~capped_mask
+                    if not uncapped_mask.any():
+                        weights = pd.Series(1.0 / len(pos_signals), index=pos_signals.index)
+                        break
+                    excess_mass = (weights[capped_mask] - effective_cap).sum()
+                    weights[capped_mask] = effective_cap
+                    uncapped_sum = weights[uncapped_mask].sum()
+                    if uncapped_sum > 0:
+                        weights[uncapped_mask] += excess_mass * (
+                            weights[uncapped_mask] / uncapped_sum
+                        )
+                    else:
+                        weights[uncapped_mask] = excess_mass / uncapped_mask.sum()
 
                 ml_tilt.loc[date] = panel.loc[date] * weights.reindex(panel.columns, fill_value=0)
             else:
