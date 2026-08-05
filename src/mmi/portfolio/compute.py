@@ -273,14 +273,48 @@ def compute_portfolio_returns(
     if len(common_dates) == 0:
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
-    # 2. ML-tilted strategy (uniform weight on positive signals)
+    # 2. ML-tilted strategy (signal-proportional / predicted-Sharpe-proportional weight)
+    # Trailing 21-day realized volatility per asset for predicted Sharpe scaling
+    trailing_vol = panel.rolling(21, min_periods=5).std().fillna(0.01)
+    trailing_vol = trailing_vol.clip(lower=0.001)
+
     ml_tilt = panel.loc[common_dates].copy()
+    conviction_threshold_mult: float = 0.0  # signals must be positive (> 0)
+    max_weight: float = 0.40  # 40% concentration cap per asset
+
     for date in common_dates:
         if date in ml_pivot.index:
-            signals = ml_pivot.loc[date]
-            pos_signals = signals[signals > 0]
+            signals = ml_pivot.loc[date].dropna()
+            pos_signals = signals[signals > conviction_threshold_mult]
             if len(pos_signals) > 0:
-                weights = pos_signals / pos_signals.sum()
+                vols = trailing_vol.loc[date].reindex(pos_signals.index).fillna(0.01)
+                # Predicted Sharpe ratio = mu / sigma
+                pred_sharpe = (pos_signals / vols).clip(lower=0.0)
+                # Iteratively cap weights at max_weight (40%) and re-normalize un-capped weights
+                effective_cap = (
+                    min(max_weight, 1.0 / len(pos_signals))
+                    if max_weight * len(pos_signals) < 1.0
+                    else max_weight
+                )
+                weights = pred_sharpe / pred_sharpe.sum()
+                for _ in range(10):
+                    if weights.max() <= effective_cap + 1e-6:
+                        break
+                    capped_mask = weights >= effective_cap
+                    uncapped_mask = ~capped_mask
+                    if not uncapped_mask.any():
+                        weights = pd.Series(1.0 / len(pos_signals), index=pos_signals.index)
+                        break
+                    excess_mass = (weights[capped_mask] - effective_cap).sum()
+                    weights[capped_mask] = effective_cap
+                    uncapped_sum = weights[uncapped_mask].sum()
+                    if uncapped_sum > 0:
+                        weights[uncapped_mask] += excess_mass * (
+                            weights[uncapped_mask] / uncapped_sum
+                        )
+                    else:
+                        weights[uncapped_mask] = excess_mass / uncapped_mask.sum()
+
                 ml_tilt.loc[date] = panel.loc[date] * weights.reindex(panel.columns, fill_value=0)
             else:
                 ml_tilt.loc[date] = panel.loc[date] / len(panel.columns)
