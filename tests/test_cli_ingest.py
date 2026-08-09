@@ -221,3 +221,22 @@ def test_audit_write_failure_does_not_mask_original_exception_type():
 
     # Ensure we are NOT seeing the audit OSError escape as the live exception
     assert "audit write failed" not in str(exc_info.value)
+
+
+def test_extracted_cli_helpers_work_independently(tmp_path):
+    con = duckdb.connect()
+    con.execute("create schema marts")
+    con.execute("create table marts.test_table as select 1 as col")
+
+    tables, manifest = cli._export_marts_tables_to_parquet(con, tmp_path)
+    assert tables == ["test_table"]
+    assert "test_table" in manifest["tables"]
+    assert manifest["tables"]["test_table"]["rows"] == 1
+
+    cli._write_snapshot_manifest(tmp_path, manifest)
+    manifest_file = tmp_path / "_manifest.json"
+    assert manifest_file.exists()
+
+    macro_wide, asset_dfs_macro = cli._load_portfolio_macro_context(con)
+    assert macro_wide is None
+    assert isinstance(asset_dfs_macro, dict)
