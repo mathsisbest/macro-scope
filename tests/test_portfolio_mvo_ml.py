@@ -113,3 +113,46 @@ class TestComputePortfolioReturns:
         # SPY weight capped at 0.40 -> daily return = 0.40 * 0.002 = 0.00080
         # (uncapped buggy gave 0.80 * 0.002 = 0.00160)
         np.testing.assert_allclose(ml_tilt["daily_return"].iloc[30:], 0.00080, atol=1e-5)
+
+    def test_ml_regime_configurable_multipliers_and_leverage_limit(self):
+        # Construct synthetic panel with constant -0.001 returns to force negative-momentum regime
+        dates = pd.bdate_range("2020-01-01", periods=100)
+        panel_rows = []
+        for d in dates:
+            panel_rows.append({"date": d, "symbol": "SPY", "daily_return": -0.001})
+            panel_rows.append({"date": d, "symbol": "TLT", "daily_return": 0.000})
+            panel_rows.append({"date": d, "symbol": "GLD", "daily_return": 0.000})
+        panel_df = pd.DataFrame(panel_rows)
+
+        mu_rows = []
+        for d in dates:
+            mu_rows.append({"date": d, "symbol": "SPY", "mu": 0.50})
+            mu_rows.append({"date": d, "symbol": "TLT", "mu": 0.00})
+            mu_rows.append({"date": d, "symbol": "GLD", "mu": 0.00})
+        mu_df = pd.DataFrame(mu_rows)
+
+        # 1. Uncapped leverage (max_leverage=2.0, regime_mult_negative=1.5)
+        # -> daily_return = 1.5 * -0.001 = -0.00150
+        res_uncapped = compute_portfolio_returns(
+            panel_df,
+            ml_mu_panel=mu_df,
+            regime_mult_negative=1.5,
+            regime_mult_positive=0.7,
+            max_leverage=2.0,
+        )
+        regime_uncapped = res_uncapped[res_uncapped["strategy"] == "ml_regime"]
+        assert not regime_uncapped.empty
+        np.testing.assert_allclose(regime_uncapped["daily_return"].iloc[65:], -0.00150, atol=1e-5)
+
+        # 2. Capped leverage (max_leverage=1.0, regime_mult_negative=2.0)
+        # -> capped at 1.0 -> daily_return = 1.0 * -0.001 = -0.00100
+        res_capped = compute_portfolio_returns(
+            panel_df,
+            ml_mu_panel=mu_df,
+            regime_mult_negative=2.0,
+            regime_mult_positive=0.7,
+            max_leverage=1.0,
+        )
+        regime_capped = res_capped[res_capped["strategy"] == "ml_regime"]
+        assert not regime_capped.empty
+        np.testing.assert_allclose(regime_capped["daily_return"].iloc[65:], -0.00100, atol=1e-5)
