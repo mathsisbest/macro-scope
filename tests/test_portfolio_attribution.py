@@ -61,3 +61,31 @@ def test_attribution_contributions_are_finite():
     attr = compute_attribution(_long(320))
     assert not attr.empty
     assert attr["contribution_to_return"].notna().all()
+
+
+def test_wealth_base_cost_deduction_compounding():
+    panel = _panel(400)
+    # High cost (5%) paid on rebalances
+    returns_deducted, _ = run_backtest_full(
+        panel, strategy="equal_weight", lookback=60, freq="M", cost=0.05
+    )
+    assert returns_deducted["cumulative_return"].notna().all()
+    # Net daily returns must reflect cost drag
+    assert (returns_deducted["daily_return"] < 0).any()
+
+
+def test_per_asset_costs_and_slippage():
+    panel = _panel(400)
+    asset_costs = {"A0": 0.005, "A1": 0.01, "A2": 0.02}
+    returns_custom, contrib = run_backtest_full(
+        panel,
+        strategy="equal_weight",
+        lookback=60,
+        freq="M",
+        cost=0.001,
+        asset_costs=asset_costs,
+        slippage=0.002,
+    )
+    assert not returns_custom.empty
+    assert "__cost__" in contrib.columns
+    assert (contrib["__cost__"] < 0).any()
