@@ -106,9 +106,9 @@ def run_backtest_full(
 
     ``cost`` is a default **round-trip** transaction cost; a rebalance pays
     ``(cost_i + slippage) * 0.5 * |w_target - w_drifted|`` per asset where ``cost_i`` uses
-    ``asset_costs.get(sym, cost)``. Transaction costs and slippage drag are deducted from the
-    drifting wealth base before computing subsequent returns. Per-asset daily returns are clipped
-    at -100% (a long position cannot lose more than its capital).
+    ``asset_costs.get(sym, cost)``. Transaction costs and slippage reduce daily net return
+    (compounding via cumulative returns). Per-asset daily returns are clipped at -100% (a long
+    position cannot lose more than its capital).
 
     For ``TSMOM_OVERLAY``, ``tsmom_panel`` must be a ``[date, symbol, signal]`` frame where
     ``signal`` is +1 (long) or 0 (flat) computed point-in-time from ``tsmom_signal()``; the
@@ -188,8 +188,7 @@ def run_backtest_full(
         net_daily_ret = float(gross.sum()) - cost_today
         records.append((date, net_daily_ret))
         contributions.append({"date": date, "__cost__": -cost_today, **gross.to_dict()})
-        # Deduct transaction cost drag directly from wealth base before drift
-        drifted = weights * (1.0 + ret) * (1.0 - cost_today)
+        drifted = weights * (1.0 + ret)  # let weights float into the next day
         total = float(drifted.sum())
         weights = (
             drifted / total
