@@ -89,6 +89,8 @@ def run_backtest_full(
     lookback: int = 252,
     freq: str = "M",
     cost: float = 0.001,
+    asset_costs: dict[str, float] | None = None,
+    slippage: float = 0.0,
     fixed_weights: np.ndarray | None = None,
     mu_panel: pd.DataFrame | None = None,
     tsmom_panel: pd.DataFrame | None = None,
@@ -102,18 +104,15 @@ def run_backtest_full(
       Per-asset gross contributions sum to the gross daily return; gross plus ``__cost__`` is the
       net ``daily_return``. Used for performance attribution.
 
-    ``cost`` is a **round-trip** transaction cost; a rebalance pays ``cost * 0.5 * turnover`` where
-    ``turnover = sum |w_target - w_drifted|`` (so one-way trades, including the initial buy from
-    cash, cost ``cost / 2`` per unit). Per-asset daily returns are clipped at -100% (a long
+    ``cost`` is a default **round-trip** transaction cost; a rebalance pays
+    ``(cost_i + slippage) * 0.5 * |w_target - w_drifted|`` per asset where ``cost_i`` uses
+    ``asset_costs.get(sym, cost)``. Transaction costs and slippage reduce daily net return
+    (compounding via cumulative returns). Per-asset daily returns are clipped at -100% (a long
     position cannot lose more than its capital).
 
     For ``TSMOM_OVERLAY``, ``tsmom_panel`` must be a ``[date, symbol, signal]`` frame where
     ``signal`` is +1 (long) or 0 (flat) computed point-in-time from ``tsmom_signal()``; the
     panel is pivoted and read at each rebalance date.
-
-    Known simplifications (fine for this showcase): the cost is a return drag and is not removed
-    from the drifting wealth base; and the most recent partial month/quarter rebalances on its last
-    available day, so the final reported point is provisional until that period completes.
     """
     if strategy not in STRATEGIES and strategy not in (FIXED_WEIGHT, MVO_ML, TSMOM_OVERLAY):
         raise ValueError(f"unknown strategy: {strategy} (expected one of {STRATEGIES})")
@@ -138,6 +137,7 @@ def run_backtest_full(
         tsmom_wide = tsmom_panel.pivot_table(
             index="date", columns="symbol", values="signal"
         ).reindex(columns=symbols)
+
     rebals = set(rebalance_dates(panel.index, freq, lookback))
 
     weights: pd.Series | None = None
@@ -172,14 +172,21 @@ def run_backtest_full(
                 if not np.isfinite(target.to_numpy()).all():
                     raise ValueError(f"non-finite weights from {strategy} at {date}")
                 prior = weights if weights is not None else pd.Series(0.0, index=symbols)
-                turnover = float((target - prior).abs().sum())
-                cost_today = cost * 0.5 * turnover
+                trade_sizes = (target - prior).abs()
+                if asset_costs:
+                    asset_cost_rates = pd.Series(
+                        [asset_costs.get(sym, cost) + slippage for sym in symbols], index=symbols
+                    )
+                else:
+                    asset_cost_rates = pd.Series(cost + slippage, index=symbols)
+                cost_today = float((trade_sizes * 0.5 * asset_cost_rates).sum())
                 weights = target
         if weights is None:
             records.append((date, 0.0))  # pre-warmup: uninvested
             continue
         gross = weights * ret  # per-asset gross contribution to the day's return
-        records.append((date, float(gross.sum()) - cost_today))
+        net_daily_ret = float(gross.sum()) - cost_today
+        records.append((date, net_daily_ret))
         contributions.append({"date": date, "__cost__": -cost_today, **gross.to_dict()})
         drifted = weights * (1.0 + ret)  # let weights float into the next day
         total = float(drifted.sum())
@@ -206,6 +213,8 @@ def run_backtest(
     lookback: int = 252,
     freq: str = "M",
     cost: float = 0.001,
+    asset_costs: dict[str, float] | None = None,
+    slippage: float = 0.0,
     fixed_weights: np.ndarray | None = None,
     mu_panel: pd.DataFrame | None = None,
     tsmom_panel: pd.DataFrame | None = None,
@@ -217,6 +226,8 @@ def run_backtest(
         lookback=lookback,
         freq=freq,
         cost=cost,
+        asset_costs=asset_costs,
+        slippage=slippage,
         fixed_weights=fixed_weights,
         mu_panel=mu_panel,
         tsmom_panel=tsmom_panel,

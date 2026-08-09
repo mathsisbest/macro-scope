@@ -61,3 +61,48 @@ def test_attribution_contributions_are_finite():
     attr = compute_attribution(_long(320))
     assert not attr.empty
     assert attr["contribution_to_return"].notna().all()
+
+
+def test_per_asset_costs_exact_calculation():
+    panel = _panel(400)
+    asset_costs = {"A0": 0.005, "A1": 0.01, "A2": 0.02}
+    # Initial rebalance to equal weight (1/3 per asset):
+    # turnover = 1.0 (each asset goes 0 -> 1/3, total 1.0)
+    # total cost = 0.5 * 1/3 * ( (0.005 + 0.002) + (0.01 + 0.002) + (0.02 + 0.002) )
+    #            = 0.5 * 1/3 * ( 0.007 + 0.012 + 0.022 ) = 0.5 * 1/3 * 0.041 = 0.0068333...
+    _, contrib = run_backtest_full(
+        panel,
+        strategy="equal_weight",
+        lookback=60,
+        freq="M",
+        cost=0.001,
+        asset_costs=asset_costs,
+        slippage=0.002,
+    )
+    first_rebal_cost = contrib["__cost__"].iloc[0]
+    np.testing.assert_allclose(first_rebal_cost, -0.006833333333333334, atol=1e-6)
+
+
+def test_per_asset_costs_and_slippage_differential():
+    panel = _panel(400)
+    # Default cost (cost=0.001, no asset_costs, no slippage)
+    _, contrib_default = run_backtest_full(
+        panel, strategy="equal_weight", lookback=60, freq="M", cost=0.001
+    )
+    # High custom asset costs + slippage
+    asset_costs = {"A0": 0.005, "A1": 0.01, "A2": 0.02}
+    _, contrib_custom = run_backtest_full(
+        panel,
+        strategy="equal_weight",
+        lookback=60,
+        freq="M",
+        cost=0.001,
+        asset_costs=asset_costs,
+        slippage=0.002,
+    )
+    # Total cost paid under custom high-cost config must be significantly higher
+    total_cost_default = contrib_default["__cost__"].sum()
+    total_cost_custom = contrib_custom["__cost__"].sum()
+    assert total_cost_custom < total_cost_default  # negative values, so custom is more negative
+    np.testing.assert_allclose(total_cost_default, -0.000707, atol=1e-4)
+    np.testing.assert_allclose(total_cost_custom, -0.009737, atol=1e-4)
