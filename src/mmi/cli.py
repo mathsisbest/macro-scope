@@ -73,107 +73,120 @@ def _restore_llm_keys(saved: dict) -> None:
         object.__setattr__(_s, attr, val)
 
 
+def _fetch_all_extractors(loader) -> dict[str, tuple[Extractor, str, Any]]:
+    """Phase 0 & Phase 1 of ingestion: sequential watermarks + parallel network fetches."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from mmi.ingestion import EXTRACTORS
+
+    start_afters: dict[str, str | None] = {}
+    for cls in EXTRACTORS:
+        ext = cls(loader)
+        wm: str | None = None
+        if ext.watermark_col:
+            with contextlib.suppress(Exception):
+                wm = loader.watermark(ext.table, ext.watermark_col)
+        start_afters[ext.source] = wm
+
+    fetch_results: dict[str, tuple[Extractor, str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            executor.submit(_fetch_extractor, cls(loader), start_afters[cls(loader).source]): cls(
+                loader
+            )
+            for cls in EXTRACTORS
+        }
+
+        for future in as_completed(futures):
+            extractor = futures[future]
+            try:
+                res_type, payload = future.result()
+                fetch_results[extractor.source] = (extractor, res_type, payload)
+            except Exception as exc:
+                fetch_results[extractor.source] = (extractor, "error", exc)
+
+    return fetch_results
+
+
+def _load_ingested_results(loader, fetch_results) -> tuple[int, int]:
+    """Phase 2 of ingestion: sequential load & audit logging."""
+    from mmi.ingestion import EXTRACTORS
+
+    required_failures = 0
+    optional_failures = 0
+
+    for cls in EXTRACTORS:
+        ext_instance = cls(loader)
+        if ext_instance.source not in fetch_results:
+            continue
+        extractor, res_type, payload = fetch_results[ext_instance.source]
+        run_id = loader.start_run(extractor.source)
+
+        if res_type == "skip":
+            reason = payload
+            log.warning("%s: skipping — %s", extractor.source, reason)
+            loader.finish_run(run_id, 0, "skipped", reason)
+            continue
+
+        if res_type == "error":
+            err = payload
+            msg = redact(str(err))
+            loader.finish_run(run_id, 0, "failed", msg)
+            if getattr(extractor, "required", True):
+                required_failures += 1
+                log.error("REQUIRED source %s fetch failed: %s", extractor.source, msg[:100])
+            else:
+                optional_failures += 1
+                log.warning("optional source %s fetch failed: %s", extractor.source, msg[:100])
+            continue
+
+        df = payload
+        if df is None or df.empty:
+            loader.finish_run(run_id, 0, "success")
+            log.info("%s: 0 rows", extractor.source)
+            continue
+
+        try:
+            validated = extractor.validate(df)
+            rows = loader.upsert(extractor.table, validated, extractor.keys)
+            loader.finish_run(run_id, rows, "success")
+            log.info("%s: %s rows", extractor.source, rows)
+        except Exception as exc:
+            msg = redact(str(exc))
+            loader.finish_run(run_id, 0, "failed", msg)
+            if getattr(extractor, "required", True):
+                required_failures += 1
+                log.error("REQUIRED source %s load failed: %s", extractor.source, msg[:100])
+            else:
+                optional_failures += 1
+                log.warning("optional source %s load failed: %s", extractor.source, msg[:100])
+
+    return required_failures, optional_failures
+
+
 def cmd_ingest(_: argparse.Namespace) -> int:
     """Run every extractor against the live free APIs.
 
     Parallelizes API fetches (network I/O bound), then loads sequentially
     (DuckDB doesn't support concurrent writes).
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from mmi.ingestion import DuckDBLoader
 
-    from mmi.ingestion import EXTRACTORS, DuckDBLoader
-
-    required_failures = 0
-    optional_failures = 0
     with connect() as con:
         loader = DuckDBLoader(con)
+        fetch_results = _fetch_all_extractors(loader)
+        req_fails, opt_fails = _load_ingested_results(loader, fetch_results)
 
-        # Phase 0: Compute watermarks sequentially (DuckDB connection is NOT thread-safe).
-        start_afters: dict[str, str | None] = {}
-        for cls in EXTRACTORS:
-            ext = cls(loader)
-            wm: str | None = None
-            if ext.watermark_col:
-                with contextlib.suppress(Exception):
-                    wm = loader.watermark(ext.table, ext.watermark_col)
-            start_afters[ext.source] = wm
-
-        # Phase 1: Parallel fetch (network I/O bound)
-        fetch_results: dict[str, tuple[Extractor, str, Any]] = {}
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = {
-                executor.submit(
-                    _fetch_extractor, cls(loader), start_afters[cls(loader).source]
-                ): cls(loader)
-                for cls in EXTRACTORS
-            }
-
-            for future in as_completed(futures):
-                extractor = futures[future]
-                try:
-                    res_type, payload = future.result()
-                    fetch_results[extractor.source] = (extractor, res_type, payload)
-                except Exception as exc:
-                    fetch_results[extractor.source] = (extractor, "error", exc)
-
-        # Phase 2: Sequential load & audit logging (DuckDB writes)
-        for cls in EXTRACTORS:
-            ext_instance = cls(loader)
-            if ext_instance.source not in fetch_results:
-                continue
-            extractor, res_type, payload = fetch_results[ext_instance.source]
-            run_id = loader.start_run(extractor.source)
-
-            if res_type == "skip":
-                reason = payload
-                log.warning("%s: skipping — %s", extractor.source, reason)
-                loader.finish_run(run_id, 0, "skipped", reason)
-                continue
-
-            if res_type == "error":
-                err = payload
-                msg = redact(str(err))
-                loader.finish_run(run_id, 0, "failed", msg)
-                if getattr(extractor, "required", True):
-                    required_failures += 1
-                    log.error("REQUIRED source %s fetch failed: %s", extractor.source, msg[:100])
-                else:
-                    optional_failures += 1
-                    log.warning("optional source %s fetch failed: %s", extractor.source, msg[:100])
-                continue
-
-            # res_type == "ok"
-            df = payload
-            if df is None or df.empty:
-                loader.finish_run(run_id, 0, "success")
-                log.info("%s: 0 rows", extractor.source)
-                continue
-
-            try:
-                validated = extractor.validate(df)
-                rows = loader.upsert(extractor.table, validated, extractor.keys)
-                loader.finish_run(run_id, rows, "success")
-                log.info("%s: %s rows", extractor.source, rows)
-            except Exception as exc:
-                msg = redact(str(exc))
-                loader.finish_run(run_id, 0, "failed", msg)
-                if getattr(extractor, "required", True):
-                    required_failures += 1
-                    log.error("REQUIRED source %s load failed: %s", extractor.source, msg[:100])
-                else:
-                    optional_failures += 1
-                    log.warning("optional source %s load failed: %s", extractor.source, msg[:100])
-
-    if optional_failures:
-        log.warning("%d optional source(s) failed; run still successful", optional_failures)
-    return 1 if required_failures else 0
+    if opt_fails:
+        log.warning("%d optional source(s) failed; run still successful", opt_fails)
+    return 1 if req_fails else 0
 
 
 def _fetch_extractor(extractor: Extractor, start_after: str | None = None) -> tuple[str, Any]:
     """Fetch data from an extractor (network I/O bound — safe to parallelize).
 
     ``start_after`` is computed **sequentially** before the parallel phase so the
-    shared DuckDB connection is never queried concurrently from multiple threads.
+    sequential Phase 0 sets a consistent baseline.
     """
     reason = extractor.skip_reason()
     if reason:
@@ -212,15 +225,10 @@ def cmd_ai(_: argparse.Namespace) -> int:
 
 
 def _total_parquet_bytes(out_dir: Path) -> int:
-    """Sum the on-disk size of every ``*.parquet`` in ``out_dir`` for the size-cap check.
+    """Sum the sizes of all *.parquet files in out_dir, following symlinks.
 
-    A parquet could, in theory, vanish or become unreadable between the ``glob()`` and the
-    ``stat()`` — concurrent deletion (FileNotFoundError), a locked file or a permission change
-    (OSError).  cmd_snapshot just wrote these files in a single process, so this is a purely
-    theoretical TOCTOU.  If it DOES happen we must FAIL LOUD, not silently skip the file: an
-    unmeasured parquet would UNDER-count the total and could let an over-cap snapshot slip past
-    the cap undetected — defeating the whole point of the fail-loud cap.  So we surface the error
-    (the caller turns it into a clean non-zero exit) rather than swallowing it.
+    Raises OSError on any stat failure so the caller can fail-loud rather than publish
+    an uncertified snapshot.
     """
     total = 0
     for p in out_dir.glob("*.parquet"):
@@ -234,70 +242,49 @@ def _total_parquet_bytes(out_dir: Path) -> int:
     return total
 
 
-def cmd_snapshot(_: argparse.Namespace) -> int:
-    """Export every table in the marts schema to Parquet for the public demo.
+def _export_marts_tables_to_parquet(con, out_dir: Path) -> tuple[list[str], dict]:
+    """Export every marts schema table to Parquet and return table list + manifest data."""
+    import os
+    import tempfile
 
-    The public dashboard reads this static, secret-free snapshot (no hosted DB, no MotherDuck
-    token). Exporting the WHOLE marts schema means any new mart is included automatically — no
-    hand-maintained table list to drift.
+    tables = [
+        row[0]
+        for row in con.execute(
+            "select table_name from information_schema.tables "
+            "where table_schema = 'marts' order by table_name"
+        ).fetchall()
+    ]
+    if not tables:
+        return [], {}
 
-    Atomicity: each parquet is written to a temp file then renamed, so a mid-export failure
-    cannot leave a half-written parquet in place of a previously-good one.
+    manifest: dict = {"tables": {}, "generated_at": ""}
+    for table in tables:
+        dest = out_dir / f"{table}.parquet"
+        fd, tmp_path = tempfile.mkstemp(dir=out_dir, prefix=f"_{table}_", suffix=".parquet.tmp")
+        try:
+            os.close(fd)
+            con.execute(f"copy marts.\"{table}\" to '{tmp_path}' (format parquet)")
+            os.replace(tmp_path, dest)
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
+            raise
 
-    Preservation: if a parquet already exists in the output directory and is NOT in the current
-    marts schema (e.g. portfolio/market_brief tables absent from a daily-cron-only run), the
-    existing file is left byte-identical.  Only tables present in the DB are exported.
+        row = con.execute(f'select count(*) from marts."{table}"').fetchone()
+        manifest["tables"][table] = {"rows": row[0] if row else 0}
 
-    Manifest: after a successful export, writes data/public/_manifest.json with the list of
-    exported tables, per-table row counts, and a generated_at timestamp.
-    """
+    return tables, manifest
+
+
+def _write_snapshot_manifest(out_dir: Path, manifest: dict) -> None:
+    """Atomically write data/public/_manifest.json."""
     import json
     import os
     import tempfile
     from datetime import datetime, timezone
 
-    from mmi.settings import settings
-
-    out_dir = settings.snapshot_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
-    with connect(read_only=True) as con:
-        tables = [
-            row[0]
-            for row in con.execute(
-                "select table_name from information_schema.tables "
-                "where table_schema = 'marts' order by table_name"
-            ).fetchall()
-        ]
-        if not tables:
-            log.warning("snapshot: no marts tables to export — run the pipeline first")
-            return 0
-
-        manifest: dict = {"tables": {}, "generated_at": ""}
-        for table in tables:
-            dest = out_dir / f"{table}.parquet"
-            # Write to a temp file in the same directory, then atomically rename.
-            # Same-directory temp ensures the rename is on the same filesystem.
-            fd, tmp_path = tempfile.mkstemp(dir=out_dir, prefix=f"_{table}_", suffix=".parquet.tmp")
-            try:
-                os.close(fd)  # DuckDB opens by path; release the fd first.
-                con.execute(f"copy marts.\"{table}\" to '{tmp_path}' (format parquet)")
-                os.replace(tmp_path, dest)  # atomic on POSIX; on Windows may raise on open handles
-            except Exception:
-                # Clean up the temp file; leave any pre-existing dest untouched (preservation).
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp_path)
-                raise
-
-            # Collect row count for manifest.
-            row = con.execute(f'select count(*) from marts."{table}"').fetchone()
-            manifest["tables"][table] = {"rows": row[0] if row else 0}
-
     manifest["generated_at"] = datetime.now(timezone.utc).isoformat()
     manifest_path = out_dir / "_manifest.json"
-    # Write the manifest atomically too (mirror the per-parquet pattern): a crash
-    # mid-write must never leave a truncated/invalid _manifest.json. Serialise to a
-    # temp file in the same dir, then atomically rename; a pre-existing manifest is
-    # left intact if anything fails.
     fd, tmp_manifest = tempfile.mkstemp(dir=out_dir, prefix="_manifest_", suffix=".json.tmp")
     try:
         with os.fdopen(fd, "w") as fh:
@@ -308,17 +295,25 @@ def cmd_snapshot(_: argparse.Namespace) -> int:
             os.unlink(tmp_manifest)
         raise
 
+
+def cmd_snapshot(_: argparse.Namespace) -> int:
+    """Export every table in the marts schema to Parquet for the public demo."""
+    import os
+    import sys
+
+    from mmi.settings import settings
+
+    out_dir = settings.snapshot_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with connect(read_only=True) as con:
+        tables, manifest = _export_marts_tables_to_parquet(con, out_dir)
+        if not tables:
+            log.warning("snapshot: no marts tables to export — run the pipeline first")
+            return 0
+        _write_snapshot_manifest(out_dir, manifest)
+
     log.info("snapshot: exported %d marts tables to %s", len(tables), out_dir)
 
-    # --- fail-loud size cap (Contract A) ---
-    # After a successful export, sum the bytes of every *.parquet in out_dir.
-    # If the total exceeds MMI_SNAPSHOT_MAX_BYTES (default 12_000_000), exit non-zero with a
-    # clear message so the owner notices before committing an oversized snapshot. The real
-    # 24-year dataset is ~5.7 MB; 12 MB leaves years of forward-growth headroom while still
-    # catching a gross runaway (a raw-data dump, an accidental .duckdb commit, a cartesian-join
-    # blowup) that would be tens of MB. The remedy for a genuine future overflow is a new
-    # downsampled dbt mart; do NOT trim or exclude marts from the export.
-    # (``os`` is already imported at the top of this function.)
     default_max_bytes = 12_000_000
     raw_max = os.environ.get("MMI_SNAPSHOT_MAX_BYTES")
     max_bytes = default_max_bytes
@@ -343,8 +338,6 @@ def cmd_snapshot(_: argparse.Namespace) -> int:
     try:
         total_bytes = _total_parquet_bytes(out_dir)
     except OSError as exc:
-        # An unreadable parquet means we cannot certify the snapshot's size — fail loud
-        # (a clean non-zero exit) rather than publish an unverified snapshot.
         log.error("snapshot: %s — aborting before publish", exc)
         print(f"ERROR: {exc} — aborting before publish.", file=sys.stderr)
         return 1
@@ -365,34 +358,101 @@ def cmd_snapshot(_: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_portfolio(_: argparse.Namespace) -> int:
-    """Backtest the strategies per window, landing returns + bootstrap-CI stats in raw.portfolio_*.
-
-    Phase D runs THREE windows (issue #7): ex_btc_2002 (the long non-crypto baseline), ex_btc_2015
-    (same assets, BTC's era — the same-period control), and inc_btc_2015 (adds BTC, same period).
-    Each runs as a SEPARATELY filtered panel — never one merged panel, whose dropna would collapse
-    the 2002+ history to BTC's ~2015 start. The two 2015 windows share one derived BTC-inception
-    floor so they are byte-identical in period; inc_btc aligns BTC to the equity calendar.
-
-    MMI_PORTFOLIO_N_BOOT controls the bootstrap iteration count (default 2000) for BOTH
-    bootstrap_strategy_stats and paired_btc_effect.  Lower values (e.g. 200) dramatically speed up
-    local iteration; the env var is the single dial — never hard-code a different default here.
-    It is parsed defensively: a non-integer or non-positive value warns and falls back to 2000 so a
-    fat-fingered knob can never crash the whole run.
-    """
-    import os
-
+def _load_portfolio_macro_context(con) -> tuple[Any, dict]:
+    """Load macro indicators and cross-asset DataFrames for portfolio feature engineering."""
     import pandas as pd
+
+    try:
+        macro_raw = con.execute(
+            "select date, series_id, value from marts.fct_macro_indicator order by date"
+        ).df()
+        if not macro_raw.empty:
+            macro_raw["date"] = pd.to_datetime(macro_raw["date"]).astype("datetime64[ns]")
+            macro_wide = (
+                macro_raw.pivot_table(
+                    index="date", columns="series_id", values="value", aggfunc="first"
+                )
+                .reset_index()
+                .sort_values("date")
+            )
+            for col in macro_wide.columns:
+                if col != "date":
+                    macro_wide[col] = macro_wide[col].ffill()
+        else:
+            macro_wide = None
+    except Exception:
+        macro_wide = None
+
+    asset_dfs_macro = {}
+    for sym in ["GLD", "TLT"]:
+        try:
+            adf = con.execute(
+                "select date, daily_return from marts.fct_asset_daily where symbol = ?",
+                [sym],
+            ).df()
+            if not adf.empty:
+                adf["date"] = pd.to_datetime(adf["date"]).astype("datetime64[ns]")
+                asset_dfs_macro[sym] = adf
+        except Exception:
+            pass
+
+    return macro_wide, asset_dfs_macro
+
+
+def _run_single_portfolio_window(
+    loader,
+    window_id: str,
+    wad,
+    macro_wide,
+    asset_dfs_macro,
+    n_boot: int,
+    *,
+    ml_mu_override=None,
+):
+    """Run a single portfolio window backtest, computing returns, stats, and attribution."""
+    import pandas as pd
+
+    from mmi.portfolio import compute
+    from mmi.portfolio.stats import bootstrap_strategy_stats
+
+    if ml_mu_override is not None:
+        ml_mu_panel = ml_mu_override
+        ml_gate = pd.DataFrame(columns=["date", "forecast_skill", "forecast_weight"])
+    else:
+        ml_mu_panel, ml_gate = compute.compute_ml_mu_panel(
+            wad,
+            window=window_id,
+            asset_daily_full=wad,
+            macro_df=macro_wide,
+            asset_dfs=asset_dfs_macro,
+        )
+    results = compute.compute_portfolio_returns(
+        wad, ml_mu_panel=ml_mu_panel, window=window_id, asset_daily_full=wad
+    )
+    n = loader.upsert("raw.portfolio_returns", results, ["window_id", "strategy", "date"])
+    per_strategy, pairs = bootstrap_strategy_stats(results, window=window_id, n_boot=n_boot)
+    loader.upsert("raw.portfolio_strategy_stats", per_strategy, ["window_id", "strategy"])
+    loader.upsert("raw.portfolio_strategy_pairs", pairs, ["window_id", "strategy_a", "strategy_b"])
+    attribution = compute.compute_attribution(
+        wad, ml_mu_panel=ml_mu_panel, window=window_id, asset_daily_full=wad
+    )
+    loader.upsert("raw.portfolio_attribution", attribution, ["window_id", "strategy", "symbol"])
+    if not ml_gate.empty:
+        loader.upsert("raw.portfolio_ml_gate", ml_gate, ["window_id", "date"])
+    return n, results["strategy"].nunique(), results
+
+
+def cmd_portfolio(_: argparse.Namespace) -> int:
+    """Backtest the strategies per window, landing returns in raw.portfolio_*."""
+    import os
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     from mmi.ingestion import DuckDBLoader
     from mmi.ingestion.loader import reset_portfolio_raw_tables
     from mmi.portfolio import compute, windows
-    from mmi.portfolio.stats import bootstrap_strategy_stats, paired_btc_effect
+    from mmi.portfolio.stats import paired_btc_effect
     from mmi.settings import load_assets
 
-    # Owner-only tuning knob: parse defensively.  A non-integer ("", "abc", "2000.5") or a
-    # non-positive value (0, negative — which would degenerate the bootstrap) warns and falls back
-    # to the default rather than killing the run.  Unset keeps the default-2000 behaviour unchanged.
     default_n_boot = 2000
     raw_n_boot = os.environ.get("MMI_PORTFOLIO_N_BOOT")
     n_boot = default_n_boot
@@ -415,100 +475,20 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
                     default_n_boot,
                 )
 
-    def run_window(
-        loader: DuckDBLoader,
-        window_id: str,
-        wad,
-        *,
-        ml_mu_override: pd.DataFrame | None = None,
-    ) -> tuple[int, int, pd.DataFrame]:
-        # Build the ML forecast + gate ONCE per window, then reuse for returns + attribution.
-        # An ml_mu_override from the wider inc_btc_2015 universe ensures common_dates is identical
-        # for both 2015 windows (required by assert_portfolio_windows_period_aligned).
-        if ml_mu_override is not None:
-            ml_mu_panel = ml_mu_override
-            ml_gate = pd.DataFrame(columns=["date", "forecast_skill", "forecast_weight"])
-        else:
-            ml_mu_panel, ml_gate = compute.compute_ml_mu_panel(
-                wad,
-                window=window_id,
-                asset_daily_full=wad,
-                macro_df=macro_wide,
-                asset_dfs=asset_dfs_macro,
-            )
-        results = compute.compute_portfolio_returns(
-            wad, ml_mu_panel=ml_mu_panel, window=window_id, asset_daily_full=wad
-        )
-        n = loader.upsert("raw.portfolio_returns", results, ["window_id", "strategy", "date"])
-        # Honest uncertainty: block-bootstrap Sharpe CIs. One window at a time — the bootstrap
-        # pivots by date x strategy and would collide windows if handed more than one.
-        per_strategy, pairs = bootstrap_strategy_stats(results, window=window_id, n_boot=n_boot)
-        loader.upsert("raw.portfolio_strategy_stats", per_strategy, ["window_id", "strategy"])
-        loader.upsert(
-            "raw.portfolio_strategy_pairs", pairs, ["window_id", "strategy_a", "strategy_b"]
-        )
-        attribution = compute.compute_attribution(
-            wad, ml_mu_panel=ml_mu_panel, window=window_id, asset_daily_full=wad
-        )
-        loader.upsert("raw.portfolio_attribution", attribution, ["window_id", "strategy", "symbol"])
-        # The ML gate (forecast skill + the weight it earns) makes "mvo_ml ≈ mvo_histmean" legible.
-        if not ml_gate.empty:
-            loader.upsert("raw.portfolio_ml_gate", ml_gate, ["window_id", "date"])
-        return n, results["strategy"].nunique(), results
-
     with connect() as con:
         loader = DuckDBLoader(con)
-        # Recreate the wholesale-landed portfolio tables so the backtest self-heals on a stale DB
-        # (schema/window changes); also clears prior windows before this full re-run.
         reset_portfolio_raw_tables(con)
-        # Pull the WHOLE daily panel incl. BTC; each window filters its own universe in Python.
         asset_daily = con.execute(
             "select symbol, date, open, high, low, close, "
             "daily_return, asset_class from marts.fct_asset_daily"
         ).df()
 
-        # Load macro data for vol_macro features
-        try:
-            macro_raw = con.execute(
-                "select date, series_id, value from marts.fct_macro_indicator order by date"
-            ).df()
-            if not macro_raw.empty:
-                macro_raw["date"] = pd.to_datetime(macro_raw["date"]).astype("datetime64[ns]")
-                macro_wide = (
-                    macro_raw.pivot_table(
-                        index="date", columns="series_id", values="value", aggfunc="first"
-                    )
-                    .reset_index()
-                    .sort_values("date")
-                )
-                for col in macro_wide.columns:
-                    if col != "date":
-                        macro_wide[col] = macro_wide[col].ffill()
-            else:
-                macro_wide = None
-        except Exception:
-            macro_wide = None
+        macro_wide, asset_dfs_macro = _load_portfolio_macro_context(con)
 
-        # Load cross-asset data for vol_macro features
-        asset_dfs_macro = {}
-        for sym in ["GLD", "TLT"]:
-            try:
-                adf = con.execute(
-                    "select date, daily_return from marts.fct_asset_daily where symbol = ?",
-                    [sym],
-                ).df()
-                if not adf.empty:
-                    adf["date"] = pd.to_datetime(adf["date"]).astype("datetime64[ns]")
-                    asset_dfs_macro[sym] = adf
-            except Exception:
-                pass
-
-        # BTC on the equity trading calendar defines the shared 2015 floor (its first valid return).
         btc_aligned = compute.btc_aligned_returns(asset_daily)
         valid = btc_aligned.dropna(subset=["daily_return"])
         btc_floor = valid["date"].min() if not valid.empty else None
         if btc_floor is None and load_assets().get("crypto_daily"):
-            # Loud, not silent: BTC is configured but missing, so the BTC-era windows can't build.
             log.warning(
                 "BTC declared in config but absent from fct_asset_daily; skipping 2015 windows"
             )
@@ -516,8 +496,6 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         ran: list[str] = []
         results_by_window: dict[str, pd.DataFrame] = {}
 
-        # Pre-compute ML panel for 2015 windows using the widest (inc_btc) universe so
-        # common_dates is identical for both — required by the period-alignment test.
         ml_mu_2015: pd.DataFrame | None = None
         if btc_floor is not None:
             wad_wide = compute.window_asset_daily(
@@ -534,9 +512,6 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
                     macro_df=macro_wide,
                     asset_dfs=asset_dfs_macro,
                 )
-
-        # Pre-compute ML panels for the 2002 window in parallel
-        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         window_data = {}
         for window_id in windows.WINDOWS:
@@ -571,7 +546,6 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
                 except Exception as exc:
                     log.warning("ML panel failed for %s: %s", wid, exc)
 
-        # Sequential portfolio backtests (DuckDB writes)
         for window_id in window_data:
             wad = window_data[window_id]
             if window_id in (windows.EX_BTC_2015, windows.INC_BTC_2015) and ml_mu_2015 is not None:
@@ -579,19 +553,19 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
             else:
                 result = ml_panels.get(window_id)
                 override = result[0] if result else None
-            n, n_strategies, results = run_window(
+            n, n_strategies, results = _run_single_portfolio_window(
                 loader,
                 window_id,
                 wad,
+                macro_wide,
+                asset_dfs_macro,
+                n_boot,
                 ml_mu_override=override,
             )
             results_by_window[window_id] = results
             log.info("portfolio[%s]: %s rows / %s strategies", window_id, n, n_strategies)
             ran.append(window_id)
 
-        # The BTC effect: Sharpe(inc_btc_2015) − Sharpe(ex_btc_2015) with a PAIRED cross-window
-        # bootstrap CI. Valid only because the two 2015 windows are period-identical (same dates) —
-        # the per-window bootstraps cannot give this CI without overstating the variance.
         if {windows.EX_BTC_2015, windows.INC_BTC_2015} <= results_by_window.keys():
             effect = paired_btc_effect(
                 results_by_window[windows.EX_BTC_2015],
