@@ -68,8 +68,8 @@ def rolling_autocorr(series: pd.Series, window: int, min_periods: int | None = N
     """
     corr_window = window - 1
     corr_min_periods = min_periods - 1 if min_periods is not None else corr_window
-    result = series.shift(1).rolling(corr_window, min_periods=corr_min_periods).corr(series).shift(1)
-    return result.replace([np.inf, -np.inf], np.nan)
+    rolled = series.shift(1).rolling(corr_window, min_periods=corr_min_periods).corr(series)
+    return rolled.shift(1).replace([np.inf, -np.inf], np.nan)
 
 
 def feature_columns(feature_set: str = "default") -> list[str]:
