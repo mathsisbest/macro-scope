@@ -587,3 +587,51 @@ def test_forecast_fan_chart_tolerates_empty_fan():
     empty = pd.DataFrame(columns=["t", "center", "lower", "upper"])
     fig = charts.forecast_fan_chart(empty, "SPY", as_of=None)
     assert len(fig.data) == 0
+
+
+# --- relative value charts: ratio line + rolling z-score (theme tokens only) --------------------
+
+
+def _rv_long(sym_closes: list[float], bench_closes: list[float]) -> pd.DataFrame:
+    """A 2-symbol long frame (SYM vs BEN) over shared business dates."""
+    dates = pd.bdate_range("2024-01-01", periods=len(sym_closes))
+    rows = []
+    for d, (sc, bc) in zip(dates, zip(sym_closes, bench_closes, strict=True), strict=True):
+        rows.append(("SYM", "equities", d.date(), float(sc), 0.01))
+        rows.append(("BEN", "equities", d.date(), float(bc), 0.01))
+    return pd.DataFrame(rows, columns=["symbol", "asset_class", "date", "close", "daily_return"])
+
+
+def test_relative_strength_chart_uses_accent_token_and_reference_line():
+    long_df = _rv_long([100.0, 110.0, 121.0], [100.0] * 3)
+    ratio = charts.relative_strength_ratio(long_df, "SYM", "BEN")
+    fig = charts.relative_strength_chart(ratio, "SYM", "BEN")
+    assert "SYM vs BEN" in fig.layout.title.text
+    assert "rebased to 1.0" in fig.layout.title.text
+    assert fig.data[0].line.color == charts.PALETTE["accent"]
+    # The 1.0 reference line is a muted dashed hline (named token, not inline hex).
+    refs = [s for s in fig.layout.shapes if float(s.y0) == 1.0 and float(s.y1) == 1.0]
+    assert refs and refs[0].line.color == charts.PALETTE["muted"]
+    assert refs[0].line.dash == "dot"
+
+
+def test_relative_strength_chart_degrades_on_empty():
+    fig = charts.relative_strength_chart(pd.DataFrame(), "SYM", "BEN")
+    assert len(fig.data) == 0  # reference line only, no crash
+
+
+def test_ratio_zscore_chart_has_extreme_bands_and_named_tokens():
+    long_df = _rv_long([100.0, 110.0, 121.0], [100.0] * 3)
+    z = charts.ratio_rolling_zscore(long_df, "SYM", "BEN", window=2)
+    fig = charts.ratio_zscore_chart(z, "SYM", "BEN", window=2)
+    assert "(2d window)" in fig.layout.title.text
+    assert fig.data[0].line.color == charts.SERIES_VOL
+    hlines = {(round(float(s.y0), 3), round(float(s.y1), 3)) for s in fig.layout.shapes}
+    assert {(0.0, 0.0), (2.0, 2.0), (-2.0, -2.0)} <= hlines  # mean + ±2σ reference lines
+    colors = {s.line.color for s in fig.layout.shapes}
+    assert colors <= {charts.PALETTE["up"], charts.PALETTE["down"], charts.PALETTE["muted"]}
+
+
+def test_ratio_zscore_chart_degrades_on_empty():
+    fig = charts.ratio_zscore_chart(pd.DataFrame(), "SYM", "BEN")
+    assert len(fig.data) == 0  # reference lines only, no crash

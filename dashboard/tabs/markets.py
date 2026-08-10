@@ -57,7 +57,40 @@ def render_markets_tab(rng_start: str | None, chart_wrapper) -> None:
         if takeaway:
             st.caption(takeaway)
 
-    # 4. Per-asset drill-down
+    # 4. Relative value — symbol vs benchmark (close ratio + rolling z-score)
+    st.divider()
+    st.caption("⚖️ Relative value")
+    rv_sym = st.selectbox(
+        "Symbol",
+        syms,
+        key="rv_sym",
+        index=syms.index("SPY") if "SPY" in syms else 0,
+    )
+    bench_opts = [s for s in syms if s != rv_sym]
+    if bench_opts:
+        bench_idx = (
+            bench_opts.index(charts.RV_BENCHMARK_DEFAULT)
+            if charts.RV_BENCHMARK_DEFAULT in bench_opts
+            else 0
+        )
+        rv_bench = st.selectbox("Benchmark", bench_opts, key="rv_bench", index=bench_idx)
+        ratio = charts.relative_strength_ratio(long_df, rv_sym, rv_bench)
+        if ratio.empty:
+            st.caption(f"No overlapping {rv_sym}/{rv_bench} prices in this range.")
+        else:
+            rv1, rv2 = st.columns(2)
+            with rv1:
+                chart_wrapper(charts.relative_strength_chart(ratio, rv_sym, rv_bench))
+            with rv2:
+                z = charts.ratio_rolling_zscore(long_df, rv_sym, rv_bench)
+                if z.empty:
+                    st.caption(charts.RV_ZSCORE_TOO_SHORT)
+                else:
+                    chart_wrapper(charts.ratio_zscore_chart(z, rv_sym, rv_bench))
+    else:
+        st.caption("Add a second asset to compare against.")
+
+    # 5. Per-asset drill-down
     st.divider()
     st.caption("🔎 Per-asset detail")
     sym = st.selectbox("Asset", syms, index=syms.index("SPY") if "SPY" in syms else 0)
