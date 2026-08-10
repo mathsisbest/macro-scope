@@ -247,6 +247,8 @@ def _export_marts_tables_to_parquet(con, out_dir: Path) -> tuple[list[str], dict
     import os
     import tempfile
 
+    from mmi.utils.atomic import atomic_replace
+
     tables = [
         row[0]
         for row in con.execute(
@@ -264,7 +266,7 @@ def _export_marts_tables_to_parquet(con, out_dir: Path) -> tuple[list[str], dict
         try:
             os.close(fd)
             con.execute(f"copy marts.\"{table}\" to '{tmp_path}' (format parquet)")
-            os.replace(tmp_path, dest)
+            atomic_replace(tmp_path, dest)
         except Exception:
             with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
@@ -279,21 +281,12 @@ def _export_marts_tables_to_parquet(con, out_dir: Path) -> tuple[list[str], dict
 def _write_snapshot_manifest(out_dir: Path, manifest: dict) -> None:
     """Atomically write data/public/_manifest.json."""
     import json
-    import os
-    import tempfile
     from datetime import datetime, timezone
 
+    from mmi.utils.atomic import atomic_write
+
     manifest["generated_at"] = datetime.now(timezone.utc).isoformat()
-    manifest_path = out_dir / "_manifest.json"
-    fd, tmp_manifest = tempfile.mkstemp(dir=out_dir, prefix="_manifest_", suffix=".json.tmp")
-    try:
-        with os.fdopen(fd, "w") as fh:
-            json.dump(manifest, fh, indent=2)
-        os.replace(tmp_manifest, manifest_path)
-    except Exception:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp_manifest)
-        raise
+    atomic_write(out_dir / "_manifest.json", json.dumps(manifest, indent=2))
 
 
 def cmd_snapshot(_: argparse.Namespace) -> int:
