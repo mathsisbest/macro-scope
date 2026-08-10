@@ -1205,6 +1205,50 @@ def distinguishability_verdict(pairs: pd.DataFrame) -> str:
     return f"{len(distinct)} of {n} comparisons are statistically distinguishable: {named}."
 
 
+def portfolio_return_pairs_table(pairs: pd.DataFrame) -> pd.DataFrame:
+    """Pairwise annualised-return difference + CI + p-value + distinguishability, labelled."""
+
+    def lab(strategy: str) -> str:
+        return _STRATEGY_LABELS.get(strategy, strategy)
+
+    rows = {
+        "Pair": [
+            f"{lab(a)} − {lab(b)}"
+            for a, b in zip(pairs["strategy_a"], pairs["strategy_b"], strict=True)
+        ],
+        "Δ Ann. return": pairs["ann_return_diff"].to_numpy(),
+        "CI low": pairs["diff_lo"].to_numpy(),
+        "CI high": pairs["diff_hi"].to_numpy(),
+        "p-value": pairs["p_value"].to_numpy(),
+        "Distinguishable": pairs["distinguishable"].to_numpy(),
+    }
+    return pd.DataFrame(rows).set_index("Pair")
+
+
+def return_significance_verdict(pairs: pd.DataFrame) -> str:
+    """One honest line on the annualised-return differences: distinguishable or within noise."""
+    if pairs.empty:
+        return "Not enough strategies to compare."
+    distinct = pairs[pairs["distinguishable"]]
+    n = len(pairs)
+    if distinct.empty:
+        return (
+            f"None of the {n} annualised-return differences is statistically distinguishable — "
+            "every difference CI includes zero, i.e. the return gaps are within noise at this "
+            "sample size."
+        )
+
+    def lab(strategy: str) -> str:
+        return _STRATEGY_LABELS.get(strategy, strategy)
+
+    named = ", ".join(f"{lab(r.strategy_a)} vs {lab(r.strategy_b)}" for r in distinct.itertuples())
+    min_p = float(distinct["p_value"].min())
+    return (
+        f"{len(distinct)} of {n} annualised-return differences are statistically distinguishable "
+        f"(strongest evidence: p ≤ {min_p:.3g}): {named}. The remaining gaps are within noise."
+    )
+
+
 def attribution_chart(attr: pd.DataFrame, strategy: str) -> go.Figure:
     """Horizontal bar of each asset's contribution to a strategy's return (greens up, reds down)."""
     df = attr[attr["strategy"] == strategy].sort_values("contribution_to_return")

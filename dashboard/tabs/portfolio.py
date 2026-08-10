@@ -2,15 +2,38 @@
 
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 from dashboard import data
 from dashboard.components import charts
+
+from mmi.portfolio.stats import bootstrap_strategy_return_stats
+from mmi.settings import settings
 
 _WINDOW_LABELS = {
     "ex_btc_2002": "~2004–present · ex-BTC",
     "ex_btc_2015": "2015–present · ex-BTC (BTC era)",
     "inc_btc_2015": "2015–present · incl. BTC",
 }
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _return_significance(window_id: str, n_boot: int) -> pd.DataFrame:
+    """Paired block-bootstrap on annualised-return differences (full window, not range-filtered).
+
+    Computed at render time from the same mart the pipeline's Sharpe CIs come from, so the return
+    gaps get the same honest uncertainty treatment without a schema change.
+    """
+    pf = data.portfolio_returns(window_id)
+    if pf.empty or pf["strategy"].nunique() < 2:
+        return pd.DataFrame()
+    try:
+        _, pairs = bootstrap_strategy_return_stats(
+            pf[["strategy", "date", "daily_return"]], n_boot=n_boot
+        )
+    except ValueError:
+        return pd.DataFrame()
+    return pairs
 
 
 def render_portfolio_tab(rng_start: str | None, chart_wrapper) -> None:
@@ -70,6 +93,31 @@ def render_portfolio_tab(rng_start: str | None, chart_wrapper) -> None:
             ),
             width="stretch",
         )
+
+        ret_pairs = _return_significance(window_id, int(settings.portfolio_n_boot))
+        if not ret_pairs.empty:
+            n_boot = int(ret_pairs["n_boot"].iloc[0])
+            ci_pct = int(round(ret_pairs["ci_pct"].iloc[0] * 100))
+            st.markdown("**Is the return gap real?**")
+            st.dataframe(
+                charts.portfolio_return_pairs_table(ret_pairs).style.format(
+                    {
+                        "Δ Ann. return": "{:+.2%}",
+                        "CI low": "{:+.2%}",
+                        "CI high": "{:+.2%}",
+                        "p-value": "{:.3g}",
+                    }
+                ),
+                width="stretch",
+            )
+            st.caption(
+                f"Paired block-bootstrap ({n_boot:,} resamples, "
+                f"{ret_pairs['n_obs'].iloc[0]:,} obs) on annualised geometric return over the full "
+                f"{_WINDOW_LABELS.get(window_id, window_id)} window — same resampled dates across "
+                f"strategies. Distinguishable = difference CI excludes 0, i.e. "
+                f"p < {1 - ci_pct / 100:.2f}."
+            )
+            st.caption("🧭 " + charts.return_significance_verdict(ret_pairs))
 
     stats = data.portfolio_strategy_stats(window_id)
     if not stats.empty:

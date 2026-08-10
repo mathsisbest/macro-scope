@@ -5,6 +5,9 @@ import pandas as pd
 
 from mmi.portfolio import windows
 from mmi.portfolio.stats import (
+    annualised_return,
+    bootstrap_p_value,
+    bootstrap_strategy_return_stats,
     bootstrap_strategy_stats,
     paired_btc_effect,
     sharpe,
@@ -121,3 +124,81 @@ def test_paired_btc_effect_empty_without_common_dates():
     b = a.copy()
     b["date"] = pd.bdate_range("2020-01-01", periods=200)  # disjoint dates
     assert paired_btc_effect(a, b).empty
+
+
+# --- annualised return: the metric the return-significance reporting bootstraps -------------
+
+
+def test_annualised_return_matches_definition_and_handles_degenerate_inputs():
+    r = np.array([0.01, -0.005, 0.002, 0.0, 0.003])
+    expected = np.prod(1.0 + r) ** (TRADING_DAYS / len(r)) - 1.0
+    assert np.isclose(annualised_return(r), expected)
+    assert annualised_return(np.zeros(10)) == 0.0  # no growth -> 0, not NaN
+    assert annualised_return(np.array([])) == 0.0  # nothing to compound -> 0
+    assert annualised_return(np.array([-1.0, 0.0])) == -1.0  # total loss -> -1, not NaN
+
+
+def test_bootstrap_p_value_boundaries():
+    assert bootstrap_p_value(np.array([1.0, 2.0, 3.0])) == 0.0  # nothing <= 0 -> p = 0 (strongest)
+    assert bootstrap_p_value(np.array([-1.0, -2.0, -3.0])) == 0.0  # nothing >= 0 -> p = 0
+    assert bootstrap_p_value(np.zeros(10)) == 1.0  # all-zero diffs -> no evidence, not NaN
+    assert bootstrap_p_value(np.array([])) == 1.0
+    # half positive / half negative -> p = 1.0; one-sided tail -> p = 2 * share of that tail
+    assert bootstrap_p_value(np.array([-1.0, -1.0, 1.0, 1.0])) == 1.0
+    assert np.isclose(bootstrap_p_value(np.array([-1.0, 1.0, 1.0, 1.0])), 0.5)
+    # consistency with the CI rule: diff CI excludes 0 <=> p < (1 - ci) on the same replicates
+    rng = np.random.default_rng(11)
+    diff = rng.normal(0.5, 1.0, 2000)
+    lo, hi = np.percentile(diff, 5.0), np.percentile(diff, 95.0)
+    p = bootstrap_p_value(diff)
+    assert (lo > 0.0 or hi < 0.0) == (p < 0.10)
+
+
+def test_return_stats_structure_reproducible_and_ci_ordered():
+    df = _long({"a": (0.0004, 0.01), "b": (0.0002, 0.012), "c": (0.0006, 0.02)}, n=400)
+    per1, pairs1 = bootstrap_strategy_return_stats(df, n_boot=1000, seed=1)
+    per2, pairs2 = bootstrap_strategy_return_stats(df, n_boot=1000, seed=1)
+
+    assert list(per1["strategy"]) == ["a", "b", "c"]
+    assert (per1["window_id"] == windows.DEFAULT_WINDOW).all()
+    assert (per1["ann_return_lo"] <= per1["ann_return_hi"]).all()
+    assert len(pairs1) == 3  # C(3, 2)
+    assert (pairs1["diff_lo"] <= pairs1["diff_hi"]).all()
+    # per-strategy point estimate is exactly the annualised return of the raw series
+    raw_a = _long({"a": (0.0004, 0.01), "b": (0.0002, 0.012), "c": (0.0006, 0.02)}, n=400)
+    raw_a = raw_a.loc[raw_a["strategy"] == "a", "daily_return"]
+    assert np.isclose(
+        per1.loc[per1["strategy"] == "a", "ann_return"].iloc[0],
+        annualised_return(raw_a.to_numpy()),
+    )
+    # reproducible given the seed
+    pd.testing.assert_frame_equal(per1, per2)
+    pd.testing.assert_frame_equal(pairs1, pairs2)
+    # p-values are floored at 1/n_boot, never an overprecise 0.0
+    assert (pairs1["p_value"] >= 1 / 1000).all()
+
+
+def test_identical_strategies_have_no_return_significance():
+    base = _long({"a": (0.0005, 0.01)}, n=400, seed=3)
+    twin = base.copy()
+    twin["strategy"] = "b"
+    _, pairs = bootstrap_strategy_return_stats(pd.concat([base, twin]), n_boot=1000, seed=2)
+    row = pairs.iloc[0]
+    assert np.isclose(row["ann_return_diff"], 0.0)
+    assert row["p_value"] == 1.0
+    assert not row["distinguishable"]  # a strategy cannot be distinguished from itself
+
+
+def test_strongly_separated_returns_are_distinguishable():
+    df = _long({"winner": (0.005, 0.004), "loser": (-0.001, 0.01)}, n=400, seed=4)
+    _, pairs = bootstrap_strategy_return_stats(df, n_boot=1000, seed=5)
+    row = pairs.iloc[0]
+    assert row["distinguishable"]  # a huge return gap -> difference CI excludes 0
+    assert row["p_value"] < 0.10
+    assert (row["diff_lo"] > 0) == (row["ann_return_diff"] > 0)
+
+
+def test_return_stats_trim_warmup_rows():
+    df = _long({"a": (0.0004, 0.01), "b": (0.0003, 0.012)}, n=300, warmup=50)
+    per, _ = bootstrap_strategy_return_stats(df, n_boot=500, seed=6)
+    assert (per["n_obs"] == 300).all()  # the 50 leading all-cash rows are excluded
