@@ -16,6 +16,7 @@ from mmi.ml.features import (
     feature_columns,
     har_feature_names,
     make_features,
+    rolling_zscore,
 )
 
 # ---------------------------------------------------------------------------
@@ -322,3 +323,14 @@ class TestMakeFeatures:
             out = make_features(df, feature_set=fs)
             for c in cols:
                 assert c in out.columns, f"{fs}: {c} missing from output"
+
+
+def test_rolling_zscore() -> None:
+    """Test rolling_zscore helper produces leakage-free z-scores shifted by 1 day."""
+    s = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
+    res = rolling_zscore(s, window=5, min_periods=3)
+    assert pd.isna(res.iloc[0])
+    mean_4 = s.iloc[:5].mean()
+    std_4 = s.iloc[:5].std()
+    expected_val_5 = (s.iloc[4] - mean_4) / std_4
+    assert res.iloc[5] == pytest.approx(expected_val_5)

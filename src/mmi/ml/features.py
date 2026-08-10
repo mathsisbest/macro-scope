@@ -31,6 +31,23 @@ _GK_C1 = 0.5
 _GK_C2 = 2.0 * math.log(2) - 1.0  # ≈ 0.3863
 
 
+def rolling_zscore(series: pd.Series, window: int, min_periods: int | None = None) -> pd.Series:
+    """Calculate rolling z-score shifted by 1 day (leakage-free).
+
+    Parameters
+    ----------
+    series:
+        Input pandas Series.
+    window:
+        Rolling window size.
+    min_periods:
+        Minimum number of observations required to have a value.
+    """
+    mean = series.rolling(window, min_periods=min_periods).mean()
+    std = series.rolling(window, min_periods=min_periods).std().replace(0, np.nan)
+    return ((series - mean) / std).shift(1)
+
+
 def feature_columns(feature_set: str = "default") -> list[str]:
     """Return the ordered list of feature column names.
 
@@ -331,9 +348,7 @@ def _add_mom_rev_features(out: pd.DataFrame) -> pd.DataFrame:
 
     # Z-scores
     for w, name in [(20, "ret_zscore_20d"), (60, "ret_zscore_60d")]:
-        mean = ret.rolling(w, min_periods=w // 2).mean()
-        std = ret.rolling(w, min_periods=w // 2).std()
-        out[name] = ((ret - mean) / std.replace(0, np.nan)).shift(1)
+        out[name] = rolling_zscore(ret, window=w, min_periods=w // 2)
 
     # Distance from rolling mean
     for w, name in [(20, "dist_from_mean_20d"), (60, "dist_from_mean_60d")]:
@@ -386,9 +401,7 @@ def _add_macro_features(
         yc = out["T10Y2Y"]
         out["yc_10y2y_lag1"] = yc.shift(1)
         out["yc_10y2y_change_20d"] = yc.diff(20).shift(1)
-        yc_mean = yc.rolling(60, min_periods=20).mean()
-        yc_std = yc.rolling(60, min_periods=20).std()
-        out["yc_slope_zscore_60d"] = ((yc - yc_mean) / yc_std.replace(0, np.nan)).shift(1)
+        out["yc_slope_zscore_60d"] = rolling_zscore(yc, window=60, min_periods=20)
 
     for sid, name in [("DGS10", "us_10y"), ("DGS2", "us_2y"), ("DGS3MO", "us_3m")]:
         if sid in out.columns:
@@ -404,9 +417,7 @@ def _add_macro_features(
         vix = out["VIXCLS"]
         out["vix_level_lag1"] = vix.shift(1)
         out["vix_change_5d"] = vix.diff(5).shift(1)
-        vix_mean = vix.rolling(60, min_periods=20).mean()
-        vix_std = vix.rolling(60, min_periods=20).std()
-        out["vix_zscore_60d"] = ((vix - vix_mean) / vix_std.replace(0, np.nan)).shift(1)
+        out["vix_zscore_60d"] = rolling_zscore(vix, window=60, min_periods=20)
 
     if "DCOILWTICO" in out.columns:
         out["wti_change_20d"] = out["DCOILWTICO"].pct_change(20).shift(1)
@@ -481,9 +492,7 @@ def _add_medium_features(out: pd.DataFrame) -> pd.DataFrame:
 
     if "DTWEXBGS" in out.columns and "dollar_zscore_60d" not in out.columns:
         dollar = out["DTWEXBGS"]
-        d_mean = dollar.rolling(60, min_periods=20).mean()
-        d_std = dollar.rolling(60, min_periods=20).std()
-        out["dollar_zscore_60d"] = ((dollar - d_mean) / d_std.replace(0, np.nan)).shift(1)
+        out["dollar_zscore_60d"] = rolling_zscore(dollar, window=60, min_periods=20)
 
     if "vix_zscore_60d" in out.columns and "yc_slope_zscore_60d" in out.columns:
         out["vix_x_yc_slope"] = out["vix_zscore_60d"] * out["yc_slope_zscore_60d"]
@@ -541,15 +550,11 @@ def _add_rich_features(
         zscore_col = f"corr_spy_{label}_zscore_60d"
         if corr_col in out.columns:
             c = out[corr_col]
-            c_mean = c.rolling(60, min_periods=20).mean()
-            c_std = c.rolling(60, min_periods=20).std()
-            out[zscore_col] = ((c - c_mean) / c_std.replace(0, np.nan)).shift(1)
+            out[zscore_col] = rolling_zscore(c, window=60, min_periods=20)
 
     if "DTWEXBGS" in out.columns:
         dollar = out["DTWEXBGS"]
-        d_mean = dollar.rolling(60, min_periods=20).mean()
-        d_std = dollar.rolling(60, min_periods=20).std()
-        out["dollar_zscore_60d"] = ((dollar - d_mean) / d_std.replace(0, np.nan)).shift(1)
+        out["dollar_zscore_60d"] = rolling_zscore(dollar, window=60, min_periods=20)
 
     if asset_dfs:
         ret_cols = []
@@ -721,9 +726,7 @@ def _add_extended_features(
     out["mom_accel"] = out["mom_21d"] - out["mom_21d"].shift(21)
     out["rev_10d"] = -ret.rolling(10, min_periods=5).sum().shift(1)
     for w, name in [(20, "ret_zscore_20d"), (60, "ret_zscore_60d")]:
-        mean = ret.rolling(w, min_periods=w // 2).mean()
-        std = ret.rolling(w, min_periods=w // 2).std()
-        out[name] = ((ret - mean) / std.replace(0, np.nan)).shift(1)
+        out[name] = rolling_zscore(ret, window=w, min_periods=w // 2)
     for w, name in [(20, "dist_from_mean_20d"), (60, "dist_from_mean_60d")]:
         mean = ret.rolling(w, min_periods=w // 2).mean()
         out[name] = (ret - mean).shift(1)
