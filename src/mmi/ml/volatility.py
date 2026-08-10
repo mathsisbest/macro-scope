@@ -202,13 +202,18 @@ def _fit_predict_gb(
     x_pred: np.ndarray,
     n_estimators: int = 100,
     max_depth: int = 3,
+    random_state: int = 0,
 ) -> np.ndarray:
-    """Gradient Boosting in level space (no log transform needed — trees handle skew)."""
+    """Gradient Boosting in level space (no log transform needed — trees handle skew).
+
+    ``random_state`` defaults to 0 (the historical behaviour); the robustness
+    analysis perturbs it to probe seed sensitivity of the one stochastic model.
+    """
     model = GradientBoostingRegressor(
         n_estimators=n_estimators,
         max_depth=max_depth,
         min_samples_leaf=20,
-        random_state=0,
+        random_state=random_state,
     ).fit(x_train, y_train_vol)
     return model.predict(x_pred)
 
