@@ -523,3 +523,67 @@ def test_regime_shading_handles_multi_symbol_regime_df():
     fig = charts.price_chart(df, "SPY", regime_df=regime_df)
     shapes = fig.layout.shapes
     assert len(shapes) == 2
+
+
+def test_forecast_fan_points_anchors_and_geometry():
+    fan = charts.forecast_fan_points(
+        daily_mu=0.001, horizon=20.0, sigma_daily=0.01, oos_r2=0.5, z=1.0, n_points=21
+    )
+    assert list(fan.columns) == ["t", "center", "lower", "upper"]
+    assert len(fan) == 21
+    assert fan["t"].iloc[0] == 0.0
+    assert fan["t"].iloc[-1] == 20.0
+    # Zero uncertainty today: band collapses to the centre.
+    assert fan["lower"].iloc[0] == fan["upper"].iloc[0] == fan["center"].iloc[0]
+    # Centre is the linear drift; at the horizon it equals daily_mu * horizon.
+    assert math.isclose(fan["center"].iloc[-1], 0.001 * 20.0, rel_tol=1e-12)
+    # Width at horizon = z * sigma_daily * sqrt(horizon) * sqrt(1 - r2).
+    expected_half = 1.0 * 0.01 * math.sqrt(20.0) * math.sqrt(0.5)
+    assert math.isclose(fan["upper"].iloc[-1] - fan["center"].iloc[-1], expected_half, rel_tol=1e-9)
+    # Band widens monotonically (no-shrinkage).
+    widths = fan["upper"] - fan["lower"]
+    assert (widths.diff().dropna() >= -1e-12).all()
+
+
+def test_forecast_fan_points_honest_r2_defaults():
+    kwargs = dict(daily_mu=0.001, horizon=20.0, sigma_daily=0.01, n_points=11)
+    base = charts.forecast_fan_points(oos_r2=0.0, **kwargs)
+    missing = charts.forecast_fan_points(oos_r2=None, **kwargs)
+    negative = charts.forecast_fan_points(oos_r2=-0.8, **kwargs)
+    perfect = charts.forecast_fan_points(oos_r2=1.0, **kwargs)
+    # Missing/negative R2 fall back to the honest no-skill (widest) band.
+    for fan in (missing, negative):
+        assert fan["upper"].equals(base["upper"])
+        assert fan["lower"].equals(base["lower"])
+    # R2 = 1 => zero residual error at the horizon.
+    assert math.isclose(perfect["upper"].iloc[-1] - perfect["center"].iloc[-1], 0.0, abs_tol=1e-12)
+    # z = 0 collapses the band everywhere.
+    narrow = charts.forecast_fan_points(oos_r2=0.0, z=0.0, **kwargs)
+    assert (narrow["lower"] == narrow["upper"]).all()
+
+
+def test_forecast_fan_points_guards_bad_inputs():
+    empty = charts.forecast_fan_points(daily_mu=0.001, horizon=0.0, sigma_daily=0.01)
+    assert empty.empty
+    empty2 = charts.forecast_fan_points(daily_mu=0.001, horizon=20.0, sigma_daily=float("nan"))
+    assert empty2.empty
+
+
+def test_forecast_fan_chart_renders_band_and_center():
+    fan = charts.forecast_fan_points(
+        daily_mu=0.001, horizon=20.0, sigma_daily=0.01, oos_r2=0.5, n_points=21
+    )
+    fig = charts.forecast_fan_chart(fan, "SPY", as_of="2026-08-07", z=1.0, height=300)
+    names = [tr.name for tr in fig.data if tr.name]
+    assert "Expected path" in names
+    assert "±1σ band" in names
+    # The band trace carries the fill.
+    band = next(tr for tr in fig.data if tr.name == "±1σ band")
+    assert band.fill == "tonexty"
+    assert len(fig.data) == 3
+
+
+def test_forecast_fan_chart_tolerates_empty_fan():
+    empty = pd.DataFrame(columns=["t", "center", "lower", "upper"])
+    fig = charts.forecast_fan_chart(empty, "SPY", as_of=None)
+    assert len(fig.data) == 0
