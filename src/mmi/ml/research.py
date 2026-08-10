@@ -23,6 +23,7 @@ from mmi.ml.research_forecast import _load_asset_vol, _pivot_macro, _spy_df
 from mmi.ml.skill_gate import return_forecast_skill_verdict, skill_verdict
 from mmi.ml.volatility import train_and_backtest_vol
 from mmi.settings import REPO_ROOT
+from mmi.utils.atomic import atomic_write
 from mmi.utils.db import connect
 from mmi.utils.logging import get_logger
 
@@ -152,8 +153,10 @@ def _load_cape_data() -> pd.DataFrame:
     out = out[cols].sort_values("date").reset_index(drop=True)
 
     try:
+        buf = io.BytesIO()
+        out.to_parquet(buf)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        out.to_parquet(cache_path)
+        atomic_write(cache_path, buf.getvalue(), mode="wb")
     except Exception:
         pass
 

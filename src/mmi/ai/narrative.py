@@ -21,6 +21,7 @@ import pandas as pd
 
 from mmi.ai import llm
 from mmi.settings import settings
+from mmi.utils.atomic import atomic_write
 from mmi.utils.logging import get_logger
 from mmi.utils.redact import redact
 
@@ -512,7 +513,7 @@ def generate_brief(con) -> str:
     out_dir = Path(settings.duckdb_path).parent / "briefs"
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
-    (out_dir / f"{stamp}.md").write_text(safe_text, encoding="utf-8")
+    atomic_write(out_dir / f"{stamp}.md", safe_text)
 
     try:
         data_date = (
