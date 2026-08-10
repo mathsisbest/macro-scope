@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from dashboard.theme import (
@@ -651,6 +652,88 @@ def return_forecast_table(fc: pd.DataFrame) -> pd.DataFrame:
     return rows.sort_values("predicted_return", ascending=False)[
         ["symbol", "as_of", "horizon", "predicted_return", "daily_mu"]
     ].reset_index(drop=True)
+
+
+def forecast_fan_points(
+    daily_mu: float,
+    horizon: float,
+    sigma_daily: float,
+    oos_r2: float | None = None,
+    z: float = 1.0,
+    n_points: int = 21,
+) -> pd.DataFrame:
+    """Fan geometry for a forecast: expected drift path with a widening ±z·σ band.
+
+    The centre is the linear drift ``daily_mu * t`` (which equals the model's point
+    forecast at ``t == horizon``, since the pipeline predicts ``daily_mu * horizon``).
+    The band anchors at zero width today (the current price is known) and widens to the
+    walk-forward OOS residual error at the horizon:
+
+        sigma_residual = sigma_daily * sqrt(horizon) * sqrt(max(1 - r2, 0))
+
+    A lower OOS R² (less demonstrated skill) therefore produces a wider fan; when R² is
+    missing or negative it is treated as 0 — the honest no-demonstrated-skill default.
+    Returns a DataFrame with columns ``t``, ``center``, ``lower``, ``upper``.
+    """
+    if horizon <= 0 or not np.isfinite(sigma_daily) or sigma_daily < 0:
+        return pd.DataFrame(columns=["t", "center", "lower", "upper"])
+    r2 = 0.0 if oos_r2 is None or not np.isfinite(oos_r2) else float(np.clip(oos_r2, 0.0, 1.0))
+    sigma_res = sigma_daily * math.sqrt(horizon) * math.sqrt(1.0 - r2)
+    t = np.linspace(0.0, float(horizon), n_points)
+    center = daily_mu * t
+    half = z * sigma_res * np.sqrt(t / horizon)
+    return pd.DataFrame({"t": t, "center": center, "lower": center - half, "upper": center + half})
+
+
+def forecast_fan_chart(
+    fan: pd.DataFrame,
+    symbol: str,
+    as_of,
+    z: float = 1.0,
+    height: int = HEIGHT_MEDIUM,
+) -> go.Figure:
+    """Render a forecast fan: centre drift line + ±z·σ filled confidence band."""
+    fig = go.Figure()
+    if not fan.empty and {"t", "center", "lower", "upper"} <= set(fan.columns):
+        fig.add_scatter(
+            x=fan["t"],
+            y=fan["upper"],
+            name=f"+{z:.0f}σ",
+            mode="lines",
+            line=dict(width=0),
+            showlegend=False,
+            hoverinfo="skip",
+        )
+        fig.add_scatter(
+            x=fan["t"],
+            y=fan["lower"],
+            name=f"±{z:.0f}σ band",
+            mode="lines",
+            line=dict(width=0),
+            fill="tonexty",
+            fillcolor=PALETTE["accent"],
+            opacity=0.25,
+        )
+        fig.add_scatter(
+            x=fan["t"],
+            y=fan["center"],
+            name="Expected path",
+            line=dict(color=PALETTE["accent"], width=2),
+        )
+        fig.add_hline(y=0, line_color=PALETTE["muted"], line_dash="dot")
+    horizon = float(fan["t"].iloc[-1]) if not fan.empty else 0.0
+    as_of_label = pd.to_datetime(as_of).date() if as_of is not None else "n/a"
+    fig.update_layout(
+        title=dict(
+            text=(
+                f"Forecast fan — {symbol} (±{z:.0f}σ, {horizon:.0f}d horizon, as of {as_of_label})"
+            ),
+            font=_TITLE_FONT,
+        ),
+    )
+    fig.update_yaxes(tickformat=".1%")
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=height)
 
 
 def return_performance_table(metrics: pd.DataFrame) -> pd.DataFrame:

@@ -83,6 +83,45 @@ def render_ml_tab(chart_wrapper) -> None:
             )
 
         st.divider()
+        st.subheader("🎛️ Forecast confidence fan")
+        st.caption(
+            "Expected drift path (dashed-anchored at today = zero uncertainty) widening to ±1σ "
+            "of the model's walk-forward out-of-sample residual error at the forecast horizon. "
+            "A wider band means less demonstrated skill (lower OOS R²); R² is read from the "
+            "latest `return_gb` evaluation for the asset."
+        )
+        fan_sym = st.selectbox("Fan chart asset", CORE_SYMBOLS, index=0)
+        fan_row = return_fc[return_fc["symbol"] == fan_sym].head(1)
+        if fan_row.empty:
+            st.info("No forecast row for this asset yet.")
+        else:
+            row = fan_row.iloc[0]
+            asset = data.asset_daily(fan_sym)
+            sigma_daily = (
+                float(asset["daily_return"].tail(252).std())
+                if not asset.empty and "daily_return" in asset
+                else np.nan
+            )
+            raw_fc = fc[fc["symbol"] == fan_sym]
+            oos_r2 = (
+                float(raw_fc["r2"].iloc[0])
+                if not raw_fc.empty and "r2" in raw_fc and pd.notna(raw_fc["r2"].iloc[0])
+                else None
+            )
+            if not np.isfinite(sigma_daily):
+                st.info("No price history available to size the confidence band.")
+            else:
+                fan = charts.forecast_fan_points(
+                    daily_mu=float(row["daily_mu"]),
+                    horizon=float(row["horizon"]),
+                    sigma_daily=sigma_daily,
+                    oos_r2=oos_r2,
+                )
+                chart_wrapper(
+                    charts.forecast_fan_chart(fan, fan_sym, as_of=row["as_of"], z=1.0, height=300)
+                )
+
+        st.divider()
         st.subheader("🎯 Active Market & Model Signals")
         st.caption(
             "Walk-forward out-of-sample evaluated models. Green = Deployed tilt (OOS R² > 0); "
