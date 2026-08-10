@@ -13,6 +13,7 @@ import os
 import sys
 from pathlib import Path
 
+import plotly.graph_objects as go
 import streamlit as st
 
 # Streamlit Community Cloud runs this file with only its own directory on sys.path (not the
@@ -38,7 +39,7 @@ configure_dashboard_env(os.environ, _REPO_ROOT)
 from dashboard import data  # noqa: E402
 from dashboard.components import glossary  # noqa: E402
 from dashboard.components import kpi  # noqa: E402
-from dashboard.components.kpi import metric_row  # noqa: E402
+from dashboard.components.kpi import KpiItem, metric_row  # noqa: E402
 from dashboard.tabs.digest import render_digest_tab  # noqa: E402
 from dashboard.tabs.macro import render_macro_tab  # noqa: E402
 from dashboard.tabs.markets import render_markets_tab  # noqa: E402
@@ -58,10 +59,10 @@ st.set_page_config(
 inject_css()
 
 
-def _chart(fig, **kwargs):
+def _chart(fig: go.Figure, **kwargs: object) -> None:
     """Thin wrapper so every chart gets the mobile-safe config (no scroll-zoom, no modebar)."""
     kwargs.setdefault("config", PLOTLY_CONFIG)
-    st.plotly_chart(fig, width="stretch", **kwargs)
+    st.plotly_chart(fig, width="stretch", **kwargs)  # type: ignore[call-overload]
 
 
 # --------------------------------------------------------------------------- hero / header
@@ -269,7 +270,7 @@ with st.sidebar:
 # Headline figures always show the LATEST value (unaffected by the date-range selector below).
 # Each tile can carry an optional sparkline (recent history) and a contextual threshold
 # indicator (arrow vs a trailing average / a defined threshold) — see kpi.metric_row.
-kpis: list[dict] = []
+kpis: list[KpiItem] = []
 btc = data.asset_daily("BTC")
 if not btc.empty:
     br = btc["daily_return"].iloc[-1]

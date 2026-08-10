@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypedDict
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -40,7 +40,21 @@ from dashboard.theme import (
 
 _FormatKind = Literal["price", "percent", "spread", "plain"]
 
-_MAX_TILES = 8  # guard against an absurdly wide layout
+#: One KPI tile: pre-formatted ``label`` + ``value`` string (+ optional ``delta``). All keys
+#: optional because ``metric_row`` tolerates missing keys (it falls back to its own defaults).
+#: Functional form (not class syntax) because mypy runs in python_version=3.10 mode, where
+#: ``total=False`` / ``NotRequired`` class syntax is unavailable.
+KpiItem = TypedDict(  # noqa: UP013
+    "KpiItem",
+    {
+        "label": str,
+        "value": str,
+        "delta": str,
+    },
+    total=False,
+)
+
+_MAX_TILES: int = 8  # guard against an absurdly wide layout
 
 #: Default number of most-recent points used for a KPI sparkline.
 _SPARKLINE_WINDOW = 90
@@ -297,7 +311,7 @@ def _kpi_css() -> None:
 # ---------------------------------------------------------------------------
 
 
-def metric_row(items: list[dict]) -> None:
+def metric_row(items: list[KpiItem]) -> None:
     """Render a row of ``st.metric`` tiles.
 
     Each *item* is a ``dict`` with keys:
