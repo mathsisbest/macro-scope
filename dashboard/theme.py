@@ -79,6 +79,7 @@ HEIGHT_TALL: int = 400  # full-width hero charts
 HEIGHT_DEFAULT: int = 360  # standard figure (matches style_fig default)
 HEIGHT_MEDIUM: int = 320  # secondary / paired charts
 HEIGHT_SHORT: int = 260  # sparkline / compact supplementary
+HEIGHT_SPARKLINE: int = 110  # px — in-card KPI sparkline (sits under the metric value)
 
 # Typography
 TITLE_SIZE: int = 18  # px — section / card titles
