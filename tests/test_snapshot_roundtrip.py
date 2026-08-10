@@ -187,15 +187,15 @@ class TestAssetAccessors:
         assert set(df["asset_class"]) <= valid
 
     def test_asset_daily_columns(self, snap_con):
-        """data.asset_daily() -> date, close, daily_return, vol_20d, ma_50 (subset)."""
+        """data.asset_daily() -> date, close, daily_return, vol_20d, ma_50, volume (subset)."""
         df = _q(
             snap_con,
-            "select date, close, daily_return, vol_20d, ma_50"
+            "select date, close, daily_return, vol_20d, ma_50, volume"
             " from marts.fct_asset_daily"
             " where symbol = 'SPY' order by date",
         )
         assert not df.empty, "fct_asset_daily has no SPY rows after round-trip"
-        expected_cols = {"date", "close", "daily_return", "vol_20d", "ma_50"}
+        expected_cols = {"date", "close", "daily_return", "vol_20d", "ma_50", "volume"}
         assert expected_cols <= set(df.columns)
 
     def test_asset_daily_date_dtype(self, snap_con):

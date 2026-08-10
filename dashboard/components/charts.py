@@ -54,17 +54,27 @@ def _overflow_legend(fig: go.Figure, n_traces: int) -> None:
         )
 
 
-def _guard_yrange(fig: go.Figure, series: pd.Series, pad: float = 0.05) -> None:
+def _guard_yrange(
+    fig: go.Figure,
+    series: pd.Series,
+    pad: float = 0.05,
+    *,
+    axis: str = "y",
+) -> None:
     """Widen the y-axis range by `pad` fraction when the data is purely non-negative
-    (avoids the chart clipping zero line) or purely non-positive (avoids clipping at zero)."""
+    (avoids the chart clipping zero line) or purely non-positive (avoids clipping at zero).
+
+    Defaults to the primary ``y`` axis; pass ``axis="y2"`` to guard a secondary axis instead.
+    Axis updates go through ``update_layout`` so a secondary axis is never dragged along."""
     if series.empty:
         return
     lo, hi = float(series.min()), float(series.max())
     span = hi - lo or 1.0
+    key = "yaxis" if axis == "y" else axis
     if lo >= 0:
-        fig.update_yaxes(range=[max(0.0, lo - span * pad), hi + span * pad])
+        fig.update_layout({key: dict(range=[max(0.0, lo - span * pad), hi + span * pad])})
     elif hi <= 0:
-        fig.update_yaxes(range=[lo - span * pad, min(0.0, hi + span * pad)])
+        fig.update_layout({key: dict(range=[lo - span * pad, min(0.0, hi + span * pad)])})
 
 
 def _regime_color(regime: str) -> str | None:
@@ -154,17 +164,57 @@ def price_chart(df: pd.DataFrame, symbol: str, regime_df: pd.DataFrame | None = 
             name="50d MA",
             line=dict(color=PALETTE["muted"], dash="dash"),
         )
-    fig.update_layout(
-        title=dict(text=f"{symbol} — price & 50d moving average", font=_TITLE_FONT),
-    )
+    volume = volume_bars(df)
+    if volume is not None:
+        fig.add_bar(
+            x=df["date"],
+            y=volume,
+            name="Volume",
+            marker=dict(color=SERIES_ALT, opacity=0.45),
+            yaxis="y2",
+            hovertemplate="Volume: %{y:~s}<extra></extra>",
+        )
+    title = f"{symbol} — price & 50d moving average"
+    if volume is not None:
+        title += " · volume"
+    fig.update_layout(title=dict(text=title, font=_TITLE_FONT))
+    if volume is not None:
+        fig.update_layout(
+            yaxis2=dict(
+                title="Volume",
+                overlaying="y",
+                side="right",
+                showgrid=False,
+                rangemode="tozero",
+                tickformat="~s",
+                hoverformat="~s",
+            )
+        )
     _apply_axis_fonts(fig)
     # All assets are USD-denominated (equities, GLD, BTC, and the USD-quoted FX pairs), so show the
     # axis as $ with thousands separators; 2dp keeps low-priced assets (FX ≈ 1.2) readable.
     # hoverformat matches so the hover tooltip reads the same as the ticks ($171.80, not 171.7959).
-    fig.update_yaxes(tickformat="$,.2f", hoverformat="$,.2f")
+    # Scoped to the primary axis via update_layout so the volume axis keeps its share counts.
+    fig.update_layout(yaxis=dict(tickformat="$,.2f", hoverformat="$,.2f"))
     if not df.empty and "close" in df.columns:
         _guard_yrange(fig, df["close"])
     return style_fig(fig, height=HEIGHT_DEFAULT)
+
+
+def volume_bars(df: pd.DataFrame) -> pd.Series | None:
+    """Volume values ready for bar rendering, or ``None`` when the asset has no volume.
+
+    ``stg_asset_prices`` stamps FX pairs (EURUSD/GBPUSD) with zero volume while equities, ETFs,
+    GLD and BTC carry real share/coin counts, so a frame whose volume is entirely null or
+    non-positive must render NO bars rather than a flat zero baseline. NaN holes inside an
+    otherwise-valid series are preserved: Plotly draws them as honest gaps. Pure + unit-tested.
+    """
+    if df.empty or "volume" not in df.columns:
+        return None
+    vol = pd.to_numeric(df["volume"], errors="coerce")
+    if not bool((vol > 0).any()):
+        return None
+    return vol
 
 
 def vol_chart(df: pd.DataFrame, symbol: str, regime_df: pd.DataFrame | None = None) -> go.Figure:

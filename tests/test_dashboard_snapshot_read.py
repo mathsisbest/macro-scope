@@ -27,8 +27,8 @@ def _marts_db(path) -> None:
     )
     con.execute(
         "create table marts.fct_asset_daily as select * from (values "
-        "('SPY', DATE '2024-01-02', 470.0, 0.012, 9.5, 465.0)) "
-        "t(symbol, date, close, daily_return, vol_20d, ma_50)"
+        "('SPY', DATE '2024-01-02', 470.0, 0.012, 9.5, 465.0, 123456.0)) "
+        "t(symbol, date, close, daily_return, vol_20d, ma_50, volume)"
     )
     con.close()
 
