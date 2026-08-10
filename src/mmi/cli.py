@@ -80,8 +80,10 @@ def _fetch_all_extractors(loader) -> dict[str, tuple[Extractor, str, Any]]:
     from mmi.ingestion import EXTRACTORS
 
     start_afters: dict[str, str | None] = {}
+    extractors: list[Extractor] = []
     for cls in EXTRACTORS:
         ext = cls(loader)
+        extractors.append(ext)
         wm: str | None = None
         if ext.watermark_col:
             with contextlib.suppress(Exception):
@@ -91,10 +93,8 @@ def _fetch_all_extractors(loader) -> dict[str, tuple[Extractor, str, Any]]:
     fetch_results: dict[str, tuple[Extractor, str, Any]] = {}
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = {
-            executor.submit(_fetch_extractor, cls(loader), start_afters[cls(loader).source]): cls(
-                loader
-            )
-            for cls in EXTRACTORS
+            executor.submit(_fetch_extractor, ext, start_afters[ext.source]): ext
+            for ext in extractors
         }
 
         for future in as_completed(futures):
@@ -110,16 +110,10 @@ def _fetch_all_extractors(loader) -> dict[str, tuple[Extractor, str, Any]]:
 
 def _load_ingested_results(loader, fetch_results) -> tuple[int, int]:
     """Phase 2 of ingestion: sequential load & audit logging."""
-    from mmi.ingestion import EXTRACTORS
-
     required_failures = 0
     optional_failures = 0
 
-    for cls in EXTRACTORS:
-        ext_instance = cls(loader)
-        if ext_instance.source not in fetch_results:
-            continue
-        extractor, res_type, payload = fetch_results[ext_instance.source]
+    for extractor, res_type, payload in fetch_results.values():
         run_id = loader.start_run(extractor.source)
 
         if res_type == "skip":
