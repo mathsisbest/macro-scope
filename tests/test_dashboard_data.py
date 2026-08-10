@@ -184,9 +184,9 @@ def test_asset_daily_start_filters_rows(monkeypatch, tmp_path):
     con.execute("create schema marts")
     con.execute(
         "create table marts.fct_asset_daily as select * from (values "
-        "('SPY', DATE '2020-01-01', 10.0, 0.0, 1.0, 9.0), "
-        "('SPY', DATE '2026-06-25', 20.0, 0.0, 2.0, 19.0)) "
-        "as t(symbol, date, close, daily_return, vol_20d, ma_50)"
+        "('SPY', DATE '2020-01-01', 10.0, 0.0, 1.0, 9.0, 1000.0), "
+        "('SPY', DATE '2026-06-25', 20.0, 0.0, 2.0, 19.0, 2000.0)) "
+        "as t(symbol, date, close, daily_return, vol_20d, ma_50, volume)"
     )
     con.close()
     monkeypatch.setattr(settings_mod.settings, "snapshot_mode", False)

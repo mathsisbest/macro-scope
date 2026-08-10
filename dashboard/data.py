@@ -116,7 +116,7 @@ def assets() -> pd.DataFrame:
 
 def asset_daily(symbol: str, start: str | None = None) -> pd.DataFrame:
     sql = (
-        "select date, close, daily_return, vol_20d, ma_50 "
+        "select date, close, daily_return, vol_20d, ma_50, volume "
         "from marts.fct_asset_daily where symbol = ?"
     )
     params: tuple[str, ...] = (symbol,)
