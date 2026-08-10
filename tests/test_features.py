@@ -16,6 +16,7 @@ from mmi.ml.features import (
     feature_columns,
     har_feature_names,
     make_features,
+    rolling_autocorr,
     rolling_zscore,
 )
 
@@ -362,3 +363,70 @@ def test_rolling_zscore() -> None:
     std_4 = s.iloc[:5].std()
     expected_val_5 = (s.iloc[4] - mean_4) / std_4
     assert res.iloc[5] == pytest.approx(expected_val_5)
+
+
+# ---------------------------------------------------------------------------
+# rolling_autocorr()
+# ---------------------------------------------------------------------------
+
+
+def _reference_autocorr(series: pd.Series, window: int, min_periods: int) -> pd.Series:
+    """Slow-but-explicit lag-1 rolling autocorrelation reference implementation."""
+    return (
+        series.rolling(window, min_periods=min_periods)
+        .apply(lambda x: x.autocorr(lag=1) if len(x) > 5 else np.nan, raw=False)
+        .shift(1)
+    )
+
+
+class TestRollingAutocorr:
+    def test_matches_reference_on_clean_data(self):
+        rng = np.random.default_rng(7)
+        s = pd.Series(rng.normal(0.0, 0.01, 300))
+        res = rolling_autocorr(s, window=20, min_periods=15)
+        ref = _reference_autocorr(s, window=20, min_periods=15)
+        assert res.isna().equals(ref.isna())
+        np.testing.assert_allclose(res, ref, atol=1e-12, equal_nan=True)
+
+    def test_matches_reference_with_leading_nan(self):
+        rng = np.random.default_rng(7)
+        s = pd.Series(rng.normal(0.0, 0.01, 300))
+        s.iloc[0] = np.nan
+        res = rolling_autocorr(s, window=20, min_periods=15)
+        ref = _reference_autocorr(s, window=20, min_periods=15)
+        assert res.isna().equals(ref.isna())
+        np.testing.assert_allclose(res, ref, atol=1e-12, equal_nan=True)
+
+    def test_leakage_free_shifted_by_one_day(self):
+        s = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0] * 20)
+        res = rolling_autocorr(s, window=20, min_periods=15)
+        manual = s.iloc[0:20].autocorr(lag=1)
+        assert res.iloc[20] == pytest.approx(manual)
+
+    def test_constant_series_returns_nan(self):
+        s = pd.Series([3.0] * 100)
+        res = rolling_autocorr(s, window=20, min_periods=15)
+        assert res.isna().all()
+
+    def test_partial_constant_run_matches_reference(self):
+        rng = np.random.default_rng(11)
+        s = pd.Series(rng.normal(0.0, 0.01, 120))
+        s.iloc[10:60] = 3.0
+        res = rolling_autocorr(s, window=20, min_periods=15)
+        ref = _reference_autocorr(s, window=20, min_periods=15)
+        assert res.isna().equals(ref.isna())
+        assert np.isfinite(res.dropna()).all()
+
+    def test_min_periods_enforcement(self):
+        s = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0] * 20)
+        res = rolling_autocorr(s, window=20, min_periods=15)
+        assert res.iloc[:15].isna().all()
+        assert pd.notna(res.dropna().iloc[0])
+
+    def test_rich_feature_set_uses_vectorised_autocorr(self):
+        df = _base_df(120)
+        out = make_features(df, feature_set="vol_rich")
+        ref = _reference_autocorr(out["ret"], window=20, min_periods=15)
+        assert "ret_autocorr_20d" in out.columns
+        assert out["ret_autocorr_20d"].isna().equals(ref.isna())
+        np.testing.assert_allclose(out["ret_autocorr_20d"], ref, atol=1e-12, equal_nan=True)

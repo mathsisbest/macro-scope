@@ -48,6 +48,30 @@ def rolling_zscore(series: pd.Series, window: int, min_periods: int | None = Non
     return ((series - mean) / std).shift(1)
 
 
+def rolling_autocorr(series: pd.Series, window: int, min_periods: int | None = None) -> pd.Series:
+    """Vectorised lag-1 rolling autocorrelation, shifted by 1 day (leakage-free).
+
+    Equivalent to ``series.rolling(window, min_periods).apply(Series.autocorr)`` but uses
+    pandas' C-accelerated rolling correlation instead of a Python per-window loop.  A lag-1
+    autocorrelation over ``window`` observations uses the ``window - 1`` consecutive pairs
+    ``(x_t, x_{t-1})``, so the correlation is computed between a ``window - 1`` window of
+    ``series.shift(1)`` and the same window of ``series`` — an exact match to ``autocorr``.
+
+    Parameters
+    ----------
+    series:
+        Input pandas Series.
+    window:
+        Rolling window size.
+    min_periods:
+        Minimum number of observations required to have a value.
+    """
+    corr_window = window - 1
+    corr_min_periods = min_periods - 1 if min_periods is not None else corr_window
+    rolled = series.shift(1).rolling(corr_window, min_periods=corr_min_periods).corr(series)
+    return rolled.shift(1).replace([np.inf, -np.inf], np.nan)
+
+
 def feature_columns(feature_set: str = "default") -> list[str]:
     """Return the ordered list of feature column names.
 
@@ -600,11 +624,7 @@ def _add_rich_features(
     ret_std_20d = ret.rolling(20, min_periods=10).std()
     out["ret_trend_strength"] = (ret_mean_20d.abs() / ret_std_20d.replace(0, np.nan)).shift(1)
 
-    out["ret_autocorr_20d"] = (
-        ret.rolling(20, min_periods=15)
-        .apply(lambda x: x.autocorr(lag=1) if len(x) > 5 else np.nan, raw=False)
-        .shift(1)
-    )
+    out["ret_autocorr_20d"] = rolling_autocorr(ret, window=20, min_periods=15)
 
     if "yc_slope_zscore_60d" in out.columns and "vix_level_lag1" in out.columns:
         out["yc_slope_x_vix"] = out["yc_slope_zscore_60d"] * out["vix_level_lag1"]
