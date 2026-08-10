@@ -380,6 +380,15 @@ class TestRollingAutocorr:
         res = rolling_autocorr(s, window=20, min_periods=15)
         assert res.isna().all()
 
+    def test_partial_constant_run_matches_reference(self):
+        rng = np.random.default_rng(11)
+        s = pd.Series(rng.normal(0.0, 0.01, 120))
+        s.iloc[10:60] = 3.0
+        res = rolling_autocorr(s, window=20, min_periods=15)
+        ref = _reference_autocorr(s, window=20, min_periods=15)
+        assert res.isna().equals(ref.isna())
+        assert np.isfinite(res.dropna()).all()
+
     def test_min_periods_enforcement(self):
         s = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0] * 20)
         res = rolling_autocorr(s, window=20, min_periods=15)
