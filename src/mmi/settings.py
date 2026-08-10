@@ -6,16 +6,19 @@ Using pydantic-settings keeps config validated, documented and testable — no l
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import Field
+from pydantic import Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Repo root resolved from this file: src/mmi/settings.py -> parents[2] == repo root.
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+_settings_log = logging.getLogger("mmi.settings")
 
 
 class Settings(BaseSettings):
@@ -62,6 +65,36 @@ class Settings(BaseSettings):
 
     # Behaviour
     log_level: str = Field(default="INFO", alias="MMI_LOG_LEVEL")
+    # Bootstrap resamples for the portfolio backtest (GO_LIVE_PLAN D1). Lower for fast local
+    # tuning; never commit a data/public snapshot produced with n_boot < 2000.
+    portfolio_n_boot: int = Field(default=2000, alias="MMI_PORTFOLIO_N_BOOT")
+    # Fail-loud size cap (bytes) for snapshot Parquet exports (GO_LIVE_PLAN D6): prevents
+    # accidental commits of oversized data. Remedy is a new downsampled dbt mart, never a
+    # trimmed export.
+    snapshot_max_bytes: int = Field(default=12_000_000, alias="MMI_SNAPSHOT_MAX_BYTES")
+
+    @field_validator("portfolio_n_boot", "snapshot_max_bytes", mode="before")
+    @classmethod
+    def _defensive_positive_int(cls, raw: Any, info: ValidationInfo) -> int:
+        """Warn and fall back to the field default for non-integer / non-positive env values.
+
+        These knobs were historically parsed defensively at the call site; a fat-fingered
+        env value must warn and keep the run going, never crash the overnight cron.
+        """
+        field = cls.model_fields[info.field_name or ""]
+        try:
+            parsed = int(raw)
+        except (TypeError, ValueError):
+            parsed = 0
+        if parsed > 0:
+            return parsed
+        _settings_log.warning(
+            "%s=%r is not a valid positive integer; falling back to default %d",
+            field.alias,
+            raw,
+            field.default,
+        )
+        return field.default
 
     @property
     def use_motherduck(self) -> bool:
