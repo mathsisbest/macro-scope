@@ -298,10 +298,9 @@ def _write_snapshot_manifest(out_dir: Path, manifest: dict) -> None:
 
 def cmd_snapshot(_: argparse.Namespace) -> int:
     """Export every table in the marts schema to Parquet for the public demo."""
-    import os
     import sys
 
-    from mmi.settings import settings
+    from mmi.settings import Settings, settings
 
     out_dir = settings.snapshot_dir
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -314,26 +313,7 @@ def cmd_snapshot(_: argparse.Namespace) -> int:
 
     log.info("snapshot: exported %d marts tables to %s", len(tables), out_dir)
 
-    default_max_bytes = 12_000_000
-    raw_max = os.environ.get("MMI_SNAPSHOT_MAX_BYTES")
-    max_bytes = default_max_bytes
-    if raw_max is not None:
-        try:
-            parsed_max = int(raw_max)
-            if parsed_max > 0:
-                max_bytes = parsed_max
-            else:
-                log.warning(
-                    "MMI_SNAPSHOT_MAX_BYTES=%d must be > 0; using default %d",
-                    parsed_max,
-                    default_max_bytes,
-                )
-        except ValueError:
-            log.warning(
-                "MMI_SNAPSHOT_MAX_BYTES=%r is not an integer; using default %d",
-                raw_max,
-                default_max_bytes,
-            )
+    max_bytes = Settings().snapshot_max_bytes
 
     try:
         total_bytes = _total_parquet_bytes(out_dir)
@@ -444,36 +424,15 @@ def _run_single_portfolio_window(
 
 def cmd_portfolio(_: argparse.Namespace) -> int:
     """Backtest the strategies per window, landing returns in raw.portfolio_*."""
-    import os
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     from mmi.ingestion import DuckDBLoader
     from mmi.ingestion.loader import reset_portfolio_raw_tables
     from mmi.portfolio import compute, windows
     from mmi.portfolio.stats import paired_btc_effect
-    from mmi.settings import load_assets
+    from mmi.settings import Settings, load_assets
 
-    default_n_boot = 2000
-    raw_n_boot = os.environ.get("MMI_PORTFOLIO_N_BOOT")
-    n_boot = default_n_boot
-    if raw_n_boot is not None:
-        try:
-            parsed_n_boot = int(raw_n_boot)
-        except ValueError:
-            log.warning(
-                "MMI_PORTFOLIO_N_BOOT=%r is not an integer; falling back to %d",
-                raw_n_boot,
-                default_n_boot,
-            )
-        else:
-            if parsed_n_boot > 0:
-                n_boot = parsed_n_boot
-            else:
-                log.warning(
-                    "MMI_PORTFOLIO_N_BOOT=%d must be > 0; falling back to %d",
-                    parsed_n_boot,
-                    default_n_boot,
-                )
+    n_boot = Settings().portfolio_n_boot
 
     with connect() as con:
         loader = DuckDBLoader(con)
