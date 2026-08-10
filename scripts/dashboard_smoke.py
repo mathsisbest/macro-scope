@@ -12,6 +12,33 @@ from dashboard.components import charts
 
 assert data.db_exists(), "db_exists() is False — the marts DB is missing"
 
+
+def _synthetic_return_pairs(pf: pd.DataFrame) -> pd.DataFrame:
+    """Bootstrap a two-strategy return-pairs frame for the smoke when the mart cannot supply one.
+
+    Seeded data can hold a single strategy per window (no pairs); we then clone the window with a
+    small perturbation so the real stats pipeline (pivot -> block bootstrap -> paired CI) is still
+    exercised end to end. Empty when there is no portfolio data at all.
+    """
+    from mmi.portfolio.stats import bootstrap_strategy_return_stats
+
+    if pf.empty:
+        return pd.DataFrame()
+    if pf["strategy"].nunique() >= 2:
+        _, pairs = bootstrap_strategy_return_stats(
+            pf[["strategy", "date", "daily_return"]], n_boot=200
+        )
+        if not pairs.empty:
+            return pairs
+    twin = pf.copy()
+    twin["daily_return"] = pd.to_numeric(twin["daily_return"], errors="coerce").fillna(0.0) + 0.001
+    twin["strategy"] = twin["strategy"] + "_synthetic_twin"
+    cols = ["strategy", "date", "daily_return"]
+    both = pd.concat([pf[cols], twin[cols]])
+    _, pairs = bootstrap_strategy_return_stats(both, n_boot=200)
+    return pairs
+
+
 # Provenance accessors (scope 5): must not raise and must return sane types/values.
 assert isinstance(data.data_as_of(), str), "data_as_of() must return a str"
 assert data.is_sample_data() in (True, False, None), "is_sample_data() must be tri-state"
@@ -48,7 +75,22 @@ if not pf.empty:
     charts.portfolio_drawdown_chart(pf)
     charts.portfolio_sharpe_chart(pf)
     charts.portfolio_summary(pf)
-    print(f"portfolio read-path OK ({pf['strategy'].nunique()} strategies)")
+    # Return-significance read-path: the dashboard's paired bootstrap on annualised returns runs
+    # off the same mart frame, so its pure function + verdict builders must stay live.
+    ret_pairs = _synthetic_return_pairs(pf)
+    assert not ret_pairs.empty
+    assert {
+        "strategy_a",
+        "strategy_b",
+        "ann_return_diff",
+        "diff_lo",
+        "diff_hi",
+        "p_value",
+        "distinguishable",
+    } <= set(ret_pairs.columns)
+    charts.portfolio_return_pairs_table(ret_pairs)
+    assert isinstance(charts.return_significance_verdict(ret_pairs), str)
+    print(f"portfolio read-path OK ({pf['strategy'].nunique()} strategies, return CI live)")
 
 # Bootstrap scorecard read-path + builders (the uncertainty-quantification marts).
 stats = data.portfolio_strategy_stats(window_id)

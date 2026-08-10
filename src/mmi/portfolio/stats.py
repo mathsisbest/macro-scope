@@ -57,6 +57,45 @@ def _bootstrap_sharpe(returns: np.ndarray, idx: np.ndarray) -> np.ndarray:
     return out
 
 
+def annualised_return(returns: np.ndarray) -> float:
+    """Annualised geometric return (252d compounding) — ``(prod(1+r))**(252/n) − 1``.
+
+    ``0.0`` when there is nothing to compound (empty series); ``-1.0`` on a total loss (a resampled
+    block containing a −100% day), where the growth factor is not positive and the power is
+    undefined.
+    """
+    if len(returns) == 0:
+        return 0.0
+    growth = float(np.prod(1.0 + returns))
+    if not np.isfinite(growth) or growth <= 0.0:
+        return -1.0
+    return growth ** (TRADING_DAYS / len(returns)) - 1.0
+
+
+def _bootstrap_ann_return(returns: np.ndarray, idx: np.ndarray) -> np.ndarray:
+    """Annualised geometric return for each bootstrap resample (``idx`` is ``n_boot x n``)."""
+    samples = returns[idx]
+    n = samples.shape[1]
+    growth = np.prod(1.0 + samples, axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = np.where(growth > 0.0, growth ** (TRADING_DAYS / n) - 1.0, -1.0)
+    return out
+
+
+def bootstrap_p_value(diff: np.ndarray) -> float:
+    """Two-sided bootstrap p-value for H0: true difference = 0, percentile-CI consistent.
+
+    ``2 * min(share of replicates <= 0, share of replicates >= 0)`` — the test matching the
+    percentile CI exactly: ``distinguishable`` (CI excludes zero) holds iff this p-value < (1 - ci).
+    A degenerate all-zero difference gives 1.0 (no evidence), never NaN.
+    """
+    if diff.size == 0:
+        return 1.0
+    share_le = float((diff <= 0).mean())
+    share_ge = float((diff >= 0).mean())
+    return min(1.0, 2.0 * min(share_le, share_ge))
+
+
 def _invested(wide: pd.DataFrame) -> pd.DataFrame:
     """Drop the leading warm-up rows where every strategy is still in cash (all-zero returns)."""
     invested = (wide != 0).any(axis=1).cummax()
@@ -201,6 +240,88 @@ def bootstrap_strategy_stats(
                     "sharpe_diff": point[a] - point[b],
                     "diff_lo": lo,
                     "diff_hi": hi,
+                    "distinguishable": bool(lo > 0.0 or hi < 0.0),
+                }
+            )
+    return per_strategy, pd.DataFrame(pairs)
+
+
+def bootstrap_strategy_return_stats(
+    returns_long: pd.DataFrame,
+    *,
+    n_boot: int = 2000,
+    ci: float = 0.90,
+    avg_block: int = 21,
+    seed: int = 12345,
+    window: str = windows.DEFAULT_WINDOW,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Bootstrap annualised-return CIs per strategy + pairwise difference CIs (with p-values).
+
+    The annualised-return mirror of :func:`bootstrap_strategy_stats`: ONE block-bootstrap index
+    draw is applied to every strategy (same resampled dates), so each difference CI accounts for
+    the strategies' cross-correlation — the honest answer to "is the return gap real?" for the
+    cumulative-return comparisons in the portfolio tab.
+
+    ``returns_long``: ``[strategy, date, daily_return, ...]``. Returns ``(per_strategy, pairs)``:
+    - per_strategy: ``window_id, strategy, ann_return, ann_return_lo, ann_return_hi, n_obs, n_boot,
+      ci_pct, block_days``
+    - pairs: ``window_id, strategy_a, strategy_b, ann_return_a, ann_return_b, ann_return_diff,
+      diff_lo, diff_hi, p_value, distinguishable``. ``p_value`` is the percentile-consistent
+      two-sided bootstrap p-value (see :func:`bootstrap_p_value`), floored at ``1/n_boot`` — so a
+      value of ``1/n_boot`` reads as "no replicate crossed zero; p at most 1/n_boot", never an
+      overprecise 0.0. ``distinguishable`` = the difference CI excludes zero.
+    """
+    wide = returns_long.pivot_table(
+        index="date", columns="strategy", values="daily_return"
+    ).sort_index()
+    wide = _invested(wide.dropna(how="any"))  # common, invested dates -> paired resampling
+    strategies = list(wide.columns)
+    n = len(wide)
+    if n < 2:
+        raise ValueError(f"need >= 2 invested observations for a bootstrap, got {n}")
+
+    rng = np.random.default_rng(seed)
+    idx = stationary_bootstrap_indices(n, n_boot, avg_block, rng)
+    lo_q, hi_q = (1 - ci) / 2 * 100, (1 + ci) / 2 * 100
+
+    arrs = {s: wide[s].to_numpy(dtype=float) for s in strategies}
+    point = {s: annualised_return(arrs[s]) for s in strategies}
+    boot = {s: _bootstrap_ann_return(arrs[s], idx) for s in strategies}  # same idx => paired
+
+    per_strategy = pd.DataFrame(
+        [
+            {
+                "window_id": window,
+                "strategy": s,
+                "ann_return": point[s],
+                "ann_return_lo": float(np.percentile(boot[s], lo_q)),
+                "ann_return_hi": float(np.percentile(boot[s], hi_q)),
+                "n_obs": n,
+                "n_boot": n_boot,
+                "ci_pct": ci,
+                "block_days": avg_block,
+            }
+            for s in strategies
+        ]
+    )
+
+    pairs = []
+    for i in range(len(strategies)):
+        for j in range(i + 1, len(strategies)):
+            a, b = strategies[i], strategies[j]
+            diff = boot[a] - boot[b]  # paired difference (same resampled dates)
+            lo, hi = float(np.percentile(diff, lo_q)), float(np.percentile(diff, hi_q))
+            pairs.append(
+                {
+                    "window_id": window,
+                    "strategy_a": a,
+                    "strategy_b": b,
+                    "ann_return_a": point[a],
+                    "ann_return_b": point[b],
+                    "ann_return_diff": point[a] - point[b],
+                    "diff_lo": lo,
+                    "diff_hi": hi,
+                    "p_value": max(bootstrap_p_value(diff), 1.0 / n_boot),
                     "distinguishable": bool(lo > 0.0 or hi < 0.0),
                 }
             )

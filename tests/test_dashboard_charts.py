@@ -40,6 +40,75 @@ def test_verdict_handles_empty():
     assert "Not enough" in charts.distinguishability_verdict(_pairs([]))
 
 
+# --- annualised-return significance: the "is the return gap real?" surface -------------------
+
+_RETURN_COLS = [
+    "strategy_a",
+    "strategy_b",
+    "ann_return_a",
+    "ann_return_b",
+    "ann_return_diff",
+    "diff_lo",
+    "diff_hi",
+    "p_value",
+    "distinguishable",
+]
+
+
+def _return_pairs(rows: list) -> pd.DataFrame:
+    return pd.DataFrame(rows, columns=_RETURN_COLS)
+
+
+def test_return_pairs_table_labels_and_formats_columns():
+    table = charts.portfolio_return_pairs_table(
+        _return_pairs(
+            [
+                ["equal_weight", "sixty_forty", 0.08, 0.05, 0.03, 0.01, 0.05, 0.02, True],
+                ["risk_parity", "inverse_vol", 0.06, 0.07, -0.01, -0.03, 0.01, 0.6, False],
+            ]
+        )
+    )
+    assert list(table.columns) == [
+        "Δ Ann. return",
+        "CI low",
+        "CI high",
+        "p-value",
+        "Distinguishable",
+    ]
+    assert "Equal weight − 60/40 benchmark" in table.index  # labelled, not raw keys
+    assert table["p-value"].iloc[0] == 0.02
+
+
+def test_return_verdict_reports_nothing_distinguishable_honestly():
+    verdict = charts.return_significance_verdict(
+        _return_pairs(
+            [
+                ["equal_weight", "sixty_forty", 0.08, 0.05, 0.03, -0.01, 0.07, 0.2, False],
+                ["equal_weight", "inverse_vol", 0.08, 0.06, 0.02, -0.02, 0.06, 0.4, False],
+            ]
+        )
+    )
+    assert "None of the 2" in verdict and "within noise" in verdict
+
+
+def test_return_verdict_lists_only_distinguishable_pairs():
+    verdict = charts.return_significance_verdict(
+        _return_pairs(
+            [
+                ["equal_weight", "sixty_forty", 0.08, 0.04, 0.04, 0.01, 0.07, 0.005, True],
+                ["inverse_vol", "risk_parity", 0.06, 0.05, 0.01, -0.02, 0.04, 0.6, False],
+            ]
+        )
+    )
+    assert "1 of 2" in verdict and "p ≤ 0.005" in verdict
+    assert "Equal weight vs 60/40 benchmark" in verdict  # labelled
+    assert "Risk parity" not in verdict  # the indistinguishable pair is omitted
+
+
+def test_return_verdict_handles_empty():
+    assert "Not enough" in charts.return_significance_verdict(_return_pairs([]))
+
+
 # --- yield_curve_chart: canonical 10Y-3M when available, 10Y-2Y proxy fallback -----------------
 
 
