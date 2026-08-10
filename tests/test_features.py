@@ -87,6 +87,34 @@ class TestFeatureColumns:
         assert "breakeven_inflation_20d" in cols
         assert "spy_gld_spread_20d" in cols
 
+    def test_vol_rich_plus_no_duplicate_spread_features(self):
+        """spy_tlt_spread_20d was pruned: it was an exact duplicate of
+        equity_bond_spread_20d (identical formula, corr=1.0 on seed + live data)."""
+        cols = feature_columns("vol_rich_plus")
+        assert "equity_bond_spread_20d" in cols
+        assert "spy_tlt_spread_20d" not in cols
+
+    def test_vol_rich_plus_output_has_no_exact_duplicate_features(self):
+        """Structural guard: no two feature columns in the vol_rich_plus output
+        frame may be numerically identical (exact linear duplicates)."""
+        df = _base_df(150)
+        dates = pd.date_range("2024-01-01", periods=150, freq="D")
+        df["date"] = dates
+        np.random.seed(7)
+        asset_dfs = {
+            "GLD": pd.DataFrame({"date": dates, "daily_return": np.random.normal(0, 0.01, 150)}),
+            "TLT": pd.DataFrame({"date": dates, "daily_return": np.random.normal(0, 0.01, 150)}),
+        }
+        out = make_features(df, feature_set="vol_rich_plus", asset_dfs=asset_dfs)
+        cols = [c for c in feature_columns("vol_rich_plus") if c in out.columns]
+        for i in range(len(cols)):
+            for j in range(i + 1, len(cols)):
+                a, b = out[cols[i]], out[cols[j]]
+                mask = a.notna() & b.notna()
+                assert not (mask.sum() > 20 and np.allclose(a[mask].values, b[mask].values)), (
+                    f"{cols[i]} == {cols[j]} (exact duplicate)"
+                )
+
     def test_mom_rev_feature_set(self):
         cols = feature_columns("mom_rev")
         assert "mom_21d" in cols

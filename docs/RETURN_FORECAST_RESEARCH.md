@@ -39,10 +39,11 @@ marginal value — not transformative.
 | Set | Features | Description |
 |-----|----------|-------------|
 | `default` | 10 | Lagged returns + rolling mean/std |
-| `vol` | 15 | + Garman-Klass vol + HAR cascade |
-| `vol_medium` | ~27 | + macro subset + key rich features |
-| `vol_rich` | 50 | Full: kurtosis, skewness, vol-of-vol, correlations, calendar, interactions |
-| `vol_macro` | ~35 | + yield curve, VIX, NFCI, oil, dollar |
+| `vol` | 16 | + Garman-Klass vol + HAR cascade |
+| `vol_medium` | ~49 | + macro subset + key rich features |
+| `vol_rich` | 68 | Full: kurtosis, skewness, vol-of-vol, correlations, calendar, interactions |
+| `vol_rich_plus` | ~98 | + FRED macro, breakeven inflation, recession prob, cross-asset spreads |
+| `vol_macro` | ~39 | + yield curve, VIX, NFCI, oil, dollar |
 
 ### 2.3 Target Types
 
