@@ -14,6 +14,7 @@ TAB_MODULES = {
     "dashboard.tabs.markets": "render_markets_tab",
     "dashboard.tabs.macro": "render_macro_tab",
     "dashboard.tabs.ml_forecast": "render_ml_tab",
+    "dashboard.tabs.ml_scenario": "render_ml_scenario_tab",
     "dashboard.tabs.portfolio": "render_portfolio_tab",
 }
 
