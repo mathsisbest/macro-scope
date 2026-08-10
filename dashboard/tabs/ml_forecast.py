@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 from dashboard import data
 from dashboard.components import charts, glossary
+from dashboard.tabs.ml_scenario import render_ml_scenario_tab
 
 
 def render_ml_tab(chart_wrapper) -> None:
@@ -85,6 +86,8 @@ def render_ml_tab(chart_wrapper) -> None:
                 hide_index=True,
                 width="stretch",
             )
+
+        render_ml_scenario_tab(chart_wrapper)
 
         st.divider()
         st.subheader("🎯 Active Market & Model Signals")

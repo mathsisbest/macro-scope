@@ -114,25 +114,3 @@ def render_macro_tab(rng_start: str | None, is_sample: bool | None, chart_wrappe
         if rr_caption:
             st.caption(rr_caption)
         glossary.glossary_tooltip("yield_curve_spread")
-
-    st.divider()
-    st.subheader("⚡ Interactive Macro Scenario Stress-Tester")
-    st.caption(
-        "Simulate custom macro shocks (Fed Funds rate shift, VIX spike) "
-        "on 20-day predicted asset returns."
-    )
-    sim_col1, sim_col2 = st.columns(2)
-    with sim_col1:
-        rate_shock = st.slider(
-            "Fed Funds Rate Shift (bps)", -200, +200, 0, step=25, key="macro_rate_shock"
-        )
-    with sim_col2:
-        vix_shock = st.slider("VIX Index Shift", -10, +20, 0, step=1, key="macro_vix_shock")
-
-    sim_fc = charts.return_forecast_table(data.ml_forecast())
-    if not sim_fc.empty:
-        chart_wrapper(
-            charts.scenario_simulation_chart(
-                sim_fc, delta_rate_bps=rate_shock, delta_vix=vix_shock, height=300
-            )
-        )
