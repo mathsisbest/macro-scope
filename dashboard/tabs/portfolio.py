@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 from dashboard import data
-from dashboard.components import charts
+from dashboard.components import charts, glossary
 
 _WINDOW_LABELS = {
     "ex_btc_2002": "~2004–present · ex-BTC",
@@ -45,6 +45,16 @@ def render_portfolio_tab(rng_start: str | None, chart_wrapper) -> None:
     st.caption(
         "Walk-forward backtest: three allocation strategies vs a 60/40 benchmark — same dates, "
         "monthly rebalancing and round-trip costs, so the comparison is like-for-like."
+    )
+    st.markdown(
+        " · ".join(
+            [
+                glossary.tooltip_markdown("risk_parity"),
+                glossary.tooltip_markdown("benchmark_6040"),
+                glossary.tooltip_markdown("walk_forward"),
+            ]
+        ),
+        unsafe_allow_html=True,
     )
     pairs = data.portfolio_strategy_pairs(window_id)
     if not pairs.empty:
@@ -95,6 +105,7 @@ def render_portfolio_tab(rng_start: str | None, chart_wrapper) -> None:
                 f"Stationary block-bootstrap ({stats['n_boot'].iloc[0]:,} resamples, "
                 f"{stats['n_obs'].iloc[0]} obs). Distinguishable = Sharpe-diff CI excludes 0."
             )
+            glossary.glossary_tooltip("bootstrap_ci")
 
     attr = data.portfolio_attribution(window_id)
     if not attr.empty:
@@ -111,6 +122,7 @@ def render_portfolio_tab(rng_start: str | None, chart_wrapper) -> None:
             st.caption(
                 "Market regime = SPY 20-day-vol terciles; stats over each strategy's invested days."
             )
+            glossary.glossary_tooltip("vol_regime")
 
     gate = data.portfolio_ml_gate(window_id, rng_start)
     if not gate.empty:

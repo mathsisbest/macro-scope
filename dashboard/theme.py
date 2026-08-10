@@ -177,6 +177,18 @@ def inject_css() -> None:
             max-width: 100%;
             overflow-x: auto;
         }}
+        /* Educational tooltips: small "?" chip whose native title attribute carries the
+           glossary definition on hover. The Concept-glossary expander is the
+           mobile/keyboard path, since native title tooltips are hover-only. */
+        .glossary-q {{
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 1.15em; height: 1.15em; margin-left: 0.3rem;
+            border-radius: 50%;
+            background: {PALETTE["panel"]}; border: 1px solid {PALETTE["grid"]};
+            color: {PALETTE["accent"]};
+            font-size: 0.78em; font-weight: 700; line-height: 1;
+            cursor: help; vertical-align: middle; user-select: none;
+        }}
 
         /* ---- Mobile responsive ---- */
         @media (max-width: 768px) {{

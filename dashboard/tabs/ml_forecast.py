@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from dashboard import data
-from dashboard.components import charts
+from dashboard.components import charts, glossary
 
 
 def render_ml_tab(chart_wrapper) -> None:
@@ -27,6 +27,10 @@ def render_ml_tab(chart_wrapper) -> None:
         "Autotuned Gradient Boosting, LightGBM, and Regularized models trained on 75+ macro, "
         "volatility, and cross-asset ratio spread features (vol_rich_plus) over standardized "
         "20-day (1-month) forward return horizons."
+    )
+    st.markdown(
+        glossary.tooltip_markdown("vol_rich_plus"),
+        unsafe_allow_html=True,
     )
     st.info(
         "ℹ️ All forecasts target a standardized 20-day (1-month) horizon, "
@@ -88,6 +92,15 @@ def render_ml_tab(chart_wrapper) -> None:
             "Walk-forward out-of-sample evaluated models. Green = Deployed tilt (OOS R² > 0); "
             "Yellow = Directional / Regime Only; Red = Gated Out."
         )
+        st.markdown(
+            " · ".join(
+                [
+                    glossary.tooltip_markdown("oos_r2"),
+                    glossary.tooltip_markdown("skill_gate"),
+                ]
+            ),
+            unsafe_allow_html=True,
+        )
         fc_table = core_fc
         metrics_data = data.model_metrics()
         if not fc_table.empty:
@@ -135,6 +148,7 @@ def render_ml_tab(chart_wrapper) -> None:
 
         st.divider()
         st.subheader("⚡ Current Volatility Regimes")
+        glossary.glossary_tooltip("vol_regime")
         reg_cols = st.columns(3)
         for idx, reg_sym in enumerate(["SPY", "TLT", "BTC"]):
             rv = data.regimes(reg_sym)
@@ -150,6 +164,16 @@ def render_ml_tab(chart_wrapper) -> None:
             st.caption(
                 "Per-asset diagnostics from `marts.model_metrics`: IC, R², direction "
                 "accuracy, Sharpe, and observation count."
+            )
+            st.markdown(
+                " · ".join(
+                    [
+                        glossary.tooltip_markdown("ic"),
+                        glossary.tooltip_markdown("direction_accuracy"),
+                        glossary.tooltip_markdown("sharpe"),
+                    ]
+                ),
+                unsafe_allow_html=True,
             )
             chart_wrapper(charts.return_performance_chart(perf, height=320))
             perf_fmt = perf.copy()
@@ -211,6 +235,7 @@ def render_ml_tab(chart_wrapper) -> None:
             "Shows which top macro indicators "
             "(Shiller CAPE, Yield Curve, VIX, NFCI) drive predictions per asset."
         )
+        glossary.glossary_tooltip("cape")
         feat_syms = sorted(metrics.loc[metrics["model"] == "return_gb", "symbol"].dropna().unique())
         if feat_syms:
             spy_idx = feat_syms.index("SPY") if "SPY" in feat_syms else 0
