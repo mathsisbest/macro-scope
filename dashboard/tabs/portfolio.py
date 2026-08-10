@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+import plotly.graph_objects as go
 import streamlit as st
 from dashboard import data
 from dashboard.components import charts
 
-_WINDOW_LABELS = {
+_WINDOW_LABELS: dict[str, str] = {
     "ex_btc_2002": "~2004–present · ex-BTC",
     "ex_btc_2015": "2015–present · ex-BTC (BTC era)",
     "inc_btc_2015": "2015–present · incl. BTC",
 }
 
 
-def render_portfolio_tab(rng_start: str | None, chart_wrapper) -> None:
+def render_portfolio_tab(rng_start: str | None, chart_wrapper: Callable[[go.Figure], None]) -> None:
     """Render the Portfolio tab."""
     present_windows = data.portfolio_windows()
     if not present_windows:

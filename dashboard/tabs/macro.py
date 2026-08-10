@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+import plotly.graph_objects as go
 import streamlit as st
 from dashboard import data
 from dashboard.components import charts
@@ -23,7 +26,9 @@ def _fmt_macro_delta(chg: float, u: str) -> str:
     return f"{chg:+,.2f}"
 
 
-def render_macro_tab(rng_start: str | None, is_sample: bool | None, chart_wrapper) -> None:
+def render_macro_tab(
+    rng_start: str | None, is_sample: bool | None, chart_wrapper: Callable[[go.Figure], None]
+) -> None:
     """Render the Macro tab."""
     catalog = data.macro_catalog()
     present = set(data.macro_ids())

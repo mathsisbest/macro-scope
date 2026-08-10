@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 from dashboard import data
 from dashboard.components import charts
 
 
-def render_ml_tab(chart_wrapper) -> None:
+def render_ml_tab(chart_wrapper: Callable[[go.Figure], None]) -> None:
     """Render the ML Forecast tab."""
     metrics = data.model_metrics()
     fc = data.ml_forecast()
@@ -35,7 +38,7 @@ def render_ml_tab(chart_wrapper) -> None:
         "reflect strict walk-forward performance."
     )
 
-    CORE_SYMBOLS = ["SPY", "QQQ", "GLD", "TLT", "BTC"]
+    CORE_SYMBOLS: list[str] = ["SPY", "QQQ", "GLD", "TLT", "BTC"]
     return_fc = charts.return_forecast_table(fc)
     core_fc = (
         return_fc[return_fc["symbol"].isin(CORE_SYMBOLS)] if not return_fc.empty else return_fc
@@ -91,7 +94,7 @@ def render_ml_tab(chart_wrapper) -> None:
         fc_table = core_fc
         metrics_data = data.model_metrics()
         if not fc_table.empty:
-            tilts = []
+            tilts: list[dict[str, str]] = []
             for row in fc_table.itertuples(index=False):
                 sym = row.symbol
                 pred = float(row.predicted_return)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import date, timedelta
 from pathlib import Path
+from typing import TypedDict
 
 import duckdb
 import pandas as pd
@@ -50,7 +51,7 @@ def _snapshot_connection() -> duckdb.DuckDBPyConnection:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def query(sql: str, params: tuple | None = None) -> pd.DataFrame:
+def query(sql: str, params: tuple[object, ...] | None = None) -> pd.DataFrame:
     """Run a read-only query against the live DB, or the Parquet snapshot in snapshot mode.
 
     A *missing table* (e.g. ML/AI marts before those steps run) returns an empty frame.
@@ -71,7 +72,22 @@ def query(sql: str, params: tuple | None = None) -> pd.DataFrame:
         con.close()
 
 
-def snapshot_manifest() -> dict | None:
+#: Shape of ``data/public/_manifest.json`` (written by ``mmi snapshot``). All keys optional —
+#: ``generated_at`` is only present once the manifest has been written at all, and legacy
+#: manifests may predate the per-table ``rows`` count.
+#: Functional form (not class syntax) because mypy runs in python_version=3.10 mode, where
+#: ``total=False`` / ``NotRequired`` class syntax is unavailable.
+SnapshotManifest = TypedDict(  # noqa: UP013
+    "SnapshotManifest",
+    {
+        "generated_at": str,
+        "rows": dict[str, int],
+    },
+    total=False,
+)
+
+
+def snapshot_manifest() -> SnapshotManifest | None:
     """Read the snapshot manifest if in snapshot mode, else ``None``.
 
     ``_manifest.json`` is written by ``mmi snapshot`` alongside the Parquet files.
@@ -98,7 +114,7 @@ def range_start(preset: str | None, anchor: str) -> str | None:
     """Map a range preset to an ISO start-date floor relative to ``anchor`` (the latest data date,
     ``"YYYY-MM-DD"``). Returns ``None`` for "Max"/unknown/empty (no floor). Pure + unit-tested; the
     time-series accessors apply it as ``date >= ?`` so one global selector filters every chart."""
-    if not anchor or preset in (None, "Max"):
+    if not anchor or preset is None or preset == "Max":
         return None
     try:
         end = date.fromisoformat(anchor[:10])
@@ -230,7 +246,16 @@ def macro_ids() -> list[str]:
     return df["series_id"].tolist() if not df.empty else []
 
 
-def macro_catalog() -> list[dict]:
+class MacroCatalogItem(TypedDict):
+    """Display metadata for one configured macro series (one ``macro_catalog()`` row)."""
+
+    id: str
+    label: str
+    category: str
+    units: str
+
+
+def macro_catalog() -> list[MacroCatalogItem]:
     """The configured macro series with display metadata — ``[{id, label, category, units}, ...]``
     in config order. Drives the Macro tab's category grouping + friendly labels (the mart only
     stores the raw ``series_id``). Tolerates legacy entries missing category/units."""
@@ -238,16 +263,19 @@ def macro_catalog() -> list[dict]:
         items = load_assets().get("macro", []) or []
     except Exception:  # noqa: BLE001 — a malformed/absent config must not crash the dashboard
         return []
-    out: list[dict] = []
+    out: list[MacroCatalogItem] = []
     for it in items:
         if not isinstance(it, dict) or "id" not in it:
             continue
+        # Copy so mypy's ``in``-guard narrowing (which makes ``.get()`` return ``Any | None``)
+        # doesn't bleed into the dict lookups below.
+        raw = dict(it)
         out.append(
             {
-                "id": it["id"],
-                "label": it.get("label", it["id"]),
-                "category": it.get("category", "Other"),
-                "units": it.get("units", ""),
+                "id": raw["id"],
+                "label": raw.get("label", raw["id"]),
+                "category": raw.get("category", "Other"),
+                "units": raw.get("units", ""),
             }
         )
     return out
@@ -380,7 +408,7 @@ def macro_source_caption(is_sample: bool | None) -> str:
 
 # Expected update frequency per FRED series (in days).
 # Daily series should update within 3 business days; weekly within 10; monthly within 45.
-_FREQUENCY_DAYS = {
+_FREQUENCY_DAYS: dict[str, int] = {
     "DGS10": 3,
     "DGS2": 3,
     "DGS3MO": 3,
@@ -484,7 +512,7 @@ def source_freshness() -> pd.DataFrame:
         ]
     )
 
-    rows = []
+    rows: list[dict[str, str | int | None]] = []
     for _, row in df.iterrows():
         sid = row["series_id"]
         latest = pd.Timestamp(row["latest_date"])
@@ -530,7 +558,7 @@ def mart_summary() -> pd.DataFrame:
         "ml_forecast",
         "market_brief",
     ]
-    rows = []
+    rows: list[dict[str, str | int | None]] = []
     for table in tables:
         try:
             df = query(f"select count(*) as n from marts.{table}")
