@@ -144,6 +144,158 @@ def _add_regime_shading(
 
 
 # ---------------------------------------------------------------------------
+# Chart annotations (P3-3.4) — pure, data-honest helpers
+# ---------------------------------------------------------------------------
+
+#: z-score threshold above which a VIX day counts as a spike (vs its full history).
+VIX_SPIKE_Z: float = 2.0
+#: Maximum VIX-spike annotations per chart — the most extreme days only, so a 30-year
+#: range stays readable instead of drawing one line per z>2 day.
+VIX_SPIKE_TOP_N: int = 8
+#: Minimum observations before a VIX z-score is considered a reliable reference.
+_VIX_Z_MIN_OBS: int = 30
+
+
+def regime_boundary_dates(
+    regime_df: pd.DataFrame | None,
+    start=None,
+    end=None,
+) -> pd.DataFrame:
+    """Dates where the volatility regime CHANGES vs the previous observation.
+
+    A boundary is a row whose ``regime`` differs from the immediately preceding row of
+    the (date-sorted, de-duplicated) frame — never invented: the first row (prior regime
+    unknown) is not a boundary, and transitions outside the provided frame are not
+    inferred. Optional ``start``/``end`` clip the result AFTER boundary detection, so a
+    boundary exactly at the window start is still found when the full series is passed.
+    Returns ``[date, regime]``; empty on ``None``/empty/malformed input. Pure + unit-tested.
+    """
+    cols = ["date", "regime"]
+    if regime_df is None or regime_df.empty or not {"date", "regime"} <= set(regime_df.columns):
+        return pd.DataFrame(columns=cols)
+    df = regime_df.dropna(subset=["date", "regime"]).sort_values("date").copy()
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    # One observation per date (keep the last); then a boundary = regime differs from the
+    # previous observation. The first row has no observable prior regime — not a boundary.
+    df = df.drop_duplicates(subset=["date"], keep="last")
+    regime = df["regime"].astype(str)
+    changed = regime != regime.shift(1)
+    changed.iloc[0] = False
+    boundaries = df.loc[changed, ["date", "regime"]].reset_index(drop=True)
+    if start is not None:
+        boundaries = boundaries[boundaries["date"] >= pd.Timestamp(start)]
+    if end is not None:
+        boundaries = boundaries[boundaries["date"] <= pd.Timestamp(end)]
+    return boundaries.reset_index(drop=True)
+
+
+def vix_spike_dates(
+    vix_df: pd.DataFrame | None,
+    threshold: float = VIX_SPIKE_Z,
+    top_n: int | None = VIX_SPIKE_TOP_N,
+    start=None,
+    end=None,
+) -> pd.DataFrame:
+    """Most extreme VIX days: full-history z-score above ``threshold``.
+
+    ``z = (value - mean) / std`` (ddof=1) over the WHOLE frame — a "VIX spike" is extreme
+    relative to its own history, so callers should pass the full-history series and clip
+    with ``start``/``end`` for the visible window. Days are clipped first, then ranked by
+    z-score desc and kept to ``top_n`` (``top_n=None`` = all), then sorted by date.
+    Honest no-trigger degradation: empty/malformed input, fewer than ``_VIX_Z_MIN_OBS``
+    usable observations, a zero-variance series, or no day above threshold → an empty
+    frame (no crash, no annotations). Returns ``[date, value, zscore]``. Pure + unit-tested.
+    """
+    cols = ["date", "value", "zscore"]
+    if vix_df is None or vix_df.empty or not {"date", "value"} <= set(vix_df.columns):
+        return pd.DataFrame(columns=cols)
+    df = vix_df.dropna(subset=["date"]).sort_values("date").copy()
+    values = pd.to_numeric(df["value"], errors="coerce")
+    mask = values.notna()
+    dates = df.loc[mask, "date"]
+    values = values[mask].astype(float)
+    if len(values) < _VIX_Z_MIN_OBS:
+        return pd.DataFrame(columns=cols)
+    mean, std = values.mean(), values.std(ddof=1)
+    if not (math.isfinite(mean) and math.isfinite(std) and std > 0):
+        return pd.DataFrame(columns=cols)
+    z = (values - mean) / std
+    spikes = pd.DataFrame(
+        {"date": dates.to_numpy(), "value": values.to_numpy(), "zscore": z.to_numpy()}
+    )
+    spikes = spikes[spikes["zscore"] > threshold]
+    if spikes.empty:
+        return spikes.reset_index(drop=True)
+    if start is not None:
+        spikes = spikes[spikes["date"] >= pd.Timestamp(start)]
+    if end is not None:
+        spikes = spikes[spikes["date"] <= pd.Timestamp(end)]
+    if spikes.empty:
+        return spikes.reset_index(drop=True)
+    if top_n is not None and top_n > 0:
+        spikes = spikes.nlargest(top_n, "zscore")
+    return spikes.sort_values("date").reset_index(drop=True)
+
+
+def oos_count_label(n_obs) -> str | None:
+    """'OOS n=3,298' — the walk-forward OOS observation count a metric is estimated on.
+
+    ``n_obs`` in ``model_metrics`` is the prediction count the walk-forward CV actually
+    scored (the count behind the skill gate's ``n_obs >= 252`` check). Returns ``None``
+    for missing/non-numeric/NaN/±inf/negative values so a call-site renders no label.
+    Pure + unit-tested.
+    """
+    try:
+        n = float(n_obs)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(n) or n < 0:
+        return None
+    return f"OOS n={int(n):,}"
+
+
+def _add_regime_boundary_annotations(fig: go.Figure, boundaries: pd.DataFrame) -> None:
+    """Dashed vertical line + regime label at each boundary date (no-op on empty).
+
+    Labels use the same regime→colour mapping as ``regime_chart``: Low=up, Medium=vol
+    (amber), High=down (red) — named tokens only, no inline hex.
+    """
+    colors = {"Low": PALETTE["up"], "Medium": SERIES_VOL, "High": PALETTE["down"]}
+    for row in boundaries.itertuples(index=False):
+        regime = str(row.regime)
+        fig.add_vline(x=row.date, line_color=PALETTE["muted"], line_dash="dash", line_width=1)
+        fig.add_annotation(
+            x=row.date,
+            y=1.0,
+            yref="paper",
+            text=regime,
+            showarrow=False,
+            yanchor="bottom",
+            font=dict(size=9, color=colors.get(regime, PALETTE["text"])),
+        )
+
+
+def _add_vix_spike_annotations(fig: go.Figure, spikes: pd.DataFrame) -> None:
+    """Dashed vertical line + 'VIX z=…' label at each spike date (no-op on empty).
+
+    The label carries the spike's own z-score, so the annotation is factual — it reports
+    how extreme the day was relative to the series' history, with no editorialising.
+    """
+    for row in spikes.itertuples(index=False):
+        fig.add_vline(x=row.date, line_color=PALETTE["muted"], line_dash="dash", line_width=1)
+        fig.add_annotation(
+            x=row.date,
+            y=1.0,
+            yref="paper",
+            text=f"VIX z={row.zscore:.1f}",
+            showarrow=False,
+            yanchor="bottom",
+            font=dict(size=9, color=PALETTE["down"]),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Markets tab
 # ---------------------------------------------------------------------------
 
@@ -572,7 +724,11 @@ def ratio_zscore_chart(
 
 
 def macro_chart(
-    df: pd.DataFrame, label: str, units: str = "", height: int | None = None
+    df: pd.DataFrame,
+    label: str,
+    units: str = "",
+    height: int | None = None,
+    spikes: pd.DataFrame | None = None,
 ) -> go.Figure:
     fig = go.Figure()
     # A sparse series — quarterly data, or any series viewed over a short date range — reads as a
@@ -591,6 +747,10 @@ def macro_chart(
         line=dict(color=PALETTE["accent"]),
         hovertemplate=f"%{{x|%Y-%m-%d}}: %{{y:,.2f}}{unit_suffix}<extra></extra>",
     )
+    # Notable-macro-event annotations (e.g. VIX spikes) — drawn only from dates the caller
+    # derived from data; None/empty degrades to the plain chart.
+    if spikes is not None and not spikes.empty and {"date", "zscore"} <= set(spikes.columns):
+        _add_vix_spike_annotations(fig, spikes)
     title = f"{label} · {units}" if units else label
     fig.update_layout(title=dict(text=title, font=_TITLE_FONT))
     _apply_axis_fonts(fig)
@@ -964,10 +1124,19 @@ def return_performance_table(metrics: pd.DataFrame) -> pd.DataFrame:
 
 
 def return_performance_chart(perf: pd.DataFrame, height: int = HEIGHT_MEDIUM) -> go.Figure:
-    """Grouped bars for the main per-asset return-model diagnostics."""
+    """Grouped bars for the main per-asset return-model diagnostics.
+
+    Skill-gate-relevant milestones (the ``return_forecast_skill_verdict`` criteria in
+    ``src/mmi/ml/skill_gate.py``) are annotated straight from the data: a ``R² > 0``
+    reference line on the y-axis, a ``dir-acc > 50%`` line on the y2 axis, and each
+    asset's walk-forward OOS observation count (``OOS n=…``, the count behind the
+    gate's ``n_obs >= 252`` check) above its R² bar. When ``n_obs`` is absent the
+    text labels are simply skipped — no crash, no fabricated annotation.
+    """
     if perf.empty:
         return style_fig(go.Figure(), height=height)
     fig = go.Figure()
+    oos_labels = [oos_count_label(v) for v in perf["n_obs"]] if "n_obs" in perf.columns else None
     fig.add_bar(
         x=perf["symbol"],
         y=perf["ic"],
@@ -979,6 +1148,9 @@ def return_performance_chart(perf: pd.DataFrame, height: int = HEIGHT_MEDIUM) ->
         y=perf["r2"],
         name="R²",
         marker_color=SERIES_RISK,
+        text=oos_labels,
+        textposition="outside",
+        textfont=dict(size=10, color=PALETTE["muted"]),
     )
     fig.add_scatter(
         x=perf["symbol"],
@@ -988,7 +1160,25 @@ def return_performance_chart(perf: pd.DataFrame, height: int = HEIGHT_MEDIUM) ->
         line=dict(color=SERIES_PRICE, width=2),
         yaxis="y2",
     )
-    fig.add_hline(y=0, line_color=PALETTE["grid"], line_width=1)
+    fig.add_hline(
+        y=0,
+        line_color=PALETTE["up"],
+        line_dash="dot",
+        annotation_text="skill gate: R² > 0",
+        annotation_font_color=PALETTE["up"],
+        annotation_font_size=10,
+        annotation_position="top left",
+    )
+    fig.add_hline(
+        y=0.50,
+        yref="y2",
+        line_color=PALETTE["up"],
+        line_dash="dot",
+        annotation_text="dir-acc gate: > 50%",
+        annotation_font_color=PALETTE["up"],
+        annotation_font_size=10,
+        annotation_position="bottom right",
+    )
     fig.update_layout(
         title=dict(text="Return model diagnostics by asset", font=_TITLE_FONT),
         barmode="group",
@@ -1375,8 +1565,24 @@ def rebase_cumulative(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def portfolio_cumulative_chart(df: pd.DataFrame, height: int = HEIGHT_TALL) -> go.Figure:
+def portfolio_cumulative_chart(
+    df: pd.DataFrame,
+    height: int = HEIGHT_TALL,
+    regime_df: pd.DataFrame | None = None,
+) -> go.Figure:
+    """Cumulative return by strategy, with optional volatility-regime boundary markers.
+
+    When ``regime_df`` (an ``fct_regime`` frame: ``[date, regime]``) is passed, a dashed
+    vertical line + regime label marks each observed regime boundary within the chart's
+    date range — only boundaries actually visible in the data are drawn (see
+    ``regime_boundary_dates``), so pass the full-history frame and let the helper clip.
+    ``None``/empty degrades to the plain chart with no markers.
+    """
     fig = _by_strategy(rebase_cumulative(df), "cumulative_return")
+    if regime_df is not None and not df.empty and "date" in df.columns:
+        lo = pd.Timestamp(df["date"].min())
+        hi = pd.Timestamp(df["date"].max())
+        _add_regime_boundary_annotations(fig, regime_boundary_dates(regime_df, start=lo, end=hi))
     fig.update_layout(
         title=dict(
             text="Cumulative return by strategy (vs 60/40 benchmark)",

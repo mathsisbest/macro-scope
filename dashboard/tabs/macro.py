@@ -89,7 +89,18 @@ def render_macro_tab(rng_start: str | None, is_sample: bool | None, chart_wrappe
                     if df.empty:
                         st.caption(f"{c['label']} — no data in this range")
                     else:
-                        chart_wrapper(charts.macro_chart(df, c["label"], c["units"], height=200))
+                        spikes = None
+                        if c["id"] == "VIXCLS":
+                            # A "VIX spike" is extreme relative to its FULL history — z-score the
+                            # whole series, then clip to the visible window for the chart.
+                            vix_full = data.macro("VIXCLS")
+                            if not vix_full.empty:
+                                spikes = charts.vix_spike_dates(vix_full, start=rng_start)
+                        chart_wrapper(
+                            charts.macro_chart(
+                                df, c["label"], c["units"], height=200, spikes=spikes
+                            )
+                        )
         macro_caption = data.macro_source_caption(is_sample)
         if macro_caption:
             st.caption(macro_caption)
