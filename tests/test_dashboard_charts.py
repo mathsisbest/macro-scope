@@ -348,3 +348,109 @@ def test_return_regime_breakdown_table_reads_persisted_regime_metrics():
 
     assert set(out["regime"]) == {"low", "high"}
     assert out.loc[out["regime"] == "high", "direction_accuracy"].iloc[0] == 0.58
+
+
+# --- regime background shading --------------------------------------------------
+
+
+def test_regime_shading_handles_none_or_empty():
+    df = pd.DataFrame(
+        {
+            "date": pd.bdate_range("2024-01-01", periods=5),
+            "close": [100, 101, 102, 103, 104],
+            "vol_20d": [0.1, 0.1, 0.1, 0.1, 0.1],
+        }
+    )
+    # None or empty regime_df should add zero vrect layout shapes
+    fig_none = charts.price_chart(df, "SPY", regime_df=None)
+    fig_empty = charts.price_chart(df, "SPY", regime_df=pd.DataFrame())
+    assert fig_none.layout.shapes == ()
+    assert fig_empty.layout.shapes == ()
+
+
+def test_price_chart_adds_regime_vrects():
+    df = pd.DataFrame(
+        {
+            "date": pd.bdate_range("2024-01-01", periods=6),
+            "close": [100, 101, 102, 103, 104, 105],
+        }
+    )
+    regime_df = pd.DataFrame(
+        {
+            "date": pd.bdate_range("2024-01-01", periods=6),
+            "regime": ["Low", "Low", "Medium", "Medium", "High", "High"],
+        }
+    )
+
+    fig = charts.price_chart(df, "SPY", regime_df=regime_df)
+    shapes = fig.layout.shapes
+    assert len(shapes) == 3  # 3 regime blocks: Low, Medium, High
+
+    # Verify colors: Low -> faint green, Medium -> faint amber, High -> faint red
+    colors = [s.fillcolor for s in shapes]
+    assert "rgba(39, 192, 138, 0.12)" in colors[0]  # Low
+    assert "rgba(255, 180, 84, 0.12)" in colors[1]  # Medium
+    assert "rgba(255, 93, 108, 0.12)" in colors[2]  # High
+
+
+def test_vol_chart_adds_regime_vrects():
+    df = pd.DataFrame(
+        {
+            "date": pd.bdate_range("2024-01-01", periods=4),
+            "vol_20d": [0.1, 0.12, 0.15, 0.2],
+        }
+    )
+    regime_df = pd.DataFrame(
+        {
+            "date": pd.bdate_range("2024-01-01", periods=4),
+            "regime": ["Low", "Low", "High", "High"],
+        }
+    )
+
+    fig = charts.vol_chart(df, "SPY", regime_df=regime_df)
+    shapes = fig.layout.shapes
+    assert len(shapes) == 2
+
+
+def test_rebased_performance_chart_adds_regime_vrects():
+    perf_long = pd.DataFrame(
+        {
+            "symbol": ["SPY", "SPY", "TLT", "TLT"],
+            "asset_class": ["equities", "equities", "bonds", "bonds"],
+            "date": pd.bdate_range("2024-01-01", periods=2).tolist() * 2,
+            "perf": [0.0, 0.01, 0.0, -0.005],
+        }
+    )
+    regime_df = pd.DataFrame(
+        {
+            "date": pd.bdate_range("2024-01-01", periods=2),
+            "regime": ["Low", "Medium"],
+        }
+    )
+
+    fig = charts.rebased_performance_chart(perf_long, regime_df=regime_df)
+    # The chart's own zero line (add_hline) renders as a non-rect shape, so count only the
+    # regime vrects added by the shading helper.
+    vrects = [s for s in fig.layout.shapes if s.type == "rect"]
+    assert len(vrects) == 2
+
+
+def test_regime_shading_handles_multi_symbol_regime_df():
+    df = pd.DataFrame(
+        {
+            "date": pd.bdate_range("2024-01-01", periods=3),
+            "close": [100, 101, 102],
+        }
+    )
+    regime_df = pd.DataFrame(
+        {
+            "symbol": ["SPY", "SPY", "TLT", "TLT"],
+            "date": pd.bdate_range("2024-01-01", periods=2).tolist() * 2,
+            "regime": ["Low", "High", "Medium", "Medium"],
+        }
+    )
+
+    # Calling for SPY should select only SPY rows from regime_df
+    fig = charts.price_chart(df, "SPY", regime_df=regime_df)
+    shapes = fig.layout.shapes
+    assert len(shapes) == 2
