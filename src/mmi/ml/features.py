@@ -57,12 +57,12 @@ def feature_columns(feature_set: str = "default") -> list[str]:
         ``'default'`` — lagged returns + rolling stats.
         ``'vol'`` — default + Garman-Klass + HAR cascade + trailing RV.
         ``'vol_macro'`` — vol + yield curve + VIX + cross-asset vol.
-        ``'vol_medium'`` — vol + macro subset + key rich features (~27 total,
+        ``'vol_medium'`` — vol + macro subset + key rich features (~49 total,
                            fast enough for portfolio backtest).
         ``'vol_rich'`` — vol + macro + kurtosis/skewness + vol-of-vol + correlations
-                         + calendar effects (50 features).
+                         + calendar effects (68 features).
         ``'vol_rich_plus'`` — vol_rich + unused FRED macro + breakeven inflation +
-                         recession prob + cross-asset spreads + mom_rev (75 features).
+                         recession prob + cross-asset spreads + mom_rev (98 features).
     """
     cols = [f"ret_lag{lag}" for lag in _LAGS]
     for w in _WINDOWS:
@@ -174,7 +174,6 @@ _EXTENDED_FEATURE_NAMES: list[str] = [
     "recession_prob_change_20d",
     # Cross-asset return spreads
     "spy_gld_spread_20d",
-    "spy_tlt_spread_20d",
     "gld_tlt_spread_20d",
     "vea_spy_spread_20d",
     "spy_tip_spread_20d",
@@ -708,7 +707,6 @@ def _add_extended_features(
 
         for _sym, label, feat_name in [
             ("GLD", "gld", "spy_gld_spread_20d"),
-            ("TLT", "tlt", "spy_tlt_spread_20d"),
             ("VEA", "vea", "vea_spy_spread_20d"),
             ("TIP", "tip", "spy_tip_spread_20d"),
             ("BTC", "btc", "btc_spy_spread_20d"),

@@ -270,16 +270,16 @@ markets-macro-intelligence/
   All results are strict walk-forward OOS (no lookahead), with IC, direction accuracy, and R²
   persisted to `marts.model_metrics`. The daily forecast (predicted return, daily_mu) goes to
   `marts.ml_forecast`.
-- **Feature sets** are composable and additive:
-  - `vol`: HAR cascade + Garman-Klass + trailing RV (6 features).
+- **Feature sets** are composable and additive (totals include the 10 base lag/rolling features):
+  - `vol`: base + HAR cascade + Garman-Klass + trailing RV (16 features).
   - `vol_macro`: vol + yield curve, VIX, oil, dollar, NFCI, claims, cross-asset vol, **Shiller
-    CAPE/dividend yield/earnings yield** (22 features).
-  - `vol_medium`: vol + fast rich features (momentum, vol-of-vol, interactions) — ~27 features,
+    CAPE/dividend yield/earnings yield** (39 features).
+  - `vol_medium`: vol + fast rich features (momentum, vol-of-vol, interactions) — ~49 features,
     optimised for portfolio backtest speed.
   - `vol_rich`: vol_macro + cross-asset correlations, higher moments, calendar, interactions
-    (~50 features).
+    (~68 features).
   - `vol_rich_plus`: vol_rich + unused FRED macro (CPI, unemployment, M2), breakeven inflation,
-    recession probability, cross-asset spreads (~83 features).
+    recession probability, cross-asset spreads (~98 features).
   - `mom_rev`: pure momentum/reversal features (13 features).
   Extensive sweep across all six feature sets × all horizons × GB/LGB confirmed **vol_macro is the
   best single set** — richer sets add noise, not signal, at the horizons where forecasts are

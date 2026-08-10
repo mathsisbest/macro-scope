@@ -282,10 +282,10 @@ def test_vol_rich_plus_core_assets_features():
     feats = make_features(df_spy, feature_set="vol_rich_plus", asset_dfs=asset_dfs)
 
     cols = feature_columns("vol_rich_plus")
-    assert "spy_tlt_spread_20d" in cols
+    assert "equity_bond_spread_20d" in cols
     assert "spy_gld_spread_20d" in cols
     assert "btc_spy_spread_20d" in cols
-    assert "spy_tlt_spread_20d" in feats.columns
+    assert "equity_bond_spread_20d" in feats.columns
     assert "btc_spy_spread_20d" in feats.columns
 
 
