@@ -66,13 +66,80 @@ def _guard_yrange(fig: go.Figure, series: pd.Series, pad: float = 0.05) -> None:
         fig.update_yaxes(range=[lo - span * pad, min(0.0, hi + span * pad)])
 
 
+def _regime_color(regime: str) -> str | None:
+    r = regime.strip().lower()
+    if "low" in r:
+        return "rgba(39, 192, 138, 0.12)"  # faint green
+    if "medium" in r or "med" in r:
+        return "rgba(255, 180, 84, 0.12)"  # faint amber
+    if "high" in r:
+        return "rgba(255, 93, 108, 0.12)"  # faint red
+    return None
+
+
+def _add_regime_shading(
+    fig: go.Figure, regime_df: pd.DataFrame | None, symbol: str | None = None
+) -> None:
+    """Add background shading to a figure for volatility regimes using ``fig.add_vrect()``.
+
+    Shades Low Volatility faint green, Medium faint amber, and High faint red. Handles
+    empty or None ``regime_df`` gracefully without altering the figure.
+    """
+    if regime_df is None or regime_df.empty:
+        return
+    if "date" not in regime_df.columns or "regime" not in regime_df.columns:
+        return
+
+    df = regime_df
+    if symbol and "symbol" in df.columns:
+        df_sym = df[df["symbol"] == symbol]
+        if not df_sym.empty:
+            df = df_sym
+    elif "symbol" in df.columns and (df["symbol"] != df["symbol"].iloc[0]).any():
+        if "SPY" in df["symbol"].to_numpy():
+            df = df[df["symbol"] == "SPY"]
+        else:
+            first_sym = df["symbol"].iloc[0]
+            df = df[df["symbol"] == first_sym]
+
+    df_sorted = df.dropna(subset=["date", "regime"]).sort_values("date")
+    if df_sorted.empty:
+        return
+
+    dates = df_sorted["date"].to_numpy()
+    regimes = df_sorted["regime"].astype(str).to_numpy()
+    n = len(dates)
+
+    start_idx = 0
+    while start_idx < n:
+        curr_regime = regimes[start_idx]
+        end_idx = start_idx
+        while end_idx + 1 < n and regimes[end_idx + 1] == curr_regime:
+            end_idx += 1
+
+        color = _regime_color(curr_regime)
+        if color:
+            x0 = dates[start_idx]
+            x1 = dates[end_idx + 1] if end_idx + 1 < n else dates[end_idx]
+            fig.add_vrect(
+                x0=x0,
+                x1=x1,
+                fillcolor=color,
+                layer="below",
+                line_width=0,
+            )
+
+        start_idx = end_idx + 1
+
+
 # ---------------------------------------------------------------------------
 # Markets tab
 # ---------------------------------------------------------------------------
 
 
-def price_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
+def price_chart(df: pd.DataFrame, symbol: str, regime_df: pd.DataFrame | None = None) -> go.Figure:
     fig = go.Figure()
+    _add_regime_shading(fig, regime_df, symbol=symbol)
     fig.add_scatter(
         x=df["date"],
         y=df["close"],
@@ -99,8 +166,9 @@ def price_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
     return style_fig(fig, height=HEIGHT_DEFAULT)
 
 
-def vol_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
+def vol_chart(df: pd.DataFrame, symbol: str, regime_df: pd.DataFrame | None = None) -> go.Figure:
     fig = go.Figure()
+    _add_regime_shading(fig, regime_df, symbol=symbol)
     fig.add_scatter(
         x=df["date"],
         y=df["vol_20d"],
@@ -235,13 +303,18 @@ def leaderboard_return_color(period_return: float) -> str:
     return PALETTE["up"] if period_return >= 0 else PALETTE["down"]
 
 
-def rebased_performance_chart(perf_long: pd.DataFrame, height: int = HEIGHT_TALL) -> go.Figure:
+def rebased_performance_chart(
+    perf_long: pd.DataFrame,
+    height: int = HEIGHT_TALL,
+    regime_df: pd.DataFrame | None = None,
+) -> go.Figure:
     """One class-coloured line per symbol over the window, each rebased to 0% at the start.
 
     The legend shows each symbol with its final % so the chart reads without hovering. Line
     colour comes from the asset-class colour map (``theme.asset_class_color``). Falls back to
     the Plotly colourway cycle when ``asset_class`` is missing or None in the data."""
     fig = go.Figure()
+    _add_regime_shading(fig, regime_df)
     colorway = PALETTE["series"]
     if not perf_long.empty:
         for idx, (symbol, grp) in enumerate(perf_long.groupby("symbol", sort=False)):
