@@ -244,3 +244,114 @@ def test_rebase_cumulative_starts_each_strategy_at_zero():
     a_last = out[out["strategy"] == "a"]["cumulative_return"].iloc[-1]
     assert abs(a_last - ((1 + 0.80) / (1 + 0.50) - 1)) < 1e-12  # 0.20 = windowed compounded return
     assert charts.rebase_cumulative(pd.DataFrame()).empty  # empty-safe
+
+
+# ---------------------------------------------------------------------------
+# (e) Relative value: close ratio vs benchmark (rebased) + rolling z-score
+# ---------------------------------------------------------------------------
+
+#: Close ratio expected from a pair of 2-day series (SYM 100→120, BEN 100→110).
+_EXPECTED_RATIO_2D = 120.0 / 110.0
+
+
+def test_relative_strength_ratio_is_close_ratio_rebased_to_one():
+    # SYM 100→120 vs BEN 100→110: raw ratio 1.0 → 120/110, rebased so it starts at exactly 1.0.
+    long_df = _long(
+        _series("SYM", "equities", [100.0, 120.0]) + _series("BEN", "equities", [100.0, 110.0])
+    )
+    ratio = charts.relative_strength_ratio(long_df, "SYM", "BEN")
+    assert list(ratio.columns) == ["date", "ratio"]
+    assert ratio["ratio"].iloc[0] == 1.0
+    assert math.isclose(ratio["ratio"].iloc[-1], _EXPECTED_RATIO_2D, rel_tol=1e-12)
+
+
+def test_relative_strength_ratio_default_benchmark_is_spy():
+    long_df = _long(
+        _series("SPY", "equities", [100.0, 110.0]) + _series("QQQ", "equities", [100.0, 121.0])
+    )
+    ratio = charts.relative_strength_ratio(long_df, "QQQ")  # benchmark defaults to SPY
+    assert math.isclose(ratio["ratio"].iloc[-1], 121.0 / 110.0, rel_tol=1e-12)
+
+
+def test_relative_strength_ratio_empty_when_symbol_missing():
+    long_df = _long(_series("SPY", "equities", [100.0, 110.0]))
+    assert charts.relative_strength_ratio(long_df, "QQQ", "SPY").empty  # symbol absent
+    assert charts.relative_strength_ratio(long_df, "SPY", "QQQ").empty  # benchmark absent
+
+
+def test_relative_strength_ratio_empty_when_no_overlap():
+    spy = pd.DataFrame(
+        {
+            "symbol": ["SPY"] * 2,
+            "asset_class": "equities",
+            "date": ["2024-01-01", "2024-01-02"],
+            "close": [100.0, 110.0],
+            "daily_return": [float("nan"), 0.1],
+        }
+    )
+    qqq = pd.DataFrame(
+        {
+            "symbol": ["QQQ"] * 2,
+            "asset_class": "equities",
+            "date": ["2024-02-01", "2024-02-02"],  # disjoint calendar — nothing to divide
+            "close": [100.0, 120.0],
+            "daily_return": [float("nan"), 0.2],
+        }
+    )
+    assert charts.relative_strength_ratio(pd.concat([spy, qqq]), "QQQ", "SPY").empty
+
+
+def test_relative_strength_ratio_empty_frame_returns_empty():
+    ratio = charts.relative_strength_ratio(
+        pd.DataFrame(columns=["symbol", "asset_class", "date", "close", "daily_return"]),
+        "SPY",
+    )
+    assert ratio.empty
+    assert list(ratio.columns) == ["date", "ratio"]
+
+
+def test_ratio_rolling_zscore_hand_computed_value():
+    # SYM closes 100/100/400 vs BEN 100/100/100 → rebased ratio [1, 1, 4]. With window=3 the
+    # final row is z = (4 − 2) / std([1,1,4]) where pandas rolling std uses ddof=1:
+    # std² = ((1−2)² + (1−2)² + (4−2)²) / 2 = 3 → z = 2 / √3.
+    long_df = _long(
+        _series("SYM", "equities", [100.0, 100.0, 400.0])
+        + _series("BEN", "equities", [100.0, 100.0, 100.0])
+    )
+    z = charts.ratio_rolling_zscore(long_df, "SYM", "BEN", window=3)
+    assert len(z) == 1  # only the final row has a full 3-obs window
+    expected = 2.0 / math.sqrt(3.0)
+    assert math.isclose(float(z["zscore"].iloc[-1]), expected, rel_tol=1e-9)
+
+
+def test_ratio_rolling_zscore_tracks_below_mean_negative():
+    # SYM 100/100/50 vs BEN 100/100/100 → ratio [1, 1, 0.5]: the last obs sits below the mean.
+    long_df = _long(
+        _series("SYM", "equities", [100.0, 100.0, 50.0])
+        + _series("BEN", "equities", [100.0, 100.0, 100.0])
+    )
+    z = charts.ratio_rolling_zscore(long_df, "SYM", "BEN", window=3)
+    assert not z.empty
+    assert float(z["zscore"].iloc[-1]) < 0.0
+
+
+def test_ratio_rolling_zscore_empty_on_constant_ratio():
+    # SYM tracks the benchmark exactly → rolling std is 0 → no z-score (no divide-by-zero).
+    long_df = _long(
+        _series("SYM", "equities", [100.0, 110.0, 120.0])
+        + _series("BEN", "equities", [100.0, 110.0, 120.0])
+    )
+    z = charts.ratio_rolling_zscore(long_df, "SYM", "BEN", window=3)
+    assert z.empty
+    assert list(z.columns) == ["date", "zscore"]
+
+
+def test_ratio_rolling_zscore_empty_when_window_too_long():
+    # 5 rows but a 126-day window → no full window, so no z-score (the caller shows the caption).
+    long_df = _long(
+        _series("SYM", "equities", [100.0, 110.0, 120.0, 130.0, 140.0])
+        + _series("BEN", "equities", [100.0] * 5)
+    )
+    z = charts.ratio_rolling_zscore(long_df, "SYM", "BEN", window=126)
+    assert z.empty
+    assert "widen the date range" in charts.RV_ZSCORE_TOO_SHORT
