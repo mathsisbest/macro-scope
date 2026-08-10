@@ -372,6 +372,151 @@ def correlation_heatmap(corr: pd.DataFrame, height: int = HEIGHT_TALL) -> go.Fig
 
 
 # ---------------------------------------------------------------------------
+# Markets tab — relative value (ratio vs benchmark · rolling z-score)
+# ---------------------------------------------------------------------------
+
+#: Default benchmark for relative-strength comparisons (broad equities = the market itself).
+RV_BENCHMARK_DEFAULT: str = "SPY"
+#: Rolling window (trading days, ≈ 6 months) for the cross-asset ratio z-score.
+_RV_ZSCORE_WINDOW_DAYS: int = 126
+#: Shown instead of a misleading z-score when the window holds too few observations.
+RV_ZSCORE_TOO_SHORT: str = "Range too short for a rolling z-score — widen the date range."
+
+
+def relative_strength_ratio(
+    long_df: pd.DataFrame, symbol: str, benchmark: str = RV_BENCHMARK_DEFAULT
+) -> pd.DataFrame:
+    """``symbol`` close ÷ ``benchmark`` close, rebased to 1.0 at the window start.
+
+    ``long_df`` is the ``[symbol, asset_class, date, close, daily_return]`` frame from
+    ``data.all_assets_daily(start)``. Only dates where BOTH prices exist are kept (an inner
+    join), so a short-history symbol still gets a valid ratio over its overlap with the
+    benchmark. Rebasing to 1.0 at the first overlapping date makes the line read as relative
+    strength since the window start: above 1.0 the symbol is outperforming its benchmark.
+    Returns ``[date, ratio]``; empty when either symbol is absent or nothing overlaps.
+    Pure + unit-tested.
+    """
+    cols = ["date", "ratio"]
+    if long_df.empty:
+        return pd.DataFrame(columns=cols)
+    wide = long_df.pivot_table(index="date", columns="symbol", values="close")
+    if symbol not in wide.columns or benchmark not in wide.columns:
+        return pd.DataFrame(columns=cols)
+    # A zero-priced day (or the rare non-finite price) must not poison the ratio: drop it.
+    ratio = (
+        (wide[symbol] / wide[benchmark])
+        .replace([float("inf"), float("-inf")], float("nan"))
+        .dropna()
+    )
+    if ratio.empty or ratio.iloc[0] == 0:
+        return pd.DataFrame(columns=cols)
+    ratio = ratio / ratio.iloc[0]
+    return pd.DataFrame({"date": ratio.index, "ratio": ratio.to_numpy()}).reset_index(drop=True)
+
+
+def ratio_rolling_zscore(
+    long_df: pd.DataFrame,
+    symbol: str,
+    benchmark: str = RV_BENCHMARK_DEFAULT,
+    window: int = _RV_ZSCORE_WINDOW_DAYS,
+) -> pd.DataFrame:
+    """Rolling z-score of the (rebased) close ratio over ``window`` trading days.
+
+    ``z = (ratio − rolling_mean) / rolling_std`` with pandas' default ddof=1 rolling std.
+    A constant ratio (rolling std == 0, e.g. a symbol tracking its benchmark exactly) yields
+    NaN rather than a divide-by-zero, and non-finite values are dropped. Returns
+    ``[date, zscore]``; empty when the window holds too few observations for a stable
+    estimate (the caller shows ``RV_ZSCORE_TOO_SHORT``). Pure + unit-tested.
+    """
+    cols = ["date", "zscore"]
+    ratio = relative_strength_ratio(long_df, symbol, benchmark)
+    if ratio.empty or window < 2:
+        return pd.DataFrame(columns=cols)
+    roll = pd.Series(ratio["ratio"].to_numpy(dtype=float), index=ratio["date"])
+    mean = roll.rolling(window).mean()
+    std = roll.rolling(window).std()
+    z = (
+        ((roll - mean) / std.replace(0.0, float("nan")))
+        .replace([float("inf"), float("-inf")], float("nan"))
+        .dropna()
+    )
+    if z.empty:
+        return pd.DataFrame(columns=cols)
+    return pd.DataFrame({"date": z.index, "zscore": z.to_numpy()}).reset_index(drop=True)
+
+
+def relative_strength_chart(
+    ratio: pd.DataFrame,
+    symbol: str,
+    benchmark: str = RV_BENCHMARK_DEFAULT,
+    height: int = HEIGHT_MEDIUM,
+) -> go.Figure:
+    """Relative-strength line: ``symbol``/``benchmark`` close ratio rebased to 1.0 at window start.
+
+    Reads above 1.0 as the symbol outperforming the benchmark since the window start. The 1.0
+    reference line uses the muted dashed token; the ratio line uses the accent token — named
+    theme tokens only, no inline hex. Degrades to an empty figure (reference line only) when
+    ``ratio`` is empty.
+    """
+    fig = go.Figure()
+    if not ratio.empty and {"date", "ratio"} <= set(ratio.columns):
+        fig.add_scatter(
+            x=ratio["date"],
+            y=ratio["ratio"],
+            name=f"{symbol} / {benchmark}",
+            line=dict(color=PALETTE["accent"]),
+            hovertemplate="%{x|%Y-%m-%d}: %{y:.3f}<extra></extra>",
+        )
+    fig.add_hline(y=1.0, line_color=PALETTE["muted"], line_dash="dot")
+    fig.update_layout(
+        title=dict(
+            text=f"{symbol} vs {benchmark} — relative strength (close ratio, rebased to 1.0)",
+            font=_TITLE_FONT,
+        ),
+    )
+    _apply_axis_fonts(fig)
+    if not ratio.empty and "ratio" in ratio.columns:
+        _guard_yrange(fig, ratio["ratio"])
+    return style_fig(fig, height=height)
+
+
+def ratio_zscore_chart(
+    z: pd.DataFrame,
+    symbol: str,
+    benchmark: str = RV_BENCHMARK_DEFAULT,
+    window: int = _RV_ZSCORE_WINDOW_DAYS,
+    height: int = HEIGHT_MEDIUM,
+) -> go.Figure:
+    """Rolling z-score of the cross-asset close ratio, with −2σ / mean / +2σ reference lines.
+
+    The amber (SERIES_VOL) line reads as a relative-valuation signal: |z| ≈ 2 marks an
+    extreme relative move vs the rolling norm. Reference lines use named tokens (up/down for
+    the −2/+2σ bounds, muted for the mean) — named theme tokens only, no inline hex.
+    Degrades to an empty figure (reference lines only) when ``z`` is empty.
+    """
+    fig = go.Figure()
+    if not z.empty and {"date", "zscore"} <= set(z.columns):
+        fig.add_scatter(
+            x=z["date"],
+            y=z["zscore"],
+            name=f"z-score ({window}d)",
+            line=dict(color=SERIES_VOL),
+            hovertemplate="%{x|%Y-%m-%d}: %{y:+.2f}σ<extra></extra>",
+        )
+    fig.add_hline(y=2.0, line_color=PALETTE["down"], line_dash="dash")
+    fig.add_hline(y=-2.0, line_color=PALETTE["up"], line_dash="dash")
+    fig.add_hline(y=0.0, line_color=PALETTE["muted"], line_dash="dot")
+    fig.update_layout(
+        title=dict(
+            text=f"{symbol} vs {benchmark} — rolling z-score of close ratio ({window}d window)",
+            font=_TITLE_FONT,
+        ),
+    )
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=height)
+
+
+# ---------------------------------------------------------------------------
 # Macro tab
 # ---------------------------------------------------------------------------
 
