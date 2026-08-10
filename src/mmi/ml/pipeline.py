@@ -23,41 +23,28 @@ log = get_logger("ml.pipeline")
 _MAX_WORKERS = 4
 # Per-symbol ML configs set to 20-day (1-month) target horizon.
 # All assets achieve strong positive OOS R² at 20 days, enabling monthly trading execution.
+# Per-symbol entries only override fields that differ from `_DEFAULT_ML_CONFIG`;
+# everything else is inherited via `_ml_config`.
 
 _SYMBOL_ML_CONFIG: dict[str, dict] = {
     "SPY": {
-        "model": "gb",
         "train_size": 2520,
-        "target_horizon": 20,
-        "use_all_train": True,
         "feature_set": "vol_rich_plus",
     },
     "QQQ": {
-        "model": "gb",
-        "train_size": 1260,
-        "target_horizon": 20,
-        "use_all_train": True,
         "feature_set": "vol_rich_plus",
     },
     "GLD": {
-        "model": "gb",
         "train_size": 1512,
-        "target_horizon": 20,
-        "use_all_train": True,
         "feature_set": "vol_rich_plus",
     },
     "TLT": {
         "model": "lgb",
         "train_size": 1764,
-        "target_horizon": 20,
-        "use_all_train": True,
         "feature_set": "vol_rich_plus",
     },
     "BTC": {
-        "model": "gb",
         "train_size": 1008,
-        "target_horizon": 20,
-        "use_all_train": True,
         "feature_set": "vol_rich_plus",
     },
 }
@@ -72,8 +59,8 @@ _DEFAULT_ML_CONFIG: dict = {
 
 
 def _ml_config(sym: str) -> dict:
-    """Return the optimised ML config for *sym*, falling back to *DEFAULT*."""
-    return _SYMBOL_ML_CONFIG.get(sym, _DEFAULT_ML_CONFIG)
+    """Return the resolved ML config for *sym*: defaults merged with per-symbol overrides."""
+    return {**_DEFAULT_ML_CONFIG, **_SYMBOL_ML_CONFIG.get(sym, {})}
 
 
 def _default_symbols() -> list[str]:
