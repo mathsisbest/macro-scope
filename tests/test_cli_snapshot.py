@@ -572,7 +572,7 @@ def test_snapshot_size_cap_invalid_env_falls_back_to_default(
     monkeypatch.setattr(cli, "connect", _connect_to(db))
     monkeypatch.setenv("MMI_SNAPSHOT_MAX_BYTES", bad_value)
 
-    with caplog.at_level(logging.WARNING, logger="cli"):
+    with caplog.at_level(logging.WARNING, logger="mmi.settings"):
         result = cli.cmd_snapshot(argparse.Namespace())
 
     assert result == 0, (
