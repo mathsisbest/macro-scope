@@ -37,6 +37,7 @@ configure_dashboard_env(os.environ, _REPO_ROOT)
 
 from dashboard import data  # noqa: E402
 from dashboard.components import glossary  # noqa: E402
+from dashboard.components import kpi  # noqa: E402
 from dashboard.components.kpi import metric_row  # noqa: E402
 from dashboard.tabs.digest import render_digest_tab  # noqa: E402
 from dashboard.tabs.macro import render_macro_tab  # noqa: E402
@@ -266,6 +267,8 @@ with st.sidebar:
 
 # --------------------------------------------------------------------------- KPI row
 # Headline figures always show the LATEST value (unaffected by the date-range selector below).
+# Each tile can carry an optional sparkline (recent history) and a contextual threshold
+# indicator (arrow vs a trailing average / a defined threshold) — see kpi.metric_row.
 kpis: list[dict] = []
 btc = data.asset_daily("BTC")
 if not btc.empty:
@@ -275,6 +278,12 @@ if not btc.empty:
             "label": "BTC close",
             "value": f"${btc['close'].iloc[-1]:,.0f}",
             "delta": f"{(br or 0) * 100:+.2f}%",
+            "sparkline": btc["close"],
+            "threshold": {
+                "reference": kpi.sma(btc["close"], 20),
+                "good_when": "above",
+                "label": "20d avg",
+            },
         }
     )
 
@@ -286,6 +295,12 @@ if not spy.empty:
             "label": "SPY close",
             "value": f"${spy['close'].iloc[-1]:,.2f}",
             "delta": f"{(r or 0) * 100:+.2f}%",
+            "sparkline": spy["close"],
+            "threshold": {
+                "reference": kpi.sma(spy["close"], 200),
+                "good_when": "above",
+                "label": "200d avg",
+            },
         }
     )
 
@@ -294,15 +309,20 @@ if not reg.empty:
     kpis.append({"label": "SPY vol regime", "value": str(reg["regime"].iloc[-1])})
 
 mm = data.market_macro()
-# Prefer the canonical 10Y−3M spread (NY Fed / Estrella-Mishkin — the inversion investors watch
-# for recession risk, and what the recession-risk panel uses); fall back to 10Y−2Y when the 3M
-# series is unavailable (e.g. a snapshot taken before the 10Y−3M column existed).
-if not mm.empty and "yield_curve_10y_3m" in mm.columns and mm["yield_curve_10y_3m"].notna().any():
-    spread = mm["yield_curve_10y_3m"].dropna().iloc[-1]
-    kpis.append({"label": "10Y−3M spread", "value": f"{spread:+.2f} pp"})
-elif not mm.empty and mm["yield_curve_10y_2y"].notna().any():
-    spread = mm["yield_curve_10y_2y"].dropna().iloc[-1]
-    kpis.append({"label": "10Y−2Y spread", "value": f"{spread:+.2f} pp"})
+spread_pick = kpi.yield_curve_spread_pick(mm)
+if spread_pick is not None:
+    spread_col, spread_label = spread_pick
+    spread_series = mm[spread_col].dropna()
+    spread = spread_series.iloc[-1]
+    kpis.append(
+        {
+            "label": spread_label,
+            "value": f"{spread:+.2f} pp",
+            "sparkline": spread_series,
+            # Below zero = inverted yield curve = the recession-risk signal → good_when="above".
+            "threshold": {"reference": 0.0, "good_when": "above", "label": "inversion threshold"},
+        }
+    )
 
 if kpis:
     metric_row(kpis)
