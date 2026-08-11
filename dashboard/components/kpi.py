@@ -49,6 +49,25 @@ _GoodWhen = Literal["above", "below"]
 _ThresholdModifier = Literal["good", "bad", "neutral"]
 
 
+def yield_curve_spread_pick(mm: pd.DataFrame) -> tuple[str, str] | None:
+    """Choose the recession-risk yield-curve spread column + its honest label.
+
+    Prefers the canonical 10Y−3M spread (NY Fed / Estrella-Mishkin — the inversion investors
+    watch for recession risk, and what the recession-risk panel uses); falls back to 10Y−2Y
+    when the 3M series is unavailable (e.g. a snapshot taken before the 10Y−3M column
+    existed). Returns ``(column, label)`` or ``None`` when neither series has data — the
+    label ALWAYS matches the chosen column (a 2Y fallback tile must never claim to be the
+    10Y−3M spread). Pure + unit-tested.
+    """
+    if mm is None or mm.empty:
+        return None
+    if "yield_curve_10y_3m" in mm.columns and mm["yield_curve_10y_3m"].notna().any():
+        return "yield_curve_10y_3m", "10Y−3M spread"
+    if mm.get("yield_curve_10y_2y", pd.Series(dtype=float)).notna().any():
+        return "yield_curve_10y_2y", "10Y−2Y spread"
+    return None
+
+
 def format_value(
     raw: float | int | str | None,
     kind: _FormatKind = "plain",
