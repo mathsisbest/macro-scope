@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 from dashboard import data
 from dashboard.components import charts, glossary
@@ -13,7 +15,7 @@ from mmi.ai.quant_analyst import PortfolioFacts, generate_quant_brief
 from mmi.portfolio.stats import bootstrap_strategy_return_stats
 from mmi.settings import settings
 
-_WINDOW_LABELS = {
+_WINDOW_LABELS: dict[str, str] = {
     "ex_btc_2002": "~2004–present · ex-BTC",
     "ex_btc_2015": "2015–present · ex-BTC (BTC era)",
     "inc_btc_2015": "2015–present · incl. BTC",
@@ -81,7 +83,7 @@ def _quant_analyst_brief(window_id: str) -> tuple[str, str]:
     return generate_quant_brief(facts)
 
 
-def render_portfolio_tab(rng_start: str | None, chart_wrapper) -> None:
+def render_portfolio_tab(rng_start: str | None, chart_wrapper: Callable[[go.Figure], None]) -> None:
     """Render the Portfolio tab."""
     present_windows = data.portfolio_windows()
     if not present_windows:

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+import plotly.graph_objects as go
 import streamlit as st
 from dashboard import data
 from dashboard.components import charts
 
 
-def render_markets_tab(rng_start: str | None, chart_wrapper) -> None:
+def render_markets_tab(rng_start: str | None, chart_wrapper: Callable[[go.Figure], None]) -> None:
     """Render the Markets tab."""
     adf = data.assets()
     syms = adf["symbol"].tolist() if not adf.empty else []

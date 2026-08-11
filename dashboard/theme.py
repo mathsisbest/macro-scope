@@ -14,6 +14,8 @@ All small-text pairs pass WCAG-AA (≥ 4.5:1). No compliant-token additions need
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -21,7 +23,23 @@ import streamlit as st
 # Primitive palette — IMMUTABLE (existing keys + hexes must never change).
 # charts.py imports PALETTE['accent'], ['series'], ['up'], ['down'], ['muted'].
 # ---------------------------------------------------------------------------
-PALETTE = {
+
+
+class Palette(TypedDict):
+    """Exact shape of the ``PALETTE`` map — every key maps to a hex token."""
+
+    bg: str
+    panel: str
+    grid: str
+    text: str
+    muted: str
+    accent: str
+    up: str
+    down: str
+    series: list[str]
+
+
+PALETTE: Palette = {
     "bg": "#0e1117",
     "panel": "#161a25",
     "grid": "#2a2f3a",
@@ -119,7 +137,7 @@ def style_fig(fig: go.Figure, height: int = 360) -> go.Figure:
 
 # Mobile-safe Plotly config — disables scroll-zoom and hides the floating modebar so
 # touch gestures scroll the page instead of manipulating the chart.
-PLOTLY_CONFIG: dict = {"scrollZoom": False, "displayModeBar": False}
+PLOTLY_CONFIG: dict[str, bool] = {"scrollZoom": False, "displayModeBar": False}
 
 
 def inject_css() -> None:

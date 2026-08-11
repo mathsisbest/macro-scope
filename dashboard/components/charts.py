@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from typing import TypedDict
 
 import numpy as np
 import pandas as pd
@@ -28,9 +29,9 @@ from mmi.ml.skill_gate import skill_verdict
 # Shared layout helpers
 # ---------------------------------------------------------------------------
 
-_TITLE_FONT = dict(size=15, color=PALETTE["text"])
-_AXIS_FONT = dict(size=12, color=PALETTE["muted"])
-_LEGEND_MAX_ENTRIES = 8  # beyond this, legend moves inside to prevent overflow
+_TITLE_FONT: dict[str, str | int] = dict(size=15, color=PALETTE["text"])
+_AXIS_FONT: dict[str, str | int] = dict(size=12, color=PALETTE["muted"])
+_LEGEND_MAX_ENTRIES: int = 8  # beyond this, legend moves inside to prevent overflow
 
 
 def _apply_axis_fonts(fig: go.Figure) -> None:
@@ -421,6 +422,16 @@ _CORR_MIN_OBS: int = 30
 CORR_TOO_SHORT: str = "Range too short for a stable correlation — widen the date range."
 
 
+class LeaderboardRow(TypedDict):
+    """One leaderboard row: per-symbol period stats over the window (see
+    ``cross_asset_leaderboard`` for the exact semantics of each field)."""
+
+    symbol: str
+    asset_class: str
+    period_return: float
+    ann_vol: float
+
+
 def cross_asset_leaderboard(long_df: pd.DataFrame) -> pd.DataFrame:
     """Per-asset period stats over the supplied (already windowed) long frame.
 
@@ -434,7 +445,7 @@ def cross_asset_leaderboard(long_df: pd.DataFrame) -> pd.DataFrame:
     cols = ["symbol", "asset_class", "period_return", "ann_vol"]
     if long_df.empty:
         return pd.DataFrame(columns=cols)
-    rows: list[dict] = []
+    rows: list[LeaderboardRow] = []
     for symbol, grp in long_df.groupby("symbol", sort=False):
         g = grp.sort_values("date")
         closes = g["close"].dropna()
@@ -1404,7 +1415,7 @@ def holdout_readout(
     symbol: str = "SPY",
     *,
     exclude_model: str | None = None,
-) -> dict | None:
+) -> dict[str, float] | None:
     """The locked-holdout metrics for a model/``symbol``, or ``None`` when none are present.
 
     Reads the ``holdout_*`` rows PR #17 added to ``model_metrics``:
@@ -1525,7 +1536,7 @@ def direction_skill_chart(metrics: pd.DataFrame, symbol: str = "SPY") -> go.Figu
 # ---------------------------------------------------------------------------
 # Portfolio tab
 # ---------------------------------------------------------------------------
-_STRATEGY_LABELS = {
+_STRATEGY_LABELS: dict[str, str] = {
     "equal_weight": "Equal weight",
     "inverse_vol": "Inverse vol",
     "risk_parity": "Risk parity",
@@ -1533,7 +1544,7 @@ _STRATEGY_LABELS = {
 }
 
 # Stable per-strategy named colour tokens (no bare index literals).
-_STRATEGY_COLORS: dict[str, str] = {
+_STRATEGY_COLORS: dict[str, str | list[str]] = {
     "equal_weight": PALETTE["accent"],
     "inverse_vol": SERIES_RETURN,
     "risk_parity": SERIES_VOL,
@@ -1543,15 +1554,17 @@ _STRATEGY_COLORS: dict[str, str] = {
 }
 
 
-def _strategy_line(strategy: str, idx: int) -> dict:
+def _strategy_line(strategy: str, idx: int) -> dict[str, str]:
     """Stable per-strategy style; the 60/40 benchmark is a dashed muted reference line."""
     if strategy == "sixty_forty":
-        return dict(color=PALETTE["muted"], dash="dash")
+        return {"color": PALETTE["muted"], "dash": "dash"}
     color = _STRATEGY_COLORS.get(strategy)
     if color is None:
         fallback = _STRATEGY_COLORS["_fallback"]
-        color = fallback[idx % len(fallback)]
-    return dict(color=color)
+        color = fallback[idx % len(fallback)] if isinstance(fallback, list) else fallback
+    elif isinstance(color, list):
+        color = color[idx % len(color)]
+    return {"color": color}
 
 
 def _by_strategy(df: pd.DataFrame, column: str) -> go.Figure:
