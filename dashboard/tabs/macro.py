@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 from dashboard import data
-from dashboard.components import charts
+from dashboard.components import charts, glossary
 
 
 def _fmt_macro(v: float, u: str) -> str:
@@ -113,6 +113,7 @@ def render_macro_tab(rng_start: str | None, is_sample: bool | None, chart_wrappe
         rr_caption = charts.recession_risk_caption(is_sample)
         if rr_caption:
             st.caption(rr_caption)
+        glossary.glossary_tooltip("yield_curve_spread")
 
     st.divider()
     st.subheader("⚡ Interactive Macro Scenario Stress-Tester")

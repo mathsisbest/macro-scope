@@ -36,6 +36,7 @@ with contextlib.suppress(Exception):  # no secrets.toml in local dev — that's 
 configure_dashboard_env(os.environ, _REPO_ROOT)
 
 from dashboard import data  # noqa: E402
+from dashboard.components import glossary  # noqa: E402
 from dashboard.components.kpi import metric_row  # noqa: E402
 from dashboard.tabs.digest import render_digest_tab  # noqa: E402
 from dashboard.tabs.macro import render_macro_tab  # noqa: E402
@@ -149,6 +150,16 @@ All backtests are historical and do not guarantee future results.
 Use at your own risk.
         """.strip()
     )
+
+# --------------------------------------------------------------------------- concept glossary
+# Static educational context: every domain term explained in one place. The "?" chips
+# scattered across the tabs are hover-only (native title tooltips), so this expander is the
+# mobile/keyboard-friendly path to the same definitions.
+glossary.concept_expander(
+    "📖 Concept glossary",
+    glossary.glossary_markdown(),
+    expanded=False,
+)
 
 if not data.db_exists():
     st.warning(
@@ -295,6 +306,15 @@ elif not mm.empty and mm["yield_curve_10y_2y"].notna().any():
 
 if kpis:
     metric_row(kpis)
+    st.markdown(
+        " · ".join(
+            [
+                glossary.tooltip_markdown("vol_regime"),
+                glossary.tooltip_markdown("yield_curve_spread"),
+            ]
+        ),
+        unsafe_allow_html=True,
+    )
 
 st.divider()
 
