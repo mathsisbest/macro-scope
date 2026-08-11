@@ -18,8 +18,9 @@ Design
 from __future__ import annotations
 
 import warnings
+from collections.abc import Callable
+from typing import Any
 
-import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
@@ -38,9 +39,22 @@ from .splitters import feasible_date_range, walk_forward_split
 
 # ---------- public constants ----------
 
-_MODELS = {
+
+def _lgb_regressor(**kwargs: Any) -> Any:
+    """Construct an ``LGBMRegressor``, importing LightGBM on first use.
+
+    The module-scope import is deferred because it costs ~4s of wall-clock and the
+    CLI portfolio backtest path (model='gb') never needs it — only ``mmi ml``
+    (TLT: model='lgb') and explicit ``model='lgb'`` callers do.
+    """
+    import lightgbm as lgb  # noqa: PLC0415
+
+    return lgb.LGBMRegressor(**kwargs)
+
+
+_MODELS: dict[str, Callable[..., Any]] = {
     "gb": HistGradientBoostingRegressor,
-    "lgb": lgb.LGBMRegressor,
+    "lgb": _lgb_regressor,
     "ridge": Ridge,
 }
 
@@ -96,7 +110,7 @@ def tune_model_kwargs(
             "num_leaves": [7, 15],
             "n_estimators": [50, 100],
         }
-        model_inst = lgb.LGBMRegressor(**kw)
+        model_inst = _MODELS["lgb"](**kw)
     else:
         param_grid = {
             "learning_rate": [0.03, 0.08],
