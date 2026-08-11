@@ -154,12 +154,20 @@ VIX_SPIKE_Z: float = 2.0
 VIX_SPIKE_TOP_N: int = 8
 #: Minimum observations before a VIX z-score is considered a reliable reference.
 _VIX_Z_MIN_OBS: int = 30
+#: Minimum calendar days between kept regime-boundary annotations (~1 year). SPY's real
+#: full-history series has 515 boundaries with a median gap of 1 day (rapid flip-flops
+#: cluster into a wall of overlapping labels at y=1.0), so the portfolio chart thins them
+#: greedily: a boundary is kept only if ≥ this many days after the previously kept one.
+#: This keeps the default 2004–2026 chart at ~22 labels instead of ~322 while remaining
+#: purely data-honest (no ranking, no score — just density control).
+REGIME_BOUNDARY_MIN_GAP_DAYS: int = 365
 
 
 def regime_boundary_dates(
     regime_df: pd.DataFrame | None,
     start=None,
     end=None,
+    min_gap_days: int | None = None,
 ) -> pd.DataFrame:
     """Dates where the volatility regime CHANGES vs the previous observation.
 
@@ -168,7 +176,10 @@ def regime_boundary_dates(
     unknown) is not a boundary, and transitions outside the provided frame are not
     inferred. Optional ``start``/``end`` clip the result AFTER boundary detection, so a
     boundary exactly at the window start is still found when the full series is passed.
-    Returns ``[date, regime]``; empty on ``None``/empty/malformed input. Pure + unit-tested.
+    ``min_gap_days`` (None = keep all) thins flip-flop clusters: after clipping, a
+    boundary is kept only if ≥ ``min_gap_days`` after the previously kept one (greedy,
+    earliest-first). Returns ``[date, regime]``; empty on ``None``/empty/malformed input.
+    Pure + unit-tested.
     """
     cols = ["date", "regime"]
     if regime_df is None or regime_df.empty or not {"date", "regime"} <= set(regime_df.columns):
@@ -187,7 +198,15 @@ def regime_boundary_dates(
         boundaries = boundaries[boundaries["date"] >= pd.Timestamp(start)]
     if end is not None:
         boundaries = boundaries[boundaries["date"] <= pd.Timestamp(end)]
-    return boundaries.reset_index(drop=True)
+    boundaries = boundaries.reset_index(drop=True)
+    if min_gap_days is not None and min_gap_days > 0 and not boundaries.empty:
+        keep = [0]
+        for i in range(1, len(boundaries)):
+            gap = (boundaries["date"].iloc[i] - boundaries["date"].iloc[keep[-1]]).days
+            if gap >= min_gap_days:
+                keep.append(i)
+        boundaries = boundaries.iloc[keep].reset_index(drop=True)
+    return boundaries
 
 
 def vix_spike_dates(
@@ -243,14 +262,14 @@ def oos_count_label(n_obs) -> str | None:
 
     ``n_obs`` in ``model_metrics`` is the prediction count the walk-forward CV actually
     scored (the count behind the skill gate's ``n_obs >= 252`` check). Returns ``None``
-    for missing/non-numeric/NaN/±inf/negative values so a call-site renders no label.
-    Pure + unit-tested.
+    for missing/non-numeric/NaN/±inf/zero/negative values: n=0 means "not evaluated
+    out-of-sample", which must not render as a count label. Pure + unit-tested.
     """
     try:
         n = float(n_obs)
     except (TypeError, ValueError):
         return None
-    if not math.isfinite(n) or n < 0:
+    if not math.isfinite(n) or n < 1:
         return None
     return f"OOS n={int(n):,}"
 
@@ -1569,6 +1588,7 @@ def portfolio_cumulative_chart(
     df: pd.DataFrame,
     height: int = HEIGHT_TALL,
     regime_df: pd.DataFrame | None = None,
+    min_gap_days: int | None = REGIME_BOUNDARY_MIN_GAP_DAYS,
 ) -> go.Figure:
     """Cumulative return by strategy, with optional volatility-regime boundary markers.
 
@@ -1576,13 +1596,17 @@ def portfolio_cumulative_chart(
     vertical line + regime label marks each observed regime boundary within the chart's
     date range — only boundaries actually visible in the data are drawn (see
     ``regime_boundary_dates``), so pass the full-history frame and let the helper clip.
-    ``None``/empty degrades to the plain chart with no markers.
+    ``min_gap_days`` (default 365) thins flip-flop clusters to keep the markers readable;
+    pass ``None`` to draw every boundary. ``None``/empty degrades to the plain chart with
+    no markers.
     """
     fig = _by_strategy(rebase_cumulative(df), "cumulative_return")
     if regime_df is not None and not df.empty and "date" in df.columns:
         lo = pd.Timestamp(df["date"].min())
         hi = pd.Timestamp(df["date"].max())
-        _add_regime_boundary_annotations(fig, regime_boundary_dates(regime_df, start=lo, end=hi))
+        _add_regime_boundary_annotations(
+            fig, regime_boundary_dates(regime_df, start=lo, end=hi, min_gap_days=min_gap_days)
+        )
     fig.update_layout(
         title=dict(
             text="Cumulative return by strategy (vs 60/40 benchmark)",

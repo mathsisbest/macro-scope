@@ -66,6 +66,30 @@ def test_regime_boundaries_clip_after_detection():
     assert b["regime"].tolist() == ["Medium", "High"]
 
 
+def test_regime_boundaries_min_gap_thins_clusters_greedily():
+    # Five boundaries in six days (a realistic flip-flop cluster): min_gap keeps only the
+    # earliest, then greedily the next ≥ min_gap days after each kept one.
+    b = charts.regime_boundary_dates(
+        _regime_df(["Low", "Medium", "High", "Low", "Medium", "High", "Low", "Medium"]),
+        min_gap_days=10,
+    )
+    assert b["regime"].tolist() == ["Medium"]  # 2024-01-02; next boundary is only +1d away
+    assert b["date"].tolist() == [pd.Timestamp("2024-01-02")]
+    # A wider span lets later boundaries through again (weekend dates skipped by bdate_range).
+    wide = charts.regime_boundary_dates(
+        _regime_df(["Low", "Medium", "High", "Low", "Medium", "High", "Low", "Medium"]),
+        min_gap_days=4,
+    )
+    assert wide["date"].tolist() == [
+        pd.Timestamp("2024-01-02"),
+        pd.Timestamp("2024-01-08"),
+    ]
+    # min_gap_days=None / 0 keeps every boundary (raw detector).
+    assert len(charts.regime_boundary_dates(_regime_df(["Low", "Medium", "High"]))) == 2
+    all_zero = charts.regime_boundary_dates(_regime_df(["Low", "Medium", "High"]), min_gap_days=0)
+    assert len(all_zero) == 2
+
+
 def test_regime_boundaries_degrade_on_bad_input():
     assert charts.regime_boundary_dates(None).empty
     assert charts.regime_boundary_dates(pd.DataFrame()).empty
@@ -158,7 +182,8 @@ def test_oos_count_label_formats_finite_counts():
 
 
 def test_oos_count_label_none_on_missing_or_non_finite():
-    for bad in (None, float("nan"), float("inf"), float("-inf"), -3, "n/a"):
+    # 0 means "not evaluated out-of-sample" — never a count label.
+    for bad in (None, float("nan"), float("inf"), float("-inf"), -3, 0, 0.0, "n/a"):
         assert charts.oos_count_label(bad) is None
 
 
@@ -183,7 +208,7 @@ def _pf_df() -> pd.DataFrame:
 
 def test_portfolio_cumulative_chart_draws_boundary_lines_with_regime_labels():
     regime = _regime_df(["Low", "Low", "Medium", "Medium", "High", "High", "Medium"])
-    fig = charts.portfolio_cumulative_chart(_pf_df(), regime_df=regime)
+    fig = charts.portfolio_cumulative_chart(_pf_df(), regime_df=regime, min_gap_days=None)
     vlines = [s for s in fig.layout.shapes if s.type == "line"]
     assert len(vlines) == 2  # Medium (2024-01-03) and High (2024-01-05); the first row is not one
     labels = [a.text for a in fig.layout.annotations]
@@ -192,6 +217,35 @@ def test_portfolio_cumulative_chart_draws_boundary_lines_with_regime_labels():
     assert all(s.line.color == charts.PALETTE["muted"] and s.line.dash == "dash" for s in vlines)
     text_colors = {a.font.color for a in fig.layout.annotations}
     assert text_colors <= {charts.PALETTE["up"], charts.SERIES_VOL, charts.PALETTE["down"]}
+    # Pinned per-regime colour mapping (Low→up, Medium→vol, High→down) so a swapped map fails.
+    by_text = {a.text: a.font.color for a in fig.layout.annotations}
+    assert by_text == {"Medium": charts.SERIES_VOL, "High": charts.PALETTE["down"]}
+
+
+def test_portfolio_cumulative_chart_boundary_labels_pin_y_position():
+    # Labels sit at the top of the plot area (paper y=1.0, bottom-anchored) — never on the
+    # line itself and never at different heights.
+    regime = _regime_df(["Low", "Low", "Medium", "Medium", "High", "High", "Low"])
+    fig = charts.portfolio_cumulative_chart(_pf_df(), regime_df=regime, min_gap_days=None)
+    assert len(fig.layout.annotations) == 2
+    for a in fig.layout.annotations:
+        assert a.y == 1.0 and a.yref == "paper" and a.yanchor == "bottom" and not a.showarrow
+        assert a.x == pd.Timestamp("2024-01-03") or a.x == pd.Timestamp("2024-01-05")
+
+
+def test_portfolio_cumulative_chart_default_min_gap_thins_dense_boundaries():
+    # The default chart must NOT draw one line per flip-flop: a realistic dense series
+    # (boundaries every few days) collapses to ~1 label per year, earliest-first.
+    regimes = ["Low", "Medium", "High"] * 130  # 390 rows, boundaries every 2 days
+    regime = pd.DataFrame(
+        {"date": pd.bdate_range("2024-01-01", periods=len(regimes)), "regime": regimes}
+    )
+    fig = charts.portfolio_cumulative_chart(_pf_df(), regime_df=regime)
+    labels = [a.text for a in fig.layout.annotations]
+    assert labels  # still some context…
+    # …but the earliest boundary only — the rest are < 365d after it.
+    assert len(labels) == 1
+    assert len([s for s in fig.layout.shapes if s.type == "line"]) == 1
 
 
 def test_portfolio_cumulative_chart_clips_boundaries_to_chart_range():

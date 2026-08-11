@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 from dashboard import data
 from dashboard.components import charts, glossary
@@ -85,17 +86,27 @@ def render_macro_tab(rng_start: str | None, is_sample: bool | None, chart_wrappe
             gcols = st.columns(2)
             for i, c in enumerate(c for c in cat if c["category"] == sel_cat):
                 with gcols[i % 2]:
-                    df = data.macro(c["id"], rng_start)
+                    if c["id"] == "VIXCLS":
+                        # A "VIX spike" is extreme relative to its FULL history — z-score the
+                        # whole series, then clip to the visible window for the chart. Fetch
+                        # the full series once and derive the visible df from it (no double query).
+                        vix_full = data.macro("VIXCLS")
+                        spikes = (
+                            charts.vix_spike_dates(vix_full, start=rng_start)
+                            if not vix_full.empty
+                            else None
+                        )
+                        df = (
+                            vix_full[vix_full["date"] >= pd.Timestamp(rng_start)]
+                            if rng_start is not None
+                            else vix_full
+                        )
+                    else:
+                        df = data.macro(c["id"], rng_start)
+                        spikes = None
                     if df.empty:
                         st.caption(f"{c['label']} — no data in this range")
                     else:
-                        spikes = None
-                        if c["id"] == "VIXCLS":
-                            # A "VIX spike" is extreme relative to its FULL history — z-score the
-                            # whole series, then clip to the visible window for the chart.
-                            vix_full = data.macro("VIXCLS")
-                            if not vix_full.empty:
-                                spikes = charts.vix_spike_dates(vix_full, start=rng_start)
                         chart_wrapper(
                             charts.macro_chart(
                                 df, c["label"], c["units"], height=200, spikes=spikes
