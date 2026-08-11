@@ -160,6 +160,74 @@ def test_price_and_vol_charts_format_hover():
     assert charts.vol_chart(df, "SPY").layout.yaxis.hoverformat == ".1%"
 
 
+def _price_df(volume=None):
+    """A price_chart-ready frame; ``volume`` None omits the column entirely."""
+    data = {
+        "date": pd.bdate_range("2020-01-01", periods=4),
+        "close": [100.0, 110.0, 120.0, 130.0],
+        "ma_50": [100.0] * 4,
+    }
+    if volume is not None:
+        data["volume"] = volume
+    return pd.DataFrame(data)
+
+
+def test_volume_bars_none_when_column_missing_or_frame_empty():
+    assert charts.volume_bars(_price_df()) is None
+    assert charts.volume_bars(pd.DataFrame()) is None
+    assert charts.volume_bars(_price_df(volume=[100, 200, 300, 400]).iloc[:0]) is None
+
+
+def test_volume_bars_none_when_no_positive_volume():
+    # FX pairs are stamped all-zero by stg_asset_prices — no bars, not a flat zero baseline.
+    assert charts.volume_bars(_price_df(volume=[0, 0, 0, 0])) is None
+    assert charts.volume_bars(_price_df(volume=[float("nan")] * 4)) is None
+
+
+def test_volume_bars_preserves_nan_holes_and_coerces_types():
+    vol = charts.volume_bars(_price_df(volume=[100, None, 300, 400]))
+    assert vol is not None
+    assert list(vol.iloc[:1]) == [100.0]
+    assert pd.isna(vol.iloc[1])  # NaN hole preserved (Plotly renders it as a gap)
+    assert list(vol.iloc[2:]) == [300.0, 400.0]
+    # Non-numeric strings coerce instead of crashing.
+    mixed = charts.volume_bars(_price_df(volume=["100", "200", "300", "400"]))
+    assert mixed is not None and list(mixed) == [100.0, 200.0, 300.0, 400.0]
+
+
+def test_price_chart_renders_volume_bars_on_secondary_axis():
+    fig = charts.price_chart(_price_df(volume=[1000, 2000, 3000, 4000]), "SPY")
+    bars = [t for t in fig.data if t.type == "bar"]
+    assert len(bars) == 1
+    assert bars[0].yaxis == "y2"
+    assert list(bars[0].y) == [1000, 2000, 3000, 4000]
+    assert fig.layout.yaxis2.overlaying == "y" and fig.layout.yaxis2.side == "right"
+    # Volume axis renders share counts; the price axis keeps its $ format.
+    assert fig.layout.yaxis.hoverformat == "$,.2f"
+    assert fig.layout.yaxis2.tickformat == "~s"
+    # Title admits the volume when bars are present.
+    assert "volume" in fig.layout.title.text.lower()
+
+
+def test_price_chart_skips_volume_bars_without_data():
+    fig_no_col = charts.price_chart(_price_df(), "SPY")
+    assert not [t for t in fig_no_col.data if t.type == "bar"]
+    assert getattr(fig_no_col.layout, "yaxis2", None) is None
+    # FX: a volume column of all zeros must render no bars either.
+    fig_fx = charts.price_chart(_price_df(volume=[0, 0, 0, 0]), "EURUSD")
+    assert not [t for t in fig_fx.data if t.type == "bar"]
+    assert getattr(fig_fx.layout, "yaxis2", None) is None
+
+
+def test_price_chart_volume_bars_tolerate_nan_gaps():
+    fig = charts.price_chart(_price_df(volume=[100, float("nan"), 300, 400]), "SPY")
+    bars = [t for t in fig.data if t.type == "bar"]
+    assert len(bars) == 1
+    assert list(bars[0].y[:1]) == [100.0]
+    assert pd.isna(bars[0].y[1])
+    assert list(bars[0].y[2:]) == [300.0, 400.0]
+
+
 def test_macro_chart_hover_appends_unit_without_percent_scaling():
     # Percent series are stored already-in-percent (4.3, not 0.043), so hover must NOT use a
     # Plotly "%" format (that would render 4.3 as 430%); it appends the unit as plain text instead.
