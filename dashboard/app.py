@@ -37,8 +37,10 @@ with contextlib.suppress(Exception):  # no secrets.toml in local dev — that's 
 configure_dashboard_env(os.environ, _REPO_ROOT)
 
 from dashboard import data  # noqa: E402
-from dashboard.components import glossary  # noqa: E402
-from dashboard.components import kpi  # noqa: E402
+from dashboard.components import (  # noqa: E402
+    glossary,
+    kpi,
+)
 from dashboard.components.kpi import KpiItem, metric_row  # noqa: E402
 from dashboard.tabs.digest import render_digest_tab  # noqa: E402
 from dashboard.tabs.macro import render_macro_tab  # noqa: E402
