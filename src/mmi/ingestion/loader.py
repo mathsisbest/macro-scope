@@ -57,7 +57,8 @@ _RAW_TABLES = {
     "raw.portfolio_strategy_pairs": (
         "window_id VARCHAR, strategy_a VARCHAR, strategy_b VARCHAR, "
         "sharpe_a DOUBLE, sharpe_b DOUBLE, "
-        "sharpe_diff DOUBLE, diff_lo DOUBLE, diff_hi DOUBLE, distinguishable BOOLEAN, p_value DOUBLE, "
+        "sharpe_diff DOUBLE, diff_lo DOUBLE, diff_hi DOUBLE, distinguishable BOOLEAN, "
+        "p_value DOUBLE, "
         "loaded_at TIMESTAMPTZ"
     ),
     "raw.portfolio_attribution": (

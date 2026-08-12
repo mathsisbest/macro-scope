@@ -35,7 +35,7 @@ def calmar_ratio(ann_return: float, max_drawdown: float) -> float:
 def max_drawdown_duration(cumulative_returns: pd.Series) -> int:
     roll_max = cumulative_returns.cummax()
     drawdown = cumulative_returns / roll_max - 1.0
-    
+
     is_dd = drawdown < 0
     duration = 0
     max_duration = 0
@@ -61,12 +61,8 @@ def sharpe_diff_pvalue(returns_a: pd.Series, returns_b: pd.Series, n_boot: int =
     boot_b = _bootstrap_sharpe(b_arr, idx)
     diff = boot_a - boot_b
     obs_diff = sharpe(a_arr) - sharpe(b_arr)
-    if obs_diff > 0:
-        p_val = np.mean(diff <= 0) * 2
-    else:
-        p_val = np.mean(diff >= 0) * 2
+    p_val = np.mean(diff <= 0) * 2 if obs_diff > 0 else np.mean(diff >= 0) * 2
     return min(float(p_val), 1.0)
-
 
 
 def stationary_bootstrap_indices(
@@ -251,14 +247,7 @@ def bootstrap_strategy_stats(
     boot = {s: _bootstrap_sharpe(arrs[s], idx) for s in strategies}  # same idx => paired
 
     for s in strategies:
-        cum = (1 + wide[s]).cumprod()
-        roll_max = cum.cummax()
-        drawdown = cum / roll_max - 1.0
-        max_dd = float(drawdown.min())
-        ann_ret = float(wide[s].mean() * TRADING_DAYS)
         point[s] = sharpe(arrs[s])
-        calmar = calmar_ratio(ann_ret, max_dd)
-        dd_dur = max_drawdown_duration(cum)
 
     per_strategy = pd.DataFrame(
         [
@@ -268,7 +257,10 @@ def bootstrap_strategy_stats(
                 "sharpe": point[s],
                 "sharpe_lo": float(np.percentile(boot[s], lo_q)),
                 "sharpe_hi": float(np.percentile(boot[s], hi_q)),
-                "calmar_ratio": calmar_ratio(float(wide[s].mean() * TRADING_DAYS), float(((1 + wide[s]).cumprod() / (1 + wide[s]).cumprod().cummax() - 1.0).min())),
+                "calmar_ratio": calmar_ratio(
+                    float(wide[s].mean() * TRADING_DAYS),
+                    float(((1 + wide[s]).cumprod() / (1 + wide[s]).cumprod().cummax() - 1.0).min()),
+                ),
                 "max_drawdown_duration": max_drawdown_duration((1 + wide[s]).cumprod()),
                 "n_obs": n,
                 "n_boot": n_boot,

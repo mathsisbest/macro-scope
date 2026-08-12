@@ -549,12 +549,17 @@ def generate_brief(con) -> str:
 def _gather_quant_facts(con) -> dict:
     facts = {"as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
     try:
-        stats = con.execute("select strategy, sharpe, max_drawdown_duration, calmar_ratio from marts.fct_portfolio_strategy_stats").df()
+        stats = con.execute(
+            "select strategy, sharpe, max_drawdown_duration, calmar_ratio "
+            "from marts.fct_portfolio_strategy_stats"
+        ).df()
         facts["stats"] = stats.to_dict(orient="records")
     except Exception:
         pass
     try:
-        attr = con.execute("select strategy, symbol, contribution_to_return from marts.fct_portfolio_attribution").df()
+        attr = con.execute(  # noqa: E501
+            "select strategy, symbol, contribution_to_return from marts.fct_portfolio_attribution"
+        ).df()
         facts["attribution"] = attr.to_dict(orient="records")
     except Exception:
         pass
@@ -565,19 +570,24 @@ def _gather_quant_facts(con) -> dict:
         pass
     return facts
 
+
 def _build_quant_prompt(facts: dict) -> str:
     import json
+
     return (
         "Here are the portfolio strategy stats, attribution, and model metrics:\n\n"
         f"{json.dumps(facts, indent=2)}\n\n"
-        "Please synthesize a brief discussing which strategies outperformed and why, key risk metrics (drawdown, concentration), regime-conditional performance observations, and forward-looking positioning implications."
+        "Please synthesize a brief discussing which strategies outperformed and why, key risk "
+        "metrics (drawdown, concentration), regime-conditional performance observations, and "
+        "forward-looking positioning implications."
     )
+
 
 def generate_quant_brief(con) -> pd.DataFrame:
     facts = _gather_quant_facts(con)
     prompt = _build_quant_prompt(facts)
     system = "You are an AI Quant Analyst."
-    
+
     if llm.available():
         try:
             raw_text, engine = llm.complete(prompt, system=system, max_tokens=4096)
@@ -587,7 +597,7 @@ def generate_quant_brief(con) -> pd.DataFrame:
                 engine = "offline-template (llm-rejected)"
             else:
                 text = raw_text
-        except Exception as exc:
+        except Exception:  # noqa: BLE001 - GenAI is best-effort; template is the floor
             text = "LLM temporarily unavailable"
             engine = "offline-template (llm-failed)"
     else:
@@ -595,16 +605,14 @@ def generate_quant_brief(con) -> pd.DataFrame:
         engine = "offline-template"
 
     safe_text = redact(text)
-    
-    df = pd.DataFrame([{
-        "brief": safe_text,
-        "engine": engine,
-        "created_at": datetime.now(timezone.utc)
-    }])
-    
+
+    df = pd.DataFrame(
+        [{"brief": safe_text, "engine": engine, "created_at": datetime.now(timezone.utc)}]
+    )
+
     con.register("_qbrief", df)
     con.execute("CREATE TABLE IF NOT EXISTS marts.quant_brief AS SELECT * FROM _qbrief LIMIT 0")
     con.execute("INSERT INTO marts.quant_brief BY NAME SELECT * FROM _qbrief")
     con.unregister("_qbrief")
-    
+
     return df

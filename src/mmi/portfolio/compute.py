@@ -359,7 +359,7 @@ def compute_portfolio_returns(
     for date in common_dates:
         if date in ml_pivot.index:
             signals = ml_pivot.loc[date].dropna()
-            
+
             if regime_indexed is not None and date in regime_indexed.index:
                 r_val = regime_indexed.loc[date, "regime"]
                 if r_val == "Low":
