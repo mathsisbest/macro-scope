@@ -140,7 +140,8 @@ After Steps A–D are complete, verify the automation end-to-end:
 
 1. Go to **Actions → Daily snapshot (fast) → Run workflow** for the cheap daily path, or
    **Weekly full refresh (ML + portfolio) → Run workflow** for the full run.
-2. Watch the run (~3–5 minutes). It should end green.
+2. Watch the run (~3–5 minutes). It should end green. (The daily cron runs `dbt source freshness`
+   warn-only, so stale-source warnings appear in the logs but never fail the run.)
 3. Check that a new commit appeared on `main` with updated timestamps on `data/public/*.parquet`.
 4. Open the Streamlit URL. The provenance badge should advance: the **"Data as of"** date should
    match the new snapshot.
