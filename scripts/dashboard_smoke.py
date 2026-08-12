@@ -202,6 +202,15 @@ _dir_fig_empty = charts.direction_skill_chart(_empty_metrics, symbol="SPY")
 assert _dir_fig_empty is not None, "direction_skill_chart returned None on empty metrics"
 print("vol-skill builders OK (empty-metrics path — honest 'no edge' language verified)")
 
+# -- real-metrics path: the ML tab renders the live frame; drift in rv_har rows must fail CI
+if not metrics.empty:
+    charts.vol_skill_r2_chart(metrics, symbol="SPY")
+    charts.vol_skill_qlike_chart(metrics, symbol="SPY")
+    assert isinstance(charts.vol_skill_verdict_text(metrics, symbol="SPY"), str), (
+        "vol_skill_verdict_text must return str on real model_metrics"
+    )
+    print(f"vol-skill builders OK (real-metrics path — {len(metrics)} metric rows)")
+
 # -- populated metrics path: exercise with a synthetic not-cleared row set
 _not_cleared_rows = pd.DataFrame(
     [
