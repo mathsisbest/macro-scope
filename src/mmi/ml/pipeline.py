@@ -5,6 +5,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import cast
+import duckdb
 
 import pandas as pd
 
@@ -24,42 +25,12 @@ _MAX_WORKERS = 4
 # Per-symbol ML configs set to 20-day (1-month) target horizon.
 # All assets achieve strong positive OOS R² at 20 days, enabling monthly trading execution.
 
-_SYMBOL_ML_CONFIG: dict[str, dict] = {
-    "SPY": {
-        "model": "gb",
-        "train_size": 2520,
-        "target_horizon": 20,
-        "use_all_train": True,
-        "feature_set": "vol_rich_plus",
-    },
-    "QQQ": {
-        "model": "gb",
-        "train_size": 1260,
-        "target_horizon": 20,
-        "use_all_train": True,
-        "feature_set": "vol_rich_plus",
-    },
-    "GLD": {
-        "model": "gb",
-        "train_size": 1512,
-        "target_horizon": 20,
-        "use_all_train": True,
-        "feature_set": "vol_rich_plus",
-    },
-    "TLT": {
-        "model": "lgb",
-        "train_size": 1764,
-        "target_horizon": 20,
-        "use_all_train": True,
-        "feature_set": "vol_rich_plus",
-    },
-    "BTC": {
-        "model": "gb",
-        "train_size": 1008,
-        "target_horizon": 20,
-        "use_all_train": True,
-        "feature_set": "vol_rich_plus",
-    },
+_SYMBOL_OVERRIDES: dict[str, dict] = {
+    "SPY": {"train_size": 2520},
+    "QQQ": {"train_size": 1260},
+    "GLD": {"train_size": 1512},
+    "TLT": {"model": "lgb", "train_size": 1764},
+    "BTC": {"train_size": 1008},
 }
 
 _DEFAULT_ML_CONFIG: dict = {
@@ -73,7 +44,7 @@ _DEFAULT_ML_CONFIG: dict = {
 
 def _ml_config(sym: str) -> dict:
     """Return the optimised ML config for *sym*, falling back to *DEFAULT*."""
-    return _SYMBOL_ML_CONFIG.get(sym, _DEFAULT_ML_CONFIG)
+    return {**_DEFAULT_ML_CONFIG, **_SYMBOL_OVERRIDES.get(sym, {})}
 
 
 def _default_symbols() -> list[str]:
@@ -86,7 +57,7 @@ def _default_symbols() -> list[str]:
     return list(dict.fromkeys(ordered))
 
 
-def _write(con, table: str, df: pd.DataFrame) -> None:
+def _write(con: duckdb.DuckDBPyConnection, table: str, df: pd.DataFrame) -> None:
     con.register("_tmp", df)
     con.execute(f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM _tmp")
     con.unregister("_tmp")
@@ -97,11 +68,11 @@ def _train_symbol_ml(
     df: pd.DataFrame,
     macro_df: pd.DataFrame,
     asset_dfs: dict,
-    now,
+    now: datetime,
 ) -> tuple[list[dict], list[dict]]:
     """Train ML models for a single symbol. Returns (metric_rows, forecast_rows).
 
-    Uses per-symbol config from ``_SYMBOL_ML_CONFIG`` (optimised via sweep).
+    Uses per-symbol config from ``_SYMBOL_OVERRIDES`` (optimised via sweep).
     """
     metric_rows: list[dict] = []
     forecast_rows: list[dict] = []
@@ -255,7 +226,7 @@ def _train_symbol_ml(
     return metric_rows, forecast_rows
 
 
-def run_ml(con, symbols: list[str] | None = None) -> dict:
+def run_ml(con: duckdb.DuckDBPyConnection, symbols: list[str] | None = None) -> dict:
     """Label regimes, backtest + forecast each symbol, write marts.* outputs.
 
     Uses parallel processing for ML training across symbols.

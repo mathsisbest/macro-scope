@@ -115,28 +115,74 @@ def _delta_css() -> None:
 # ---------------------------------------------------------------------------
 
 
-def metric_row(items: list[dict]) -> None:
-    """Render a row of ``st.metric`` tiles.
+import pandas as pd
 
-    Each *item* is a ``dict`` with keys:
-      - ``"label"``  (str) — tile label
-      - ``"value"``  (str) — formatted value string
-      - ``"delta"``  (str, optional) — delta string passed to ``st.metric``
-
-    Guard rules
-    -----------
-    - **0 items** → renders nothing (no empty columns).
-    - **1–``_MAX_TILES`` items** → renders a single ``st.columns`` row.
-    - **> ``_MAX_TILES`` items** → only the first ``_MAX_TILES`` tiles are shown
-      and a caption warns that the display was truncated.  This prevents an
-      absurdly wide layout on small screens.
-
-    Delta colour
-    ------------
-    CSS is injected once per call so positive deltas use ``theme.SUCCESS``
-    (PALETTE['up'] = #27c08a) and negative deltas use ``theme.WARN``
-    (PALETTE['down'] = #ff5d6c).  No inline hex strings are used.
+def sparkline_metric(label: str, value: str, delta: str, history: pd.Series) -> None:
+    # Handle optional/empty values cleanly
+    val_str = str(value) if value is not None else "—"
+    delta_str = str(delta) if delta is not None else ""
+    
+    if history is None or history.empty:
+        spark_html = ""
+    else:
+        hist_vals = history.dropna().tolist()
+        if not hist_vals:
+            spark_html = ""
+        else:
+            min_val = min(hist_vals)
+            max_val = max(hist_vals)
+            rng = max_val - min_val if max_val != min_val else 1
+            pts = []
+            width = 120
+            height = 30
+            for i, v in enumerate(hist_vals):
+                x = i * (width / max(1, len(hist_vals) - 1))
+                y = height - ((v - min_val) / rng) * height
+                pts.append(f"{x},{y}")
+            pts_str = " ".join(pts)
+            
+            # Default color logic based on delta
+            color = SUCCESS if ("+" in delta_str or not delta_str.startswith("-")) else WARN
+            
+            # Contextual thresholds
+            if "VIX" in label.upper():
+                try:
+                    val_float = float(val_str.strip("$% pp").replace(",", ""))
+                    if val_float < 15: color = SUCCESS
+                    elif val_float <= 25: color = "#ffb454" # yellow
+                    else: color = WARN
+                except ValueError:
+                    pass
+            elif "spread" in label.lower() or "yield curve" in label.lower():
+                try:
+                    val_float = float(val_str.strip("$% pp").replace(",", "").replace("+", ""))
+                    if val_float < 0: color = WARN
+                    else: color = SUCCESS
+                except ValueError:
+                    pass
+                
+            spark_html = f"""
+            <svg width="{width}" height="{height}" style="margin-top:8px; overflow:visible; display:block;">
+                <polyline fill="none" stroke="{color}" stroke-width="2" points="{pts_str}" />
+            </svg>
+            """
+    
+    delta_color = SUCCESS if ("+" in delta_str or not delta_str.startswith("-")) else WARN
+    delta_html = f'<div style="font-size: 14px; margin-top: 4px; color: {delta_color};">{delta_str}</div>' if delta_str else ""
+    
+    html = f"""
+    <div data-testid="stMetric" style="padding: 14px 16px; border-radius: 12px; border: 1px solid #2a2f3a; background: #161a25; min-height: 120px;">
+        <div data-testid="stMetricLabel" style="color: #9aa0aa; font-size: 14px;">{label}</div>
+        <div data-testid="stMetricValue" style="color: #e6e6e6; font-size: 24px; font-weight: bold; line-height: 1.2;">{val_str}</div>
+        {delta_html}
+        {spark_html}
+    </div>
     """
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def metric_row(items: list[dict]) -> None:
+    """Render a row of KPI tiles with optional sparklines."""
     if not items:
         return
 
@@ -147,17 +193,25 @@ def metric_row(items: list[dict]) -> None:
 
     _delta_css()
 
-    # Chunk into rows of at most 4 so the layout stays readable on narrow screens.
     _ROW_SIZE = 4
     for start in range(0, len(items), _ROW_SIZE):
         chunk = items[start : start + _ROW_SIZE]
         cols = st.columns(len(chunk))
         for col, item in zip(cols, chunk, strict=False):
-            col.metric(
-                label=item.get("label", ""),
-                value=item.get("value", "—"),
-                delta=item.get("delta"),
-            )
+            with col:
+                if "history" in item:
+                    sparkline_metric(
+                        label=item.get("label", ""),
+                        value=item.get("value", "—"),
+                        delta=item.get("delta", ""),
+                        history=item["history"]
+                    )
+                else:
+                    st.metric(
+                        label=item.get("label", ""),
+                        value=item.get("value", "—"),
+                        delta=item.get("delta"),
+                    )
 
     if truncated:
         st.caption(

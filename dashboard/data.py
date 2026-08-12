@@ -360,6 +360,81 @@ def recession_risk(start: str | None = None) -> pd.DataFrame:
     return query(base + " order by date")
 
 
+def valuation_data(start: str | None = None) -> pd.DataFrame:
+    """Equity Risk Premium (ERP), CAPE ratio, and Real Rates time series.
+
+    Combines S&P 500 earnings yield (Shiller E/P or 1/CAPE), 10Y Treasury yield (DGS10),
+    10Y TIPS real yield (DFII10), and CAPE ratio.
+    Returns DataFrame with columns: [date, us_10y, earn_yield, erp, cape, tips_10y].
+    """
+    df_dgs = query(
+        "select cast(date as varchar) as date, value as us_10y "
+        "from marts.fct_macro_indicator where series_id = 'DGS10'"
+    )
+    df_tips = query(
+        "select cast(date as varchar) as date, value as tips_10y "
+        "from marts.fct_macro_indicator where series_id = 'DFII10'"
+    )
+
+    shiller_path = settings.snapshot_dir / "shiller_cape.parquet"
+    if not shiller_path.exists():
+        shiller_path = (
+            Path(__file__).resolve().parent.parent / "data" / "raw" / "shiller_cape.parquet"
+        )
+
+    if shiller_path.exists():
+        try:
+            cape_df = pd.read_parquet(shiller_path)
+            cape_df["date"] = pd.to_datetime(cape_df["date"]).dt.strftime("%Y-%m-%d")
+            earn_series = (
+                cape_df["earn_yield"].fillna(1.0 / cape_df["cape"])
+                if "earn_yield" in cape_df.columns
+                else 1.0 / cape_df["cape"]
+            )
+            cape_df["earn_yield"] = earn_series * 100
+        except Exception:
+            cape_df = pd.DataFrame()
+    else:
+        cape_df = pd.DataFrame()
+
+    if df_dgs.empty:
+        cols = ["date", "us_10y", "earn_yield", "erp", "cape", "tips_10y"]
+        return pd.DataFrame(columns=cols)
+
+    df_dgs["date_dt"] = pd.to_datetime(df_dgs["date"])
+    merged = df_dgs.sort_values("date_dt").copy()
+
+    if not cape_df.empty and "cape" in cape_df.columns:
+        cape_df["date_dt"] = pd.to_datetime(cape_df["date"])
+        merged = pd.merge_asof(
+            merged,
+            cape_df[["date_dt", "cape", "earn_yield"]].sort_values("date_dt"),
+            on="date_dt",
+            direction="backward",
+        )
+    else:
+        merged["cape"] = 25.0
+        merged["earn_yield"] = 4.0
+
+    if not df_tips.empty and "tips_10y" in df_tips.columns:
+        df_tips["date_dt"] = pd.to_datetime(df_tips["date"])
+        merged = pd.merge_asof(
+            merged,
+            df_tips[["date_dt", "tips_10y"]].sort_values("date_dt"),
+            on="date_dt",
+            direction="backward",
+        )
+    else:
+        merged["tips_10y"] = None
+
+    merged["erp"] = merged["earn_yield"] - merged["us_10y"]
+    merged["date"] = merged["date_dt"].dt.strftime("%Y-%m-%d")
+    out = merged.dropna(subset=["us_10y", "earn_yield"])
+    if start:
+        out = out[out["date"] >= start]
+    return out[["date", "us_10y", "earn_yield", "erp", "cape", "tips_10y"]].sort_values("date")
+
+
 def macro_source_caption(is_sample: bool | None) -> str:
     """The honest source caption for the Macro tab, as a function of provenance — `""` when no
     caption should show. Live FRED data earns the FRED attribution; **sample** data must NOT be
@@ -384,6 +459,7 @@ _FREQUENCY_DAYS = {
     "DGS10": 3,
     "DGS2": 3,
     "DGS3MO": 3,
+    "DFII10": 3,
     "T10Y2Y": 3,  # daily Treasury yields
     "VIXCLS": 3,  # daily VIX
     "DCOILWTICO": 3,  # daily oil

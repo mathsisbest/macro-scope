@@ -31,6 +31,13 @@ _GK_C1 = 0.5
 _GK_C2 = 2.0 * math.log(2) - 1.0  # ≈ 0.3863
 
 
+
+def rolling_zscore(series: pd.Series, window: int, min_periods: int | None = None) -> pd.Series:
+    """Rolling z-score, shifted by 1 to prevent lookahead."""
+    mean = series.rolling(window, min_periods=min_periods).mean()
+    std = series.rolling(window, min_periods=min_periods).std().replace(0, np.nan)
+    return ((series - mean) / std).shift(1)
+
 def feature_columns(feature_set: str = "default") -> list[str]:
     """Return the ordered list of feature column names.
 
@@ -274,12 +281,18 @@ def make_features(
     """
     out = df.sort_values("date").reset_index(drop=True).copy()
     out["ret"] = out["daily_return"]
+    new_cols = {}
     for lag in _LAGS:
-        out[f"ret_lag{lag}"] = out["ret"].shift(lag)
+        new_cols[f"ret_lag{lag}"] = out["ret"].shift(lag)
     for w in _WINDOWS:
-        out[f"roll_mean{w}"] = out["ret"].rolling(w).mean()
-        out[f"roll_std{w}"] = out["ret"].rolling(w).std()
-    out["target_next_ret"] = out["ret"].shift(-1)
+        new_cols[f"roll_mean{w}"] = out["ret"].rolling(w).mean()
+        new_cols[f"roll_std{w}"] = out["ret"].rolling(w).std()
+    new_cols["target_next_ret"] = out["ret"].shift(-1)
+    for k in list(new_cols.keys()):
+        if k in out.columns:
+            out[k] = new_cols.pop(k)
+    if new_cols:
+        out = pd.concat([out, pd.DataFrame(new_cols, index=out.index)], axis=1).copy()
 
     if feature_set == "mom_rev":
         out = _add_mom_rev_features(out)
@@ -317,50 +330,50 @@ _MOM_REV_FEATURE_NAMES: list[str] = [
 def _add_mom_rev_features(out: pd.DataFrame) -> pd.DataFrame:
     """Add momentum and mean-reversion features (all leakage-free)."""
     ret = out["ret"]
+    new_cols = {}
 
     # Momentum: cumulative returns
-    out["mom_21d"] = ret.rolling(21, min_periods=10).sum().shift(1)
-    out["mom_63d"] = ret.rolling(63, min_periods=30).sum().shift(1)
-    out["mom_126d"] = ret.rolling(126, min_periods=60).sum().shift(1)
-    out["mom_252d"] = ret.rolling(252, min_periods=120).sum().shift(1)
-    out["mom_accel"] = out["mom_63d"] - out["mom_63d"].shift(21)
+    new_cols["mom_21d"] = ret.rolling(21, min_periods=10).sum().shift(1)
+    new_cols["mom_63d"] = ret.rolling(63, min_periods=30).sum().shift(1)
+    new_cols["mom_126d"] = ret.rolling(126, min_periods=60).sum().shift(1)
+    new_cols["mom_252d"] = ret.rolling(252, min_periods=120).sum().shift(1)
+    new_cols["mom_accel"] = new_cols["mom_63d"] - new_cols["mom_63d"].shift(21)
 
     # Mean-reversion: short-term reversals
-    out["rev_5d"] = -ret.rolling(5, min_periods=3).sum().shift(1)
-    out["rev_10d"] = -ret.rolling(10, min_periods=5).sum().shift(1)
+    new_cols["rev_5d"] = -ret.rolling(5, min_periods=3).sum().shift(1)
+    new_cols["rev_10d"] = -ret.rolling(10, min_periods=5).sum().shift(1)
 
     # Z-scores
     for w, name in [(20, "ret_zscore_20d"), (60, "ret_zscore_60d")]:
-        mean = ret.rolling(w, min_periods=w // 2).mean()
-        std = ret.rolling(w, min_periods=w // 2).std()
-        out[name] = ((ret - mean) / std.replace(0, np.nan)).shift(1)
+        new_cols[name] = rolling_zscore(ret, w, min_periods=w // 2)
 
     # Distance from rolling mean
     for w, name in [(20, "dist_from_mean_20d"), (60, "dist_from_mean_60d")]:
         mean = ret.rolling(w, min_periods=w // 2).mean()
-        out[name] = (ret - mean).shift(1)
+        new_cols[name] = (ret - mean).shift(1)
 
     # Trend strength
     for w, name in [(20, "trend_20d"), (60, "trend_60d")]:
         mean = ret.rolling(w, min_periods=w // 2).mean()
         std = ret.rolling(w, min_periods=w // 2).std()
-        out[name] = (mean.abs() / std.replace(0, np.nan)).shift(1)
+        new_cols[name] = (mean.abs() / std.replace(0, np.nan)).shift(1)
 
-    return out
+    return out.assign(**new_cols)
 
 
 def _add_vol_features(out: pd.DataFrame) -> pd.DataFrame:
     """Add Garman-Klass vol + HAR cascade + extra trailing RV windows (all leakage-free)."""
+    new_cols = {}
     gk = _garman_klass_vol(out["open"], out["high"], out["low"], out["close"])
-    out["gk_vol"] = gk
+    new_cols["gk_vol"] = gk
 
     for w in _VOL_HAR_WINDOWS:
-        out[f"har_vol_{w}d"] = gk.shift(1).rolling(w, min_periods=1).mean()
+        new_cols[f"har_vol_{w}d"] = gk.shift(1).rolling(w, min_periods=1).mean()
 
     for w in _VOL_EXTRA_WINDOWS:
-        out[f"rv_trail_{w}d"] = gk.shift(1).rolling(w, min_periods=1).std()
+        new_cols[f"rv_trail_{w}d"] = gk.shift(1).rolling(w, min_periods=1).std()
 
-    return out
+    return out.assign(**new_cols)
 
 
 def _add_macro_features(
@@ -382,45 +395,49 @@ def _add_macro_features(
             direction="backward",
         )
 
+    new_cols = {}
     if "T10Y2Y" in out.columns:
         yc = out["T10Y2Y"]
-        out["yc_10y2y_lag1"] = yc.shift(1)
-        out["yc_10y2y_change_20d"] = yc.diff(20).shift(1)
-        yc_mean = yc.rolling(60, min_periods=20).mean()
-        yc_std = yc.rolling(60, min_periods=20).std()
-        out["yc_slope_zscore_60d"] = ((yc - yc_mean) / yc_std.replace(0, np.nan)).shift(1)
+        new_cols["yc_10y2y_lag1"] = yc.shift(1)
+        new_cols["yc_10y2y_change_20d"] = yc.diff(20).shift(1)
+        new_cols["yc_slope_zscore_60d"] = rolling_zscore(yc, window=60, min_periods=20)
 
     for sid, name in [("DGS10", "us_10y"), ("DGS2", "us_2y"), ("DGS3MO", "us_3m")]:
         if sid in out.columns:
-            out[f"{name}_lag1"] = out[sid].shift(1)
+            new_cols[f"{name}_lag1"] = out[sid].shift(1)
     if "DGS10" in out.columns:
-        out["us_10y_change_20d"] = out["DGS10"].diff(20).shift(1)
+        new_cols["us_10y_change_20d"] = out["DGS10"].diff(20).shift(1)
 
     if "FEDFUNDS" in out.columns:
-        out["fedfunds_lag1"] = out["FEDFUNDS"].shift(1)
-        out["fedfunds_change_60d"] = out["FEDFUNDS"].diff(60).shift(1)
+        new_cols["fedfunds_lag1"] = out["FEDFUNDS"].shift(1)
+        new_cols["fedfunds_change_60d"] = out["FEDFUNDS"].diff(60).shift(1)
 
     if "VIXCLS" in out.columns:
         vix = out["VIXCLS"]
-        out["vix_level_lag1"] = vix.shift(1)
-        out["vix_change_5d"] = vix.diff(5).shift(1)
-        vix_mean = vix.rolling(60, min_periods=20).mean()
-        vix_std = vix.rolling(60, min_periods=20).std()
-        out["vix_zscore_60d"] = ((vix - vix_mean) / vix_std.replace(0, np.nan)).shift(1)
+        new_cols["vix_level_lag1"] = vix.shift(1)
+        new_cols["vix_change_5d"] = vix.diff(5).shift(1)
+        new_cols["vix_zscore_60d"] = rolling_zscore(vix, window=60, min_periods=20)
 
     if "DCOILWTICO" in out.columns:
-        out["wti_change_20d"] = out["DCOILWTICO"].pct_change(20).shift(1)
+        new_cols["wti_change_20d"] = out["DCOILWTICO"].pct_change(20).shift(1)
 
     if "DTWEXBGS" in out.columns:
-        out["dollar_change_20d"] = out["DTWEXBGS"].pct_change(20).shift(1)
+        new_cols["dollar_change_20d"] = out["DTWEXBGS"].pct_change(20).shift(1)
 
     if "ICSA" in out.columns:
         claims_4w = out["ICSA"].rolling(4, min_periods=1).mean()
-        out["claims_change_4w"] = claims_4w.diff(4).shift(1)
+        new_cols["claims_change_4w"] = claims_4w.diff(4).shift(1)
 
     if "NFCI" in out.columns:
-        out["nfci_lag1"] = out["NFCI"].shift(1)
-        out["nfci_change_20d"] = out["NFCI"].diff(20).shift(1)
+        new_cols["nfci_lag1"] = out["NFCI"].shift(1)
+        new_cols["nfci_change_20d"] = out["NFCI"].diff(20).shift(1)
+
+    if new_cols:
+        for k in list(new_cols.keys()):
+            if k in out.columns:
+                out[k] = out[k] = new_cols.pop(k)
+        if new_cols:
+            out = pd.concat([out, pd.DataFrame(new_cols, index=out.index)], axis=1).copy()
 
     for col in _MACRO_FEATURE_NAMES:
         if col in out.columns:
@@ -443,9 +460,16 @@ def _add_macro_features(
                 if f"{label}_vol_20d" in out.columns:
                     out[f"{label}_vol_20d_lag1"] = out[f"{label}_vol_20d"].shift(1)
 
+    new_cols_final = {}
     for col in _MACRO_FEATURE_NAMES:
         if col not in out.columns:
-            out[col] = np.nan
+            new_cols_final[col] = np.nan
+    if new_cols_final:
+        for k in list(new_cols_final.keys()):
+            if k in out.columns:
+                out[k] = out[k] = new_cols_final.pop(k)
+        if new_cols_final:
+            out = pd.concat([out, pd.DataFrame(new_cols_final, index=out.index)], axis=1).copy()
 
     return out
 
@@ -457,42 +481,60 @@ def _add_medium_features(out: pd.DataFrame) -> pd.DataFrame:
     and key interaction features. Cheap to compute (no per-symbol cross-asset corrs).
     """
     ret = out["ret"]
+    new_cols = {}
 
     if "gk_vol" in out.columns:
         gk = out["gk_vol"]
-        out["vol_of_vol_5d"] = gk.shift(1).rolling(5, min_periods=3).std()
-        out["vol_of_vol_22d"] = gk.shift(1).rolling(22, min_periods=10).std()
-        short_vol = gk.shift(1).rolling(5, min_periods=3).mean()
-        long_vol = gk.shift(1).rolling(22, min_periods=10).mean()
-        out["vol_dispersion"] = short_vol - long_vol
+        if "vol_of_vol_5d" not in out.columns:
+            new_cols["vol_of_vol_5d"] = gk.shift(1).rolling(5, min_periods=3).std()
+        if "vol_of_vol_22d" not in out.columns:
+            new_cols["vol_of_vol_22d"] = gk.shift(1).rolling(22, min_periods=10).std()
+        if "vol_dispersion" not in out.columns:
+            short_vol = gk.shift(1).rolling(5, min_periods=3).mean()
+            long_vol = gk.shift(1).rolling(22, min_periods=10).mean()
+            new_cols["vol_dispersion"] = short_vol - long_vol
 
-    out["ret_momentum_63d"] = ret.rolling(63, min_periods=31).sum().shift(1)
+    if "ret_momentum_63d" not in out.columns:
+        new_cols["ret_momentum_63d"] = ret.rolling(63, min_periods=31).sum().shift(1)
 
     for w, name in [(5, "ret_reversal_5d"), (20, "ret_reversal_20d")]:
-        out[name] = ret.rolling(w, min_periods=w).sum().shift(1)
+        if name not in out.columns:
+            new_cols[name] = ret.rolling(w, min_periods=w).sum().shift(1)
 
-    vol_5d = ret.rolling(5, min_periods=3).std()
-    vol_20d = ret.rolling(20, min_periods=10).std()
-    out["ret_vol_ratio_5d_20d"] = (vol_5d / vol_20d.replace(0, np.nan)).shift(1)
+    if "ret_vol_ratio_5d_20d" not in out.columns:
+        vol_5d = ret.rolling(5, min_periods=3).std()
+        vol_20d = ret.rolling(20, min_periods=10).std()
+        new_cols["ret_vol_ratio_5d_20d"] = (vol_5d / vol_20d.replace(0, np.nan)).shift(1)
 
-    ret_mean_20d = ret.rolling(20, min_periods=10).mean()
-    ret_std_20d = ret.rolling(20, min_periods=10).std()
-    out["ret_trend_strength"] = (ret_mean_20d.abs() / ret_std_20d.replace(0, np.nan)).shift(1)
+    if "ret_trend_strength" not in out.columns:
+        ret_mean_20d = ret.rolling(20, min_periods=10).mean()
+        ret_std_20d = ret.rolling(20, min_periods=10).std()
+        new_cols["ret_trend_strength"] = (ret_mean_20d.abs() / ret_std_20d.replace(0, np.nan)).shift(1)
 
     if "DTWEXBGS" in out.columns and "dollar_zscore_60d" not in out.columns:
-        dollar = out["DTWEXBGS"]
-        d_mean = dollar.rolling(60, min_periods=20).mean()
-        d_std = dollar.rolling(60, min_periods=20).std()
-        out["dollar_zscore_60d"] = ((dollar - d_mean) / d_std.replace(0, np.nan)).shift(1)
+        new_cols["dollar_zscore_60d"] = rolling_zscore(out["DTWEXBGS"], window=60, min_periods=20)
+
+    # We might have just added dollar_zscore_60d to new_cols
+    def get_col(col):
+        return new_cols[col] if col in new_cols else out[col]
 
     if "vix_zscore_60d" in out.columns and "yc_slope_zscore_60d" in out.columns:
-        out["vix_x_yc_slope"] = out["vix_zscore_60d"] * out["yc_slope_zscore_60d"]
-    if "nfci_lag1" in out.columns and "dollar_zscore_60d" in out.columns:
-        out["nfci_x_dollar_zscore"] = out["nfci_lag1"] * out["dollar_zscore_60d"]
+        if "vix_x_yc_slope" not in out.columns:
+            new_cols["vix_x_yc_slope"] = out["vix_zscore_60d"] * out["yc_slope_zscore_60d"]
+    if "nfci_lag1" in out.columns and ("dollar_zscore_60d" in out.columns or "dollar_zscore_60d" in new_cols):
+        if "nfci_x_dollar_zscore" not in out.columns:
+            new_cols["nfci_x_dollar_zscore"] = out["nfci_lag1"] * get_col("dollar_zscore_60d")
 
     for col in _MEDIUM_FEATURE_NAMES:
-        if col not in out.columns:
-            out[col] = np.nan
+        if col not in out.columns and col not in new_cols:
+            new_cols[col] = np.nan
+            
+    if new_cols:
+        for k in list(new_cols.keys()):
+            if k in out.columns:
+                out[k] = out[k] = new_cols.pop(k)
+        if new_cols:
+            out = pd.concat([out, pd.DataFrame(new_cols, index=out.index)], axis=1).copy()
 
     return out
 
@@ -503,23 +545,36 @@ def _add_rich_features(
 ) -> pd.DataFrame:
     """Add higher moments, vol-of-vol, cross-asset correlations, and calendar effects."""
     ret = out["ret"]
+    new_cols = {}
 
-    out["ret_kurt_20d"] = ret.rolling(20, min_periods=10).kurt()
-    out["ret_skew_20d"] = ret.rolling(20, min_periods=10).skew()
-    out["ret_max_20d"] = ret.rolling(20, min_periods=10).max()
+    new_cols["ret_kurt_20d"] = ret.rolling(20, min_periods=10).kurt()
+    new_cols["ret_skew_20d"] = ret.rolling(20, min_periods=10).skew()
+    new_cols["ret_max_20d"] = ret.rolling(20, min_periods=10).max()
 
     if "gk_vol" in out.columns:
         gk = out["gk_vol"]
-        out["vol_of_vol_5d"] = gk.shift(1).rolling(5, min_periods=3).std()
-        out["vol_of_vol_22d"] = gk.shift(1).rolling(22, min_periods=10).std()
-        short_vol = gk.shift(1).rolling(5, min_periods=3).mean()
-        long_vol = gk.shift(1).rolling(22, min_periods=10).mean()
-        out["vol_dispersion"] = short_vol - long_vol
+        if "vol_of_vol_5d" not in out.columns:
+            new_cols["vol_of_vol_5d"] = gk.shift(1).rolling(5, min_periods=3).std()
+        if "vol_of_vol_22d" not in out.columns:
+            new_cols["vol_of_vol_22d"] = gk.shift(1).rolling(22, min_periods=10).std()
+        if "vol_dispersion" not in out.columns:
+            short_vol = gk.shift(1).rolling(5, min_periods=3).mean()
+            long_vol = gk.shift(1).rolling(22, min_periods=10).mean()
+            new_cols["vol_dispersion"] = short_vol - long_vol
 
     for label in ["gld", "tlt"]:
         col_name = f"corr_spy_{label}_20d"
         if col_name not in out.columns:
-            out[col_name] = np.nan
+            new_cols[col_name] = np.nan
+
+    if new_cols:
+        for k in list(new_cols.keys()):
+            if k in out.columns:
+                out[k] = out[k] = new_cols.pop(k)
+        if new_cols:
+            out = pd.concat([out, pd.DataFrame(new_cols, index=out.index)], axis=1).copy()
+        new_cols = {}
+
     if asset_dfs:
         for sym, label in [("GLD", "gld"), ("TLT", "tlt")]:
             if sym in asset_dfs and not asset_dfs[sym].empty:
@@ -530,26 +585,29 @@ def _add_rich_features(
                 if f"{label}_ret" in out.columns:
                     combined = pd.concat([ret, out[f"{label}_ret"]], axis=1)
                     combined.columns = ["spy_ret", f"{label}_ret"]
-                    out[f"corr_spy_{label}_20d"] = (
+                    new_cols[f"corr_spy_{label}_20d"] = (
                         combined["spy_ret"]
                         .rolling(20, min_periods=10)
                         .corr(combined[f"{label}_ret"])
                     )
 
+    if new_cols:
+        for k in list(new_cols.keys()):
+            if k in out.columns:
+                out[k] = out[k] = new_cols.pop(k)
+        if new_cols:
+            out = pd.concat([out, pd.DataFrame(new_cols, index=out.index)], axis=1).copy()
+        new_cols = {}
+
     for label in ["gld", "tlt"]:
         corr_col = f"corr_spy_{label}_20d"
         zscore_col = f"corr_spy_{label}_zscore_60d"
         if corr_col in out.columns:
-            c = out[corr_col]
-            c_mean = c.rolling(60, min_periods=20).mean()
-            c_std = c.rolling(60, min_periods=20).std()
-            out[zscore_col] = ((c - c_mean) / c_std.replace(0, np.nan)).shift(1)
+            new_cols[zscore_col] = rolling_zscore(out[corr_col], window=60, min_periods=20)
 
     if "DTWEXBGS" in out.columns:
-        dollar = out["DTWEXBGS"]
-        d_mean = dollar.rolling(60, min_periods=20).mean()
-        d_std = dollar.rolling(60, min_periods=20).std()
-        out["dollar_zscore_60d"] = ((dollar - d_mean) / d_std.replace(0, np.nan)).shift(1)
+        if "dollar_zscore_60d" not in out.columns:
+            new_cols["dollar_zscore_60d"] = rolling_zscore(out["DTWEXBGS"], window=60, min_periods=20)
 
     if asset_dfs:
         ret_cols = []
@@ -558,54 +616,71 @@ def _add_rich_features(
                 ret_cols.append(f"{label}_ret")
         if ret_cols:
             disp_raw = out[ret_cols].std(axis=1).rolling(20, min_periods=10).mean()
-            out["cross_asset_dispersion_20d"] = disp_raw.shift(1)
+            new_cols["cross_asset_dispersion_20d"] = disp_raw.shift(1)
 
     if "tlt_ret" in out.columns:
         spread_raw = (ret - out["tlt_ret"]).rolling(20, min_periods=10).mean()
-        out["equity_bond_spread_20d"] = spread_raw.shift(1)
+        new_cols["equity_bond_spread_20d"] = spread_raw.shift(1)
 
     if "date" in out.columns:
         dates = pd.to_datetime(out["date"])
-        out["day_of_week"] = dates.dt.dayofweek / 4.0
-        out["month_of_year"] = dates.dt.month / 12.0
+        new_cols["day_of_week"] = dates.dt.dayofweek / 4.0
+        new_cols["month_of_year"] = dates.dt.month / 12.0
+
+    def get_col(col):
+        return new_cols[col] if col in new_cols else out[col]
 
     if "vix_zscore_60d" in out.columns and "yc_slope_zscore_60d" in out.columns:
-        out["vix_x_yc_slope"] = out["vix_zscore_60d"] * out["yc_slope_zscore_60d"]
-    if "vol_dispersion" in out.columns and "vol_of_vol_22d" in out.columns:
-        out["vol_disp_x_vol_of_vol"] = out["vol_dispersion"] * out["vol_of_vol_22d"]
-    if "nfci_lag1" in out.columns and "dollar_zscore_60d" in out.columns:
-        out["nfci_x_dollar_zscore"] = out["nfci_lag1"] * out["dollar_zscore_60d"]
-    if "ret_skew_20d" in out.columns and "vol_dispersion" in out.columns:
-        out["skew_x_vol_dispersion"] = out["ret_skew_20d"] * out["vol_dispersion"]
+        if "vix_x_yc_slope" not in out.columns:
+            new_cols["vix_x_yc_slope"] = out["vix_zscore_60d"] * out["yc_slope_zscore_60d"]
+    if ("vol_dispersion" in out.columns or "vol_dispersion" in new_cols) and ("vol_of_vol_22d" in out.columns or "vol_of_vol_22d" in new_cols):
+        if "vol_disp_x_vol_of_vol" not in out.columns:
+            new_cols["vol_disp_x_vol_of_vol"] = get_col("vol_dispersion") * get_col("vol_of_vol_22d")
+    if "nfci_lag1" in out.columns and ("dollar_zscore_60d" in out.columns or "dollar_zscore_60d" in new_cols):
+        if "nfci_x_dollar_zscore" not in out.columns:
+            new_cols["nfci_x_dollar_zscore"] = out["nfci_lag1"] * get_col("dollar_zscore_60d")
+    if ("ret_skew_20d" in out.columns or "ret_skew_20d" in new_cols) and ("vol_dispersion" in out.columns or "vol_dispersion" in new_cols):
+        if "skew_x_vol_dispersion" not in out.columns:
+            new_cols["skew_x_vol_dispersion"] = get_col("ret_skew_20d") * get_col("vol_dispersion")
 
     for w, name in [
         (63, "ret_momentum_63d"),
         (126, "ret_momentum_126d"),
         (252, "ret_momentum_252d"),
     ]:
-        out[name] = ret.rolling(w, min_periods=w // 2).sum().shift(1)
+        if name not in out.columns:
+            new_cols[name] = ret.rolling(w, min_periods=w // 2).sum().shift(1)
 
     for w, name in [(5, "ret_reversal_5d"), (20, "ret_reversal_20d")]:
-        out[name] = ret.rolling(w, min_periods=w).sum().shift(1)
+        if name not in out.columns:
+            new_cols[name] = ret.rolling(w, min_periods=w).sum().shift(1)
 
-    vol_5d = ret.rolling(5, min_periods=3).std()
-    vol_20d = ret.rolling(20, min_periods=10).std()
-    out["ret_vol_ratio_5d_20d"] = (vol_5d / vol_20d.replace(0, np.nan)).shift(1)
+    if "ret_vol_ratio_5d_20d" not in out.columns:
+        vol_5d = ret.rolling(5, min_periods=3).std()
+        vol_20d = ret.rolling(20, min_periods=10).std()
+        new_cols["ret_vol_ratio_5d_20d"] = (vol_5d / vol_20d.replace(0, np.nan)).shift(1)
 
-    ret_mean_20d = ret.rolling(20, min_periods=10).mean()
-    ret_std_20d = ret.rolling(20, min_periods=10).std()
-    out["ret_trend_strength"] = (ret_mean_20d.abs() / ret_std_20d.replace(0, np.nan)).shift(1)
+    if "ret_trend_strength" not in out.columns:
+        ret_mean_20d = ret.rolling(20, min_periods=10).mean()
+        ret_std_20d = ret.rolling(20, min_periods=10).std()
+        new_cols["ret_trend_strength"] = (ret_mean_20d.abs() / ret_std_20d.replace(0, np.nan)).shift(1)
 
-    out["ret_autocorr_20d"] = (
-        ret.rolling(20, min_periods=15)
-        .apply(lambda x: x.autocorr(lag=1) if len(x) > 5 else np.nan, raw=False)
-        .shift(1)
-    )
+    ret_shifted = ret.shift(1)
+    new_cols["ret_autocorr_20d"] = ret.rolling(20, min_periods=15).corr(ret_shifted).shift(1)
 
     if "yc_slope_zscore_60d" in out.columns and "vix_level_lag1" in out.columns:
-        out["yc_slope_x_vix"] = out["yc_slope_zscore_60d"] * out["vix_level_lag1"]
-    if "ret_momentum_63d" in out.columns and "gk_vol" in out.columns:
-        out["momentum_x_vol"] = out["ret_momentum_63d"] * out["gk_vol"]
+        if "yc_slope_x_vix" not in out.columns:
+            new_cols["yc_slope_x_vix"] = out["yc_slope_zscore_60d"] * out["vix_level_lag1"]
+    if ("ret_momentum_63d" in out.columns or "ret_momentum_63d" in new_cols) and "gk_vol" in out.columns:
+        if "momentum_x_vol" not in out.columns:
+            new_cols["momentum_x_vol"] = get_col("ret_momentum_63d") * out["gk_vol"]
+
+    if new_cols:
+        for k in list(new_cols.keys()):
+            if k in out.columns:
+                out[k] = out[k] = new_cols.pop(k)
+        if new_cols:
+            out = pd.concat([out, pd.DataFrame(new_cols, index=out.index)], axis=1).copy()
 
     for col in ["corr_spy_tlt_20d", "corr_spy_gld_20d"]:
         if col in out.columns:
@@ -626,6 +701,7 @@ def _add_extended_features(
     or asset isn't available, the corresponding features are filled as NaN.
     """
     ret = out["ret"]
+    new_cols = {}
 
     # Publication lag (trading days) mapping for FRED monthly/quarterly series
     fred_pub_lags = {
@@ -659,7 +735,15 @@ def _add_extended_features(
     for fred_col, feat_name, transform in fred_unused:
         if fred_col in out.columns:
             lag = fred_pub_lags.get(fred_col, 1)
-            out[feat_name] = transform(out[fred_col]).shift(lag)
+            new_cols[feat_name] = transform(out[fred_col]).shift(lag)
+
+    if new_cols:
+        for k in list(new_cols.keys()):
+            if k in out.columns:
+                out[k] = out[k] = new_cols.pop(k)
+        if new_cols:
+            out = pd.concat([out, pd.DataFrame(new_cols, index=out.index)], axis=1).copy()
+        new_cols = {}
 
     # --- Breakeven inflation (TLT - TIP return spread) ---
     if asset_dfs:
@@ -673,14 +757,14 @@ def _add_extended_features(
 
         if "tlt_ret" in out.columns and "tip_ret" in out.columns:
             be_raw = out["tlt_ret"] - out["tip_ret"]
-            out["breakeven_inflation_20d"] = be_raw.rolling(20, min_periods=10).mean().shift(1)
-            out["breakeven_inflation_60d"] = be_raw.rolling(60, min_periods=20).mean().shift(1)
-            out["breakeven_inflation_change_20d"] = out["breakeven_inflation_20d"].diff(20)
+            new_cols["breakeven_inflation_20d"] = be_raw.rolling(20, min_periods=10).mean().shift(1)
+            new_cols["breakeven_inflation_60d"] = be_raw.rolling(60, min_periods=20).mean().shift(1)
+            new_cols["breakeven_inflation_change_20d"] = new_cols["breakeven_inflation_20d"].diff(20)
 
     # --- Recession probability ---
     if "recession_prob" in out.columns:
-        out["recession_prob_lag1"] = out["recession_prob"].shift(1)
-        out["recession_prob_change_20d"] = out["recession_prob"].diff(20).shift(1)
+        new_cols["recession_prob_lag1"] = out["recession_prob"].shift(1)
+        new_cols["recession_prob_change_20d"] = out["recession_prob"].diff(20).shift(1)
 
     # --- Cross-asset return spreads ---
     if asset_dfs:
@@ -710,30 +794,35 @@ def _add_extended_features(
         ]:
             if f"{label}_ret" in out.columns:
                 spread = (ret - out[f"{label}_ret"]).rolling(20, min_periods=10).mean()
-                out[feat_name] = spread.shift(1)
+                new_cols[feat_name] = spread.shift(1)
 
         if "gld_ret" in out.columns and "tlt_ret" in out.columns:
             spread = (out["gld_ret"] - out["tlt_ret"]).rolling(20, min_periods=10).mean()
-            out["gld_tlt_spread_20d"] = spread.shift(1)
+            new_cols["gld_tlt_spread_20d"] = spread.shift(1)
 
     # --- Momentum features (unique ones not in vol_rich) ---
-    out["mom_21d"] = ret.rolling(21, min_periods=10).sum().shift(1)
-    out["mom_accel"] = out["mom_21d"] - out["mom_21d"].shift(21)
-    out["rev_10d"] = -ret.rolling(10, min_periods=5).sum().shift(1)
+    new_cols["mom_21d"] = ret.rolling(21, min_periods=10).sum().shift(1)
+    new_cols["mom_accel"] = new_cols["mom_21d"] - new_cols["mom_21d"].shift(21)
+    new_cols["rev_10d"] = -ret.rolling(10, min_periods=5).sum().shift(1)
     for w, name in [(20, "ret_zscore_20d"), (60, "ret_zscore_60d")]:
-        mean = ret.rolling(w, min_periods=w // 2).mean()
-        std = ret.rolling(w, min_periods=w // 2).std()
-        out[name] = ((ret - mean) / std.replace(0, np.nan)).shift(1)
+        new_cols[name] = rolling_zscore(ret, w, min_periods=w // 2)
     for w, name in [(20, "dist_from_mean_20d"), (60, "dist_from_mean_60d")]:
         mean = ret.rolling(w, min_periods=w // 2).mean()
-        out[name] = (ret - mean).shift(1)
+        new_cols[name] = (ret - mean).shift(1)
     for w, name in [(60, "trend_60d")]:
         mean = ret.rolling(w, min_periods=w // 2).mean()
         std = ret.rolling(w, min_periods=w // 2).std()
-        out[name] = (mean.abs() / std.replace(0, np.nan)).shift(1)
+        new_cols[name] = (mean.abs() / std.replace(0, np.nan)).shift(1)
 
     for col in _EXTENDED_FEATURE_NAMES:
-        if col not in out.columns:
-            out[col] = np.nan
+        if col not in out.columns and col not in new_cols:
+            new_cols[col] = np.nan
+
+    if new_cols:
+        for k in list(new_cols.keys()):
+            if k in out.columns:
+                out[k] = out[k] = new_cols.pop(k)
+        if new_cols:
+            out = pd.concat([out, pd.DataFrame(new_cols, index=out.index)], axis=1).copy()
 
     return out

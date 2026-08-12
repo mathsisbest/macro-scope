@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pandas as pd
+    import duckdb
 
     from mmi.ingestion.base import Extractor
 
@@ -242,7 +243,7 @@ def _total_parquet_bytes(out_dir: Path) -> int:
     return total
 
 
-def _export_marts_tables_to_parquet(con, out_dir: Path) -> tuple[list[str], dict]:
+def _export_marts_tables_to_parquet(con: duckdb.DuckDBPyConnection, out_dir: Path) -> tuple[list[str], dict]:
     """Export every marts schema table to Parquet and return table list + manifest data."""
     import os
     import tempfile
@@ -258,17 +259,11 @@ def _export_marts_tables_to_parquet(con, out_dir: Path) -> tuple[list[str], dict
         return [], {}
 
     manifest: dict = {"tables": {}, "generated_at": ""}
+    from mmi.utils.atomic import atomic_write
     for table in tables:
         dest = out_dir / f"{table}.parquet"
-        fd, tmp_path = tempfile.mkstemp(dir=out_dir, prefix=f"_{table}_", suffix=".parquet.tmp")
-        try:
-            os.close(fd)
+        with atomic_write(dest) as tmp_path:
             con.execute(f"copy marts.\"{table}\" to '{tmp_path}' (format parquet)")
-            os.replace(tmp_path, dest)
-        except Exception:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_path)
-            raise
 
         row = con.execute(f'select count(*) from marts."{table}"').fetchone()
         manifest["tables"][table] = {"rows": row[0] if row else 0}
@@ -283,17 +278,13 @@ def _write_snapshot_manifest(out_dir: Path, manifest: dict) -> None:
     import tempfile
     from datetime import datetime, timezone
 
+    from mmi.utils.atomic import atomic_write
+
     manifest["generated_at"] = datetime.now(timezone.utc).isoformat()
     manifest_path = out_dir / "_manifest.json"
-    fd, tmp_manifest = tempfile.mkstemp(dir=out_dir, prefix="_manifest_", suffix=".json.tmp")
-    try:
-        with os.fdopen(fd, "w") as fh:
+    with atomic_write(manifest_path) as tmp_manifest:
+        with open(tmp_manifest, "w") as fh:
             json.dump(manifest, fh, indent=2)
-        os.replace(tmp_manifest, manifest_path)
-    except Exception:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp_manifest)
-        raise
 
 
 def cmd_snapshot(_: argparse.Namespace) -> int:
@@ -338,7 +329,7 @@ def cmd_snapshot(_: argparse.Namespace) -> int:
     return 0
 
 
-def _load_portfolio_macro_context(con) -> tuple[Any, dict]:
+def _load_portfolio_macro_context(con: duckdb.DuckDBPyConnection) -> tuple[Any, dict]:
     """Load macro indicators and cross-asset DataFrames for portfolio feature engineering."""
     import pandas as pd
 
@@ -472,12 +463,25 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
                     asset_dfs=asset_dfs_macro,
                 )
 
+        WINDOW_CONFIG = {
+            windows.EX_BTC_2002: ("2002-01-01", "2099-12-31"),
+            windows.EX_BTC_2015: ("2015-01-01", "2099-12-31"),
+            windows.INC_BTC_2015: ("2015-01-01", "2099-12-31"),
+        }
+
         window_data = {}
         for window_id in windows.WINDOWS:
             if window_id != windows.EX_BTC_2002 and btc_floor is None:
                 continue
+            
+            window_start, window_end = WINDOW_CONFIG.get(window_id, ("2000-01-01", "2099-12-31"))
+            window_asset_daily_raw = con.execute(
+                "SELECT * FROM marts.fct_asset_daily WHERE date >= ? AND date <= ?",
+                [window_start, window_end]
+            ).fetchdf()
+
             wad = compute.window_asset_daily(
-                asset_daily, window_id, btc_floor=btc_floor, btc_aligned=btc_aligned
+                window_asset_daily_raw, window_id, btc_floor=btc_floor, btc_aligned=btc_aligned
             )
             if not wad.empty:
                 window_data[window_id] = wad

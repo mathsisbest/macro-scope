@@ -20,12 +20,68 @@ from dashboard.theme import (
     asset_class_color,
     style_fig,
 )
+from plotly.subplots import make_subplots
 
 from mmi.ml.skill_gate import skill_verdict
 
 # ---------------------------------------------------------------------------
 # Shared layout helpers
 # ---------------------------------------------------------------------------
+
+def _add_regime_shading(fig: go.Figure, regime_df: pd.DataFrame, date_col: str = "date") -> go.Figure:
+    if regime_df is None or regime_df.empty or date_col not in regime_df.columns or "regime" not in regime_df.columns:
+        return fig
+    
+    colors = {
+        "Low": "rgba(76,175,80,0.08)",
+        "Medium": "rgba(255,193,7,0.08)",
+        "High": "rgba(244,67,54,0.08)",
+    }
+    
+    regimes = regime_df["regime"].tolist()
+    dates = regime_df[date_col].tolist()
+    if not regimes:
+        return fig
+        
+    start_idx = 0
+    current_regime = regimes[0]
+    
+    for i in range(1, len(regimes) + 1):
+        if i == len(regimes) or regimes[i] != current_regime:
+            start_date = dates[start_idx]
+            end_date = dates[i-1]
+            if current_regime in colors:
+                fig.add_vrect(
+                    x0=start_date,
+                    x1=end_date,
+                    fillcolor=colors[current_regime],
+                    layer="below",
+                    line_width=0,
+                )
+            if i < len(regimes):
+                start_idx = i
+                current_regime = regimes[i]
+                
+    return fig
+
+def _annotate_events(fig: go.Figure, events: list[dict], date_range: tuple) -> go.Figure:
+    if not events:
+        return fig
+    start_str, end_str = date_range
+    for ev in events:
+        d = ev.get("date")
+        if d and start_str <= d <= end_str:
+            fig.add_vline(
+                x=d,
+                line_width=1,
+                line_dash="dash",
+                line_color=PALETTE["muted"],
+                annotation_text=ev.get("label", ""),
+                annotation_position="top right",
+                annotation_font_size=10,
+                annotation_font_color=PALETTE["muted"],
+            )
+    return fig
 
 _TITLE_FONT = dict(size=15, color=PALETTE["text"])
 _AXIS_FONT = dict(size=12, color=PALETTE["muted"])
@@ -71,7 +127,7 @@ def _guard_yrange(fig: go.Figure, series: pd.Series, pad: float = 0.05) -> None:
 # ---------------------------------------------------------------------------
 
 
-def price_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
+def price_chart(df: pd.DataFrame, symbol: str, regime_df: pd.DataFrame | None = None) -> go.Figure:
     fig = go.Figure()
     fig.add_scatter(
         x=df["date"],
@@ -96,10 +152,12 @@ def price_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
     fig.update_yaxes(tickformat="$,.2f", hoverformat="$,.2f")
     if not df.empty and "close" in df.columns:
         _guard_yrange(fig, df["close"])
+    if regime_df is not None:
+        _add_regime_shading(fig, regime_df)
     return style_fig(fig, height=HEIGHT_DEFAULT)
 
 
-def vol_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
+def vol_chart(df: pd.DataFrame, symbol: str, regime_df: pd.DataFrame | None = None) -> go.Figure:
     fig = go.Figure()
     fig.add_scatter(
         x=df["date"],
@@ -116,6 +174,8 @@ def vol_chart(df: pd.DataFrame, symbol: str) -> go.Figure:
     fig.update_yaxes(tickformat=".1%", hoverformat=".1%")
     if not df.empty and "vol_20d" in df.columns:
         _guard_yrange(fig, df["vol_20d"])
+    if regime_df is not None:
+        _add_regime_shading(fig, regime_df)
     return style_fig(fig, height=HEIGHT_DEFAULT)
 
 
@@ -235,7 +295,7 @@ def leaderboard_return_color(period_return: float) -> str:
     return PALETTE["up"] if period_return >= 0 else PALETTE["down"]
 
 
-def rebased_performance_chart(perf_long: pd.DataFrame, height: int = HEIGHT_TALL) -> go.Figure:
+def rebased_performance_chart(perf_long: pd.DataFrame, height: int = HEIGHT_TALL, regime_df: pd.DataFrame | None = None) -> go.Figure:
     """One class-coloured line per symbol over the window, each rebased to 0% at the start.
 
     The legend shows each symbol with its final % so the chart reads without hovering. Line
@@ -266,6 +326,8 @@ def rebased_performance_chart(perf_long: pd.DataFrame, height: int = HEIGHT_TALL
     _apply_axis_fonts(fig)
     n = perf_long["symbol"].nunique() if not perf_long.empty else 0
     _overflow_legend(fig, n)
+    if regime_df is not None:
+        _add_regime_shading(fig, regime_df)
     return style_fig(fig, height=height)
 
 
@@ -1335,3 +1397,142 @@ def scenario_simulation_chart(
     )
     _apply_axis_fonts(fig)
     return style_fig(fig, height=height)
+
+def forecast_fan_chart(
+    forecast_history: pd.DataFrame,
+    actuals: pd.DataFrame | None = None,
+    height: int = HEIGHT_DEFAULT,
+) -> go.Figure:
+    fig = go.Figure()
+    if forecast_history.empty or "predicted_return" not in forecast_history.columns:
+        return style_fig(fig, height=height)
+        
+    df = forecast_history.copy()
+    if actuals is not None and not actuals.empty and "actual_return" in actuals.columns:
+        df = df.merge(actuals[["date", "actual_return"]], on="date", how="left")
+    else:
+        df["actual_return"] = float("nan")
+
+    if "actual_return" in df.columns:
+        error = df["predicted_return"] - df["actual_return"]
+        std_60 = error.rolling(60, min_periods=10).std()
+    else:
+        std_60 = pd.Series(0.0, index=df.index)
+
+    df["std"] = std_60
+    
+    fig.add_scatter(x=df["date"], y=df["predicted_return"] - 2*df["std"], line=dict(width=0), showlegend=False, name="-2σ")
+    fig.add_scatter(x=df["date"], y=df["predicted_return"] - df["std"], fill='tonexty', fillcolor='rgba(128,128,128,0.1)', line=dict(width=0), name='-2σ to -1σ')
+    fig.add_scatter(x=df["date"], y=df["predicted_return"] + df["std"], fill='tonexty', fillcolor='rgba(128,128,128,0.2)', line=dict(width=0), name='±1σ')
+    fig.add_scatter(x=df["date"], y=df["predicted_return"] + 2*df["std"], fill='tonexty', fillcolor='rgba(128,128,128,0.1)', line=dict(width=0), name='+1σ to +2σ')
+    
+    fig.add_scatter(
+        x=df["date"],
+        y=df["predicted_return"],
+        name="Predicted Return",
+        line=dict(color=PALETTE["accent"])
+    )
+    
+    if actuals is not None and not actuals.empty and "actual_return" in actuals.columns:
+        fig.add_scatter(
+            x=df["date"],
+            y=df["actual_return"],
+            mode="markers",
+            name="Actual Return",
+            marker=dict(color=PALETTE["text"], size=4)
+        )
+        
+    fig.update_layout(title=dict(text="Forecast Fan Chart", font=_TITLE_FONT))
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=height)
+
+def ratio_chart(
+    long_df: pd.DataFrame,
+    numerator: str,
+    denominator: str,
+    zscore_window: int = 252,
+    height: int = HEIGHT_DEFAULT,
+) -> go.Figure:
+    fig = go.Figure()
+    if long_df.empty:
+        return style_fig(fig, height=height)
+        
+    num_df = long_df[long_df["symbol"] == numerator].set_index("date")
+    den_df = long_df[long_df["symbol"] == denominator].set_index("date")
+    
+    if num_df.empty or den_df.empty:
+        return style_fig(fig, height=height)
+        
+    df = pd.DataFrame(index=num_df.index.join(den_df.index, how="inner"))
+    df["ratio"] = num_df["close"] / den_df["close"]
+    df = df.reset_index()
+    df = df.sort_values("date")
+    
+    roll = df["ratio"].rolling(zscore_window, min_periods=min(30, zscore_window))
+    mean = roll.mean()
+    std = roll.std()
+    
+    zscore = (df["ratio"] - mean) / std
+    current_z = float(zscore.iloc[-1]) if not zscore.empty and pd.notna(zscore.iloc[-1]) else 0.0
+    
+    fig.add_scatter(x=df["date"], y=df["ratio"], name=f"{numerator}/{denominator}", line=dict(color=PALETTE["accent"]))
+    
+    fig.add_scatter(x=df["date"], y=mean + 2*std, line=dict(color=PALETTE["muted"], dash="dot"), name="+2σ")
+    fig.add_scatter(x=df["date"], y=mean + 1*std, line=dict(color=PALETTE["muted"], dash="dash"), name="+1σ")
+    fig.add_scatter(x=df["date"], y=mean - 1*std, line=dict(color=PALETTE["muted"], dash="dash"), name="-1σ")
+    fig.add_scatter(x=df["date"], y=mean - 2*std, line=dict(color=PALETTE["muted"], dash="dot"), name="-2σ")
+    
+    if not df.empty:
+        fig.add_annotation(
+            x=df["date"].iloc[-1],
+            y=df["ratio"].iloc[-1],
+            text=f"z-score: {current_z:+.2f}",
+            showarrow=False,
+            xanchor="left",
+            xshift=10
+        )
+    
+    fig.update_layout(title=dict(text=f"{numerator} / {denominator} Ratio", font=_TITLE_FONT))
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=height)
+
+def candlestick_chart(
+    df: pd.DataFrame,
+    symbol: str,
+    height: int = HEIGHT_DEFAULT,
+) -> go.Figure:
+    fig = make_subplots(rows=2, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.03)
+    
+    if df.empty or not {"open", "high", "low", "close"}.issubset(df.columns):
+        return style_fig(fig, height=height)
+        
+    fig.add_trace(
+        go.Candlestick(
+            x=df["date"],
+            open=df["open"],
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            name="Price"
+        ),
+        row=1, col=1
+    )
+    
+    if "volume" in df.columns:
+        fig.add_trace(
+            go.Bar(
+                x=df["date"],
+                y=df["volume"],
+                name="Volume",
+                marker_color=PALETTE["muted"]
+            ),
+            row=2, col=1
+        )
+        
+    fig.update_layout(
+        title=dict(text=f"{symbol} Candlestick & Volume", font=_TITLE_FONT),
+        xaxis_rangeslider_visible=False
+    )
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=height)
+
