@@ -198,6 +198,22 @@ def btc_aligned_returns(asset_daily: pd.DataFrame, *, btc_symbol: str = "BTC") -
     btc_returns = btc.set_index("date")["daily_return"].sort_index()
     btc_returns.index = pd.to_datetime(btc_returns.index)
     btc_returns = btc_returns[~btc_returns.index.duplicated(keep="first")]  # deduplicate
+    btc_valid = btc_returns.notna()
+    if btc_valid.any():
+        first = btc_returns.first_valid_index()
+        last = btc_returns.last_valid_index()
+        interior: int = int(btc_returns.loc[first:last].isna().sum())
+        leading: int = int(btc_valid.index.get_loc(first))
+        trailing: int = int(len(btc_valid) - 1 - btc_valid.index.get_loc(last))
+        if interior > 0:
+            log.warning(
+                "%s aligned returns: %d interior NaN observation(s) treated as 0%% "
+                "(leading/trailing gaps skipped: %d/%d)",
+                btc_symbol,
+                interior,
+                leading,
+                trailing,
+            )
     wealth = (1.0 + btc_returns.fillna(0.0)).cumprod()
     on_equity = wealth.reindex(equity_dates).ffill()
     aligned = on_equity.pct_change()
