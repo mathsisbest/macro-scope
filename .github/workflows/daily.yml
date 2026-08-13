@@ -39,6 +39,9 @@ jobs:
           mmi ingest
           dbt build --project-dir transform --profiles-dir transform --target dev \
             --exclude tag:portfolio --indirect-selection cautious || mmi build
+          # Source freshness — warn-only (D4): stale sources warn, never fail the cron
+          dbt source freshness --project-dir transform --profiles-dir transform --target dev \
+            || { echo "source freshness: warnings only, not failing the run"; true; }
           mmi snapshot
 
       - name: Commit snapshot
