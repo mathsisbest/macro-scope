@@ -40,6 +40,7 @@ macro:             # FRED series — { id, label, category, units }. Adding a li
   - { id: DGS10,           label: "10Y Treasury yield",     category: "Rates & curve",     units: "%" }
   - { id: DGS2,            label: "2Y Treasury yield",      category: "Rates & curve",     units: "%" }
   - { id: DGS3MO,          label: "3M Treasury yield",      category: "Rates & curve",     units: "%" }
+  - { id: DFII10,          label: "10Y TIPS yield",         category: "Rates & curve",     units: "%" }
   - { id: T10Y2Y,          label: "10Y-2Y spread",          category: "Rates & curve",     units: "pp" }
   - { id: FEDFUNDS,        label: "Fed funds rate",         category: "Rates & curve",     units: "%" }
   # Fiscal
