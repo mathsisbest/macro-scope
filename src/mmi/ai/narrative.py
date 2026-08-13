@@ -4,7 +4,9 @@ The brief is market commentary: it tells the story of the day's macro backdrop a
 moves — what rose and fell together, what diverged, where there's momentum / mean-reversion /
 rotation, and the plausible *why* tied to rates, inflation, the dollar, oil and risk appetite.
 It deliberately does NOT discuss portfolio strategies, allocation, or the ML/volatility model —
-those live on their own dashboard tabs.
+those live on their own dashboard tabs.  The deterministic offline template is the one exception:
+it states the volatility-model skill-gate status honestly (cleared or baseline-only) when the
+metrics mart is available.
 
 Falls back to a deterministic template when no LLM key is configured (or the call fails / its
 output is rejected), so the feature always works and CI/demo stay free.
@@ -20,6 +22,7 @@ from typing import Any, TypedDict
 import pandas as pd
 
 from mmi.ai import llm
+from mmi.ml.skill_gate import skill_verdict
 from mmi.settings import settings
 from mmi.utils.atomic import atomic_write
 from mmi.utils.logging import get_logger
@@ -446,7 +449,38 @@ def _build_prompt(facts: FactsDict) -> str:
     )
 
 
-def _offline_brief(facts: FactsDict, note: str = "no LLM key set") -> str:
+def _model_skill_line(model_metrics_df: pd.DataFrame | None, symbol: str = "SPY") -> str | None:
+    """One honest skill-gate status line for the offline template, or None to omit it.
+
+    Sourced ONLY from skill_verdict() — never asserts skill the gate did not clear.
+    The line is omitted (not asserted) when there are no rv_har metrics for the symbol.
+    """
+    if model_metrics_df is None or model_metrics_df.empty:
+        return None
+    if not {"model", "symbol"} <= set(model_metrics_df.columns):
+        return None
+    subset = model_metrics_df[
+        (model_metrics_df["model"] == "rv_har") & (model_metrics_df["symbol"] == symbol)
+    ]
+    if subset.empty:
+        return None
+    verdict = skill_verdict(model_metrics_df, symbol=symbol)
+    if verdict["cleared"]:
+        return (
+            f"**Model skill status:** the {symbol} volatility model beats the persistence "
+            "baseline out-of-sample (skill gate cleared)."
+        )
+    return (
+        f"**Model skill status:** the {symbol} volatility model is baseline-only — "
+        "no demonstrated out-of-sample edge (skill gate not cleared)."
+    )
+
+
+def _offline_brief(
+    facts: FactsDict,
+    note: str = "no LLM key set",
+    model_metrics_df: pd.DataFrame | None = None,
+) -> str:
     """Deterministic template used when the LLM narrative is unavailable.
 
     It reports the macro backdrop, cross-asset moves and notable correlations honestly and
@@ -475,6 +509,10 @@ def _offline_brief(facts: FactsDict, note: str = "no LLM key set") -> str:
             "",
         ]
 
+    skill_line = _model_skill_line(model_metrics_df)
+    if skill_line is not None:
+        lines += [skill_line, ""]
+
     lines.append("_Watch: incoming macro releases and any shift in rates, the dollar, or risk._")
     return "\n".join(lines)
 
@@ -482,6 +520,9 @@ def _offline_brief(facts: FactsDict, note: str = "no LLM key set") -> str:
 def generate_brief(con) -> str:
     """Produce the brief, persist it to data/briefs/ and marts.market_brief."""
     facts = gather_facts(con)
+    model_metrics_df = _q(
+        con, "select model, symbol, metric, value, trained_at from marts.model_metrics"
+    )
     if llm.available():
         try:
             # 4096 so medium thinking has room before the 6-10 sentence narrative answer.
@@ -492,7 +533,9 @@ def generate_brief(con) -> str:
                     "LLM brief rejected (%s); falling back to offline template",
                     rejection,
                 )
-                text = _offline_brief(facts, note="LLM output failed validation")
+                text = _offline_brief(
+                    facts, note="LLM output failed validation", model_metrics_df=model_metrics_df
+                )
                 engine = "offline-template (llm-rejected)"
             else:
                 text = raw_text
@@ -500,10 +543,12 @@ def generate_brief(con) -> str:
             # redact: the provider key rides in the request URL/headers, so it can surface in the
             # httpx error string — never let it reach the logs (see utils/redact.py).
             log.warning("LLM brief failed (%s); falling back to offline template", redact(str(exc)))
-            text = _offline_brief(facts, note="LLM temporarily unavailable")
+            text = _offline_brief(
+                facts, note="LLM temporarily unavailable", model_metrics_df=model_metrics_df
+            )
             engine = "offline-template (llm-failed)"
     else:
-        text = _offline_brief(facts)
+        text = _offline_brief(facts, model_metrics_df=model_metrics_df)
         engine = "offline-template"
     log.info("brief generated via %s", engine)
 

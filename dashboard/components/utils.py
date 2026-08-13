@@ -19,6 +19,32 @@ def provenance_badge(as_of_val: str | None, is_sample_val: bool | None) -> str:
     return " · ".join(parts) if parts else ""
 
 
+def verdict_status_message(verdict: dict) -> tuple[str, bool]:
+    """One honest skill-gate status line + whether it must render as a warning.
+
+    Returns ``(label, is_warning)``.  The not-cleared (escape-hatch) state is a
+    warning so the UI can surface it unmissably; a cleared gate is a neutral
+    caption.  The label is sourced ONLY from the skill_verdict() output.
+    """
+    if verdict["cleared"]:
+        r2 = verdict["oos_r2"]
+        ratio = verdict["qlike_skill_ratio"]
+        folds_passed = verdict["folds_passed"]
+        n_folds = verdict["n_folds"]
+        return (
+            f"Volatility model skill gate: CLEARED — beats the persistence baseline "
+            f"out-of-sample (OOS R²={r2:.3f} ≥ 0.10; QLIKE skill ratio={ratio:.3f} < 0.99; "
+            f"{folds_passed}/{n_folds} folds passed).",
+            False,
+        )
+    reasons = "; ".join(verdict["reasons"]) if verdict["reasons"] else "metrics not yet available"
+    return (
+        f"Volatility model skill gate: NOT CLEARED — baseline-only, no demonstrated "
+        f"out-of-sample edge. {reasons}",
+        True,
+    )
+
+
 def sidebar_status(is_sample_val: bool | None, as_of_val: str | None, runs: pd.DataFrame) -> str:
     """Return a human-readable pipeline-health caption."""
     if not runs.empty:

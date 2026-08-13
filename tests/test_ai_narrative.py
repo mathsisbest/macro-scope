@@ -253,6 +253,97 @@ def test_offline_brief_deterministic_byte_identical():
     assert narrative._offline_brief(facts) == narrative._offline_brief(facts)
 
 
+def _rv_har_metrics_df(oos_r2: float, qlike_skill_ratio: float) -> pd.DataFrame:
+    """Long-format model_metrics rows for SPY rv_har (same shape as marts.model_metrics)."""
+    trained_at = "2025-01-01T00:00:00"
+    rows = [
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "oos_r2",
+            "value": oos_r2,
+            "trained_at": trained_at,
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "qlike_skill_ratio",
+            "value": qlike_skill_ratio,
+            "trained_at": trained_at,
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "folds_passed",
+            "value": 4.0,
+            "trained_at": trained_at,
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "n_folds",
+            "value": 5.0,
+            "trained_at": trained_at,
+        },
+        {
+            "model": "rv_har",
+            "symbol": "SPY",
+            "metric": "n_obs",
+            "value": 500.0,
+            "trained_at": trained_at,
+        },
+    ]
+    return pd.DataFrame(rows)
+
+
+def test_offline_brief_states_skill_gate_baseline_only_when_not_cleared():
+    """The template must say the vol model is baseline-only when the gate is NOT cleared."""
+    facts = {"data_date": "2026-06-25"}
+    brief = narrative._offline_brief(
+        facts, model_metrics_df=_rv_har_metrics_df(oos_r2=0.02, qlike_skill_ratio=1.5)
+    )
+    assert "Model skill status" in brief
+    assert "baseline-only" in brief
+    assert "no demonstrated out-of-sample edge" in brief
+    assert "skill gate not cleared" in brief
+
+
+def test_offline_brief_states_skill_gate_beats_baseline_when_cleared():
+    """The template may claim the beaten-baseline result ONLY when the gate cleared."""
+    facts = {"data_date": "2026-06-25"}
+    brief = narrative._offline_brief(
+        facts, model_metrics_df=_rv_har_metrics_df(oos_r2=0.2, qlike_skill_ratio=0.5)
+    )
+    assert "Model skill status" in brief
+    assert "beats the persistence baseline out-of-sample" in brief
+    assert "skill gate cleared" in brief
+    assert "baseline-only" not in brief
+
+
+def test_offline_brief_omits_skill_line_when_metrics_missing():
+    facts = {"data_date": "2026-06-25"}
+    assert "Model skill status" not in narrative._offline_brief(facts)
+    empty = pd.DataFrame(columns=["model", "symbol", "metric", "value"])
+    assert "Model skill status" not in narrative._offline_brief(facts, model_metrics_df=empty)
+
+
+def test_generate_brief_states_skill_gate_from_metrics_mart(monkeypatch, tmp_path):
+    """generate_brief sources the honest line from marts.model_metrics on the live DB."""
+    con = _rich_con()
+    monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
+    monkeypatch.setattr(narrative.llm, "available", lambda: False)
+    con.register("_m", _rv_har_metrics_df(oos_r2=0.02, qlike_skill_ratio=1.5))
+    con.execute("create table marts.model_metrics as select * from _m")
+    con.unregister("_m")
+    try:
+        text = narrative.generate_brief(con)
+        assert "Model skill status" in text
+        assert "baseline-only" in text
+        assert "no demonstrated out-of-sample edge" in text
+    finally:
+        con.close()
+
+
 # ---------------------------------------------------------------------------
 # LLM output validation
 # ---------------------------------------------------------------------------
@@ -369,7 +460,7 @@ def test_generate_brief_redacts_body_in_mart_and_md_file(monkeypatch, tmp_path):
     con = _make_minimal_con()
     monkeypatch.setattr(narrative.settings, "duckdb_path", tmp_path / "ci.duckdb")
     tainted = "Macro analysis. bearer FAKETOKEN123 Watch macro."
-    monkeypatch.setattr(narrative, "_offline_brief", lambda _facts: tainted)
+    monkeypatch.setattr(narrative, "_offline_brief", lambda _facts, **_kwargs: tainted)
     monkeypatch.setattr(narrative.llm, "available", lambda: False)
     text = narrative.generate_brief(con)
     try:
