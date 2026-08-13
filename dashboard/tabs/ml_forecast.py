@@ -202,6 +202,25 @@ def render_ml_tab(chart_wrapper: Callable[[go.Figure], None]) -> None:
                 with reg_cols[idx % 3]:
                     st.metric(label=f"{reg_sym} Regime", value=cur_reg)
 
+        st.divider()
+        st.subheader("Volatility model skill (OOS vs persistence)")
+        st.caption(
+            "Walk-forward out-of-sample diagnostics for the HAR volatility model vs a "
+            "persistence/EWMA baseline. The skill gate clears at OOS R² ≥ 0.10 with a "
+            "QLIKE skill ratio < 0.99; until then, baseline-only is the honest framing."
+        )
+        vol_skill = metrics[(metrics["model"] == "rv_har") & (metrics["symbol"] == "SPY")]
+        if vol_skill.empty:
+            st.info(
+                "Volatility-model skill metrics are not present in the current public "
+                "snapshot. The honest verdict surface renders once the ML pipeline "
+                "persists `rv_har` rows for SPY."
+            )
+        else:
+            st.markdown(charts.vol_skill_verdict_text(metrics, symbol="SPY"))
+            chart_wrapper(charts.vol_skill_r2_chart(metrics, symbol="SPY", height=320))
+            chart_wrapper(charts.vol_skill_qlike_chart(metrics, symbol="SPY", height=320))
+
         perf = charts.return_performance_table(metrics)
         if not perf.empty:
             st.divider()
