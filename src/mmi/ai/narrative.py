@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypedDict
 
+import duckdb
 import pandas as pd
 
 from mmi.ai import llm
@@ -168,7 +169,7 @@ _SYSTEM = (
 )
 
 
-def _q(con, sql: str) -> pd.DataFrame:
+def _q(con: duckdb.DuckDBPyConnection, sql: str) -> pd.DataFrame:
     try:
         return con.execute(sql).df()
     except Exception as exc:  # noqa: BLE001 - missing table is fine pre-pipeline
@@ -188,7 +189,7 @@ def _n(x: object, default: float = 0.0) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _yoy_change(con, series_id: str) -> float | None:
+def _yoy_change(con: duckdb.DuckDBPyConnection, series_id: str) -> float | None:
     """Year-over-year fractional change for a (monthly) macro series, or None if unavailable.
 
     Compares the latest value to the last value at or before ~12 months earlier. Returns None
@@ -212,7 +213,7 @@ def _yoy_change(con, series_id: str) -> float | None:
     return float(latest["value"] / pv - 1.0)
 
 
-def _macro_readings(con) -> list[dict[str, Any]]:
+def _macro_readings(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     """Curated macro panel: latest value + change per series, plus YoY for inflation series."""
     latest = _q(
         con,
@@ -240,7 +241,7 @@ def _macro_readings(con) -> list[dict[str, Any]]:
     return out
 
 
-def _asset_signals(con) -> tuple[list[dict[str, Any]], pd.DataFrame]:
+def _asset_signals(con: duckdb.DuckDBPyConnection) -> tuple[list[dict[str, Any]], pd.DataFrame]:
     """Per-asset momentum/mean-reversion signals + a wide daily-return frame for correlation.
 
     Returns (assets, returns_wide). ``assets`` carries 1d/5d/20d returns, position vs the 50-day
@@ -327,7 +328,7 @@ def _correlation_notes(returns_wide: pd.DataFrame) -> list[dict[str, Any]]:
     return notes
 
 
-def gather_facts(con) -> FactsDict:
+def gather_facts(con: duckdb.DuckDBPyConnection) -> FactsDict:
     facts: dict = {"as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
 
     data_date_row = _q(con, "select max(date) as data_date from marts.fct_asset_daily")
@@ -517,7 +518,7 @@ def _offline_brief(
     return "\n".join(lines)
 
 
-def generate_brief(con) -> str:
+def generate_brief(con: duckdb.DuckDBPyConnection) -> str:
     """Produce the brief, persist it to data/briefs/ and marts.market_brief."""
     facts = gather_facts(con)
     model_metrics_df = _q(
@@ -561,12 +562,10 @@ def generate_brief(con) -> str:
     atomic_write(out_dir / f"{stamp}.md", safe_text)
 
     try:
-        data_date = (
-            con.execute("select cast(max(date) as varchar) from marts.fct_asset_daily").fetchone()[
-                0
-            ]
-            or ""
-        )
+        row = con.execute(
+            "select cast(max(date) as varchar) from marts.fct_asset_daily"
+        ).fetchone()
+        data_date = row[0] if row else ""
     except Exception:
         data_date = ""
     row = pd.DataFrame(
