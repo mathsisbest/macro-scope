@@ -562,9 +562,7 @@ def generate_brief(con: duckdb.DuckDBPyConnection) -> str:
     atomic_write(out_dir / f"{stamp}.md", safe_text)
 
     try:
-        row = con.execute(
-            "select cast(max(date) as varchar) from marts.fct_asset_daily"
-        ).fetchone()
+        row = con.execute("select cast(max(date) as varchar) from marts.fct_asset_daily").fetchone()
         data_date = row[0] if row else ""
     except Exception:
         data_date = ""
