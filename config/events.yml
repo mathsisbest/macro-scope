@@ -1,0 +1,104 @@
+# Declarative major market and macro events for chart annotations.
+# Edit this file to add or update notable milestones — no code changes needed.
+#
+# Each entry requires:
+#   date: YYYY-MM-DD
+#   label: Short label (1-4 words) for chart markers and hover tooltips
+#   description: Optional detailed description / context
+#   category: Optional category grouping (e.g. monetary_policy, crisis, market_shock, geopolitics)
+
+events:
+  - date: "2008-09-15"
+    label: "Lehman Collapse"
+    description: "Lehman Brothers files for Chapter 11 bankruptcy, triggering the peak of the Global Financial Crisis."
+    category: "crisis"
+
+  - date: "2008-11-25"
+    label: "Fed Launches QE1"
+    description: "Federal Reserve initiates the first round of Quantitative Easing (purchasing agency debt and MBS)."
+    category: "monetary_policy"
+
+  - date: "2009-03-09"
+    label: "GFC Market Bottom"
+    description: "S&P 500 reaches its Global Financial Crisis intraday and closing low (666.79)."
+    category: "market_shock"
+
+  - date: "2010-05-06"
+    label: "Flash Crash"
+    description: "US equity markets experience a rapid trillion-dollar flash crash within 36 minutes."
+    category: "market_shock"
+
+  - date: "2011-08-05"
+    label: "US Credit Downgrade"
+    description: "Standard & Poor's cuts the US sovereign credit rating from AAA to AA+."
+    category: "crisis"
+
+  - date: "2013-05-22"
+    label: "Taper Tantrum"
+    description: "Fed Chair Bernanke suggests the Fed may taper asset purchases, causing bond yields to surge."
+    category: "monetary_policy"
+
+  - date: "2015-08-24"
+    label: "China Yuan Devaluation"
+    description: "Global market selloff following China's sudden devaluation of the Yuan."
+    category: "market_shock"
+
+  - date: "2016-06-23"
+    label: "Brexit Vote"
+    description: "United Kingdom votes to leave the European Union."
+    category: "geopolitics"
+
+  - date: "2018-02-05"
+    label: "Volmageddon"
+    description: "VIX spikes +116% in a single day, collapsing inverse volatility ETPs like XIV."
+    category: "market_shock"
+
+  - date: "2020-02-19"
+    label: "Pre-COVID Peak"
+    description: "US equity markets reach all-time highs before the global pandemic selloff."
+    category: "market_shock"
+
+  - date: "2020-03-15"
+    label: "Fed Emergency Cut (0%)"
+    description: "Fed slashes target rate to 0-0.25% and announces $700B QE in emergency Sunday action."
+    category: "monetary_policy"
+
+  - date: "2020-03-23"
+    label: "COVID Market Low"
+    description: "S&P 500 bottoms at the peak of pandemic panic as Fed announces unlimited QE."
+    category: "market_shock"
+
+  - date: "2021-11-10"
+    label: "US CPI Hits 6.2%"
+    description: "US inflation reaches highest level in 30 years, signalling persistent inflationary regime."
+    category: "crisis"
+
+  - date: "2022-02-24"
+    label: "Russia Invades Ukraine"
+    description: "Geopolitical conflict erupts, triggering global commodity and energy shocks."
+    category: "geopolitics"
+
+  - date: "2022-03-16"
+    label: "Fed First Rate Hike"
+    description: "Federal Reserve initiates aggressive tightening cycle with a 25 bps rate hike."
+    category: "monetary_policy"
+
+  - date: "2022-06-13"
+    label: "10Y-2Y Inversion"
+    description: "US yield curve inverts, signalling elevated recession risk."
+    category: "crisis"
+
+  - date: "2023-03-10"
+    label: "SVB Collapse"
+    description: "Silicon Valley Bank fails, initiating a regional banking crisis."
+    category: "crisis"
+
+  - date: "2024-08-05"
+    label: "Yen Carry Unwind"
+    description: "Bank of Japan rate hike triggers massive global equity selloff and VIX spike to 65."
+    category: "market_shock"
+
+  - date: "2024-09-18"
+    label: "Fed 50bps Rate Cut"
+    description: "Fed begins easing cycle with a jumbo 50 bps reduction in the policy rate."
+    category: "monetary_policy"
