@@ -105,6 +105,14 @@ GLOSSARY: dict[str, str] = {
         "window. Higher is better, but it is a historical number: past Sharpe does not "
         "guarantee future risk-adjusted return, and short windows make it noisy."
     ),
+    "transaction_cost_drag": (
+        "Transaction cost drag — the cumulative return reduction caused by rebalancing "
+        "turnover and bid-ask slippage. Net return = gross return minus cost drag."
+    ),
+    "gross_return": (
+        "Gross vs net return — gross return measures asset performance before transaction "
+        "costs; net return reflects actual realisable performance after deducting rebalance costs."
+    ),
 }
 
 #: Human-readable display titles keyed by slug — used when rendering a term chip so the
@@ -124,6 +132,8 @@ TITLES: dict[str, str] = {
     "vol_rich_plus": "vol_rich+ features",
     "yield_curve_spread": "Yield-curve spread",
     "sharpe": "Sharpe ratio",
+    "transaction_cost_drag": "Transaction cost drag",
+    "gross_return": "Gross vs net return",
 }
 
 
