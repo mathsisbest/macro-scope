@@ -263,6 +263,7 @@ def compute_portfolio_returns(
     regime_mult_negative: float = 1.2,
     regime_mult_positive: float = 0.8,
     max_leverage: float = 1.0,
+    regime_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Compute portfolio returns: equal-weight + ML-tilted + regime-aware ML.
 
@@ -366,18 +367,35 @@ def compute_portfolio_returns(
     mom_63d = ew_series.rolling(63, min_periods=20).sum()
 
     ml_regime = panel.loc[common_dates].copy()
+    if regime_df is not None and "date" in regime_df.columns:
+        regime_indexed = regime_df.set_index("date")
+    else:
+        regime_indexed = None
+
     for date in common_dates:
-        if date in ml_pivot.index and date in mom_63d.index:
+        if date in ml_pivot.index:
             signals = ml_pivot.loc[date].dropna()
-            mom = mom_63d.loc[date]
 
-            if pd.isna(mom):
-                # No regime data yet — use equal weight
-                ml_regime.loc[date] = panel.loc[date] / len(panel.columns)
-                continue
+            if regime_indexed is not None and date in regime_indexed.index:
+                r_val = regime_indexed.loc[date, "regime"]
+                if r_val == "Low":
+                    regime_mult = regime_mult_positive
+                elif r_val == "High":
+                    regime_mult = regime_mult_negative
+                else:
+                    regime_mult = 1.0
+            else:
+                if date not in mom_63d.index:
+                    ml_regime.loc[date] = panel.loc[date] / len(panel.columns)
+                    continue
+                mom = mom_63d.loc[date]
+                if pd.isna(mom):
+                    # No regime data yet — use equal weight
+                    ml_regime.loc[date] = panel.loc[date] / len(panel.columns)
+                    continue
 
-            # Configurable regime multiplier
-            regime_mult = regime_mult_negative if mom < 0 else regime_mult_positive
+                # Configurable regime multiplier
+                regime_mult = regime_mult_negative if mom < 0 else regime_mult_positive
 
             pos_signals = signals[signals > 0]
             if len(pos_signals) > 0:
