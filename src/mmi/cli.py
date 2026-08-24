@@ -330,21 +330,30 @@ def _load_portfolio_macro_context(con) -> tuple[Any, dict]:
     import pandas as pd
 
     try:
-        macro_raw = con.execute(
-            "select date, series_id, value from marts.fct_macro_indicator order by date"
-        ).df()
-        if not macro_raw.empty:
-            macro_raw["date"] = pd.to_datetime(macro_raw["date"]).astype("datetime64[ns]")
-            macro_wide = (
-                macro_raw.pivot_table(
-                    index="date", columns="series_id", values="value", aggfunc="first"
-                )
-                .reset_index()
-                .sort_values("date")
+        macro_wide = con.execute(
+            """
+            PIVOT (
+                WITH readings AS (SELECT date, series_id, value FROM marts.fct_macro_indicator),
+                     dates    AS (SELECT DISTINCT date FROM readings),
+                     series   AS (SELECT DISTINCT series_id FROM readings)
+                SELECT d.date,
+                       s.series_id,
+                       LAST_VALUE(r.value IGNORE NULLS) OVER (
+                           PARTITION BY s.series_id
+                           ORDER BY d.date, CASE WHEN r.value IS NULL THEN 1 ELSE 0 END
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                       ) AS value
+                FROM dates d
+                CROSS JOIN series s
+                LEFT JOIN readings r ON r.date = d.date AND r.series_id = s.series_id
             )
-            for col in macro_wide.columns:
-                if col != "date":
-                    macro_wide[col] = macro_wide[col].ffill()
+            ON series_id
+            USING first(value)
+            ORDER BY date
+            """
+        ).df()
+        if not macro_wide.empty:
+            macro_wide["date"] = pd.to_datetime(macro_wide["date"]).astype("datetime64[ns]")
         else:
             macro_wide = None
     except Exception:
