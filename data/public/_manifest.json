@@ -4,7 +4,7 @@
       "rows": 9
     },
     "fct_asset_daily": {
-      "rows": 53654
+      "rows": 53657
     },
     "fct_macro_indicator": {
       "rows": 93643
@@ -37,5 +37,5 @@
       "rows": 12562
     }
   },
-  "generated_at": "2026-09-07T11:40:10.606344+00:00"
+  "generated_at": "2026-09-08T10:39:34.862254+00:00"
 }
