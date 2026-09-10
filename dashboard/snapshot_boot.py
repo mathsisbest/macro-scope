@@ -33,6 +33,7 @@ def configure_dashboard_env(environ: MutableMapping[str, str], repo_root: Path) 
     """
     environ.setdefault("MMI_SNAPSHOT_DIR", str(repo_root / "data" / "public"))
     environ.setdefault("MMI_ASSETS_PATH", str(repo_root / "config" / "assets.yml"))
+    environ.setdefault("MMI_EVENTS_PATH", str(repo_root / "config" / "events.yml"))
     mode = resolve_snapshot_mode(environ, repo_root)
     if mode is not None:
         environ["MMI_SNAPSHOT_MODE"] = mode
