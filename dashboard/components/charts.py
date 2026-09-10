@@ -1771,9 +1771,18 @@ def return_significance_verdict(pairs: pd.DataFrame) -> str:
 
 
 def attribution_chart(attr: pd.DataFrame, strategy: str) -> go.Figure:
-    """Horizontal bar of each asset's contribution to a strategy's return (greens up, reds down)."""
+    """Horizontal bar of each asset's contribution to a strategy's return (greens up, reds down).
+
+    Cost drag row '(costs)' is styled with a distinct muted down color so transaction friction
+    is visually distinguished from asset returns.
+    """
     df = attr[attr["strategy"] == strategy].sort_values("contribution_to_return")
-    colors = [PALETTE["up"] if v >= 0 else PALETTE["down"] for v in df["contribution_to_return"]]
+    colors = []
+    for row in df.itertuples():
+        if row.symbol in ("(costs)", "__cost__"):
+            colors.append(PALETTE["down"])
+        else:
+            colors.append(PALETTE["up"] if row.contribution_to_return >= 0 else PALETTE["down"])
     fig = go.Figure()
     fig.add_bar(
         x=df["contribution_to_return"],
@@ -1784,10 +1793,92 @@ def attribution_chart(attr: pd.DataFrame, strategy: str) -> go.Figure:
     fig.update_xaxes(tickformat=".1%")
     label = _STRATEGY_LABELS.get(strategy, strategy)
     fig.update_layout(
-        title=dict(text=f"{label} — return contribution by asset", font=_TITLE_FONT),
+        title=dict(text=f"{label} — return contribution by asset & cost drag", font=_TITLE_FONT),
     )
     _apply_axis_fonts(fig)
     return style_fig(fig, height=HEIGHT_MEDIUM + 20)
+
+
+def portfolio_gross_net_chart(
+    gross_df: pd.DataFrame,
+    net_df: pd.DataFrame,
+    strategy: str,
+    height: int = HEIGHT_MEDIUM + 20,
+) -> go.Figure:
+    """Dual-line cumulative return chart comparing gross return vs net return for a strategy.
+
+    Shades the area between gross and net lines to visually highlight transaction cost drag.
+    """
+    fig = go.Figure()
+    label = _STRATEGY_LABELS.get(strategy, strategy)
+    g_grp = (
+        gross_df[gross_df["strategy"] == strategy].sort_values("date")
+        if not gross_df.empty
+        else pd.DataFrame()
+    )
+    n_grp = (
+        net_df[net_df["strategy"] == strategy].sort_values("date")
+        if not net_df.empty
+        else pd.DataFrame()
+    )
+
+    if not g_grp.empty and "cumulative_return" in g_grp.columns:
+        fig.add_scatter(
+            x=g_grp["date"],
+            y=g_grp["cumulative_return"],
+            name=f"{label} (Gross)",
+            line=dict(color=PALETTE["accent"], width=2),
+        )
+    if not n_grp.empty and "cumulative_return" in n_grp.columns:
+        fig.add_scatter(
+            x=n_grp["date"],
+            y=n_grp["cumulative_return"],
+            name=f"{label} (Net)",
+            line=dict(color=SERIES_RETURN, width=2, dash="dash"),
+            fill="tonexty",
+            fillcolor="rgba(255, 93, 108, 0.12)",  # faint cost drag band
+        )
+
+    fig.update_layout(
+        title=dict(text=f"{label} — Gross vs Net Cumulative Return (Cost Drag)", font=_TITLE_FONT),
+    )
+    fig.update_yaxes(tickformat=".0%")
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=height)
+
+
+def portfolio_cost_summary(attr: pd.DataFrame) -> pd.DataFrame:
+    """Summarise gross return, net return, cost drag, and cost drag share per strategy."""
+    cols = ["Strategy", "Gross return", "Net return", "Cost drag", "Cost drag %"]
+    if attr.empty:
+        return pd.DataFrame(columns=cols)
+    rows = []
+    for strat in sorted(attr["strategy"].unique()):
+        grp = attr[attr["strategy"] == strat]
+        cost_row = grp[grp["symbol"].isin(["(costs)", "__cost__"])]
+        cost_drag = (
+            float(cost_row["contribution_to_return"].iloc[0]) if not cost_row.empty else 0.0
+        )
+        # Asset rows (excluding cost row)
+        asset_rows = grp[~grp["symbol"].isin(["(costs)", "__cost__"])]
+        if "strategy_gross_return" in grp.columns and grp["strategy_gross_return"].notna().any():
+            gross_ret = float(grp["strategy_gross_return"].dropna().iloc[0])
+        else:
+            gross_ret = (
+                float(asset_rows["contribution_to_return"].sum()) if not asset_rows.empty else 0.0
+            )
+        net_ret = gross_ret + cost_drag
+        cost_pct = abs(cost_drag) / gross_ret if gross_ret > 0 else 0.0
+        rows.append(
+            {
+                "Strategy": _STRATEGY_LABELS.get(strat, strat),
+                "Gross return": gross_ret,
+                "Net return": net_ret,
+                "Cost drag": cost_drag,
+                "Cost drag %": cost_pct,
+            }
+        )
+    return pd.DataFrame(rows).set_index("Strategy")
 
 
 def regime_sharpe_chart(regime: pd.DataFrame) -> go.Figure:

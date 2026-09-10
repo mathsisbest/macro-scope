@@ -33,9 +33,13 @@ def _return_significance(window_id: str, n_boot: int) -> pd.DataFrame:
     if pf.empty or pf["strategy"].nunique() < 2:
         return pd.DataFrame()
     try:
-        _, pairs = bootstrap_strategy_return_stats(
+        per_strat, pairs = bootstrap_strategy_return_stats(
             pf[["strategy", "date", "daily_return"]], n_boot=n_boot
         )
+        if not pairs.empty and not per_strat.empty:
+            pairs["n_boot"] = per_strat["n_boot"].iloc[0]
+            pairs["ci_pct"] = per_strat["ci_pct"].iloc[0]
+            pairs["n_obs"] = per_strat["n_obs"].iloc[0]
     except ValueError:
         return pd.DataFrame()
     return pairs
@@ -216,6 +220,60 @@ def render_portfolio_tab(rng_start: str | None, chart_wrapper: Callable[[go.Figu
 
     attr = data.portfolio_attribution(window_id)
     if not attr.empty:
+        with st.expander("💸 Gross vs Net Returns & Cost Drag", expanded=False):
+            st.markdown(
+                " · ".join(
+                    [
+                        glossary.tooltip_markdown("gross_return"),
+                        glossary.tooltip_markdown("transaction_cost_drag"),
+                    ]
+                ),
+                unsafe_allow_html=True,
+            )
+            cost_summary_df = charts.portfolio_cost_summary(attr)
+            if not cost_summary_df.empty:
+                st.dataframe(
+                    cost_summary_df.style.format(
+                        {
+                            "Gross return": "{:+.2%}",
+                            "Net return": "{:+.2%}",
+                            "Cost drag": "{:+.2%}",
+                            "Cost drag %": "{:.1%}",
+                        }
+                    ),
+                    width="stretch",
+                )
+
+            c_strat = st.selectbox(
+                "Inspect strategy cost drag",
+                sorted(attr["strategy"].unique()),
+                key="gross_net_strategy",
+            )
+            # Reconstruct gross series for the selected strategy from attribution & returns
+            strat_pf = pf[pf["strategy"] == c_strat].sort_values("date").copy()
+            if not strat_pf.empty:
+                strat_cost = cost_summary_df.loc[
+                    charts._STRATEGY_LABELS.get(c_strat, c_strat), "Cost drag"
+                ] if charts._STRATEGY_LABELS.get(c_strat, c_strat) in cost_summary_df.index else 0.0
+                # Scale daily returns to construct synthetic gross cumulative path
+                strat_gross_pf = strat_pf.copy()
+                n_days = max(len(strat_pf), 1)
+                daily_cost_drag = strat_cost / n_days
+                strat_gross_pf["daily_return"] = strat_gross_pf["daily_return"] - daily_cost_drag
+                strat_gross_pf["cumulative_return"] = (
+                    1 + strat_gross_pf["daily_return"]
+                ).cumprod() - 1
+                strat_gross_pf = charts.rebase_cumulative(strat_gross_pf)
+                strat_net_pf = charts.rebase_cumulative(strat_pf)
+                chart_wrapper(
+                    charts.portfolio_gross_net_chart(strat_gross_pf, strat_net_pf, c_strat)
+                )
+
+            st.caption(
+                "Transaction cost drag accounts for turnover from rebalancing and slippage. "
+                "The shaded band highlights cumulative drag between gross and net returns."
+            )
+
         with st.expander("📈 Return attribution", expanded=False):
             astrat = st.selectbox(
                 "Strategy", sorted(attr["strategy"].unique()), key="attribution_strategy"
