@@ -703,3 +703,62 @@ def test_ratio_zscore_chart_has_extreme_bands_and_named_tokens():
 def test_ratio_zscore_chart_degrades_on_empty():
     fig = charts.ratio_zscore_chart(pd.DataFrame(), "SYM", "BEN")
     assert len(fig.data) == 0  # reference lines only, no crash
+
+
+# --- candlestick chart (audit R5) -------------------------------------------------
+
+
+def _ohlc_df(rows: int = 5, with_volume: bool = True) -> pd.DataFrame:
+    df = pd.DataFrame(
+        {
+            "date": pd.bdate_range("2024-01-01", periods=rows),
+            "open": [100, 101, 102, 103, 104],
+            "high": [102, 103, 104, 105, 106],
+            "low": [99, 100, 101, 102, 103],
+            "close": [101, 102, 103, 104, 105],
+        }
+    )
+    if with_volume:
+        df["volume"] = [1_000_000, 900_000, 1_200_000, 800_000, 1_100_000]
+    return df
+
+
+def test_candlestick_chart_renders_ohlc_and_volume():
+    fig = charts.candlestick_chart(_ohlc_df(), "SPY")
+    assert fig.layout.title.text == "SPY — candlesticks · volume"
+    assert len(fig.data) == 2  # candlestick + volume bar
+    assert fig.data[0].type == "candlestick"
+    assert len(fig.data[0].open) == 5
+    assert fig.data[0].increasing.line.color == charts.PALETTE["up"]
+    assert fig.data[0].decreasing.line.color == charts.PALETTE["down"]
+    assert fig.layout.xaxis.rangeslider.visible is False  # repo rejects the default slider
+
+
+def test_candlestick_chart_omits_volume_for_fx_scaled_zero_volume():
+    df = _ohlc_df(with_volume=True)
+    df["volume"] = 0  # FX pairs carry zero volume -> no bar trace
+    fig = charts.candlestick_chart(df, "EURUSD")
+    assert len(fig.data) == 1
+    assert fig.data[0].type == "candlestick"
+    assert "volume" not in fig.layout.title.text
+
+
+def test_candlestick_chart_degrades_on_empty_or_missing_ohlc():
+    assert len(charts.candlestick_chart(pd.DataFrame(), "SPY").data) == 0
+    missing = _ohlc_df().drop(columns=["open", "low"])
+    fig = charts.candlestick_chart(missing, "SPY")
+    assert len(fig.data) == 0
+    assert fig.layout.title.text is None  # no title when nothing renders
+
+
+def test_candlestick_chart_adds_regime_vrects():
+    regime_df = pd.DataFrame(
+        {
+            "date": pd.bdate_range("2024-01-01", periods=5),
+            "regime": ["Low", "Low", "High", "High", "High"],
+        }
+    )
+    fig = charts.candlestick_chart(_ohlc_df(), "SPY", regime_df=regime_df)
+    assert len(fig.layout.shapes) == 2  # Low + High blocks
+    fig_none = charts.candlestick_chart(_ohlc_df(), "SPY", regime_df=None)
+    assert fig_none.layout.shapes == ()
