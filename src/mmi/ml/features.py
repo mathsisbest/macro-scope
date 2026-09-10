@@ -649,6 +649,10 @@ def _add_extended_features(
     The function gracefully handles missing data sources — if a required FRED column
     or asset isn't available, the corresponding features are filled as NaN.
     """
+    # De-fragment: upstream rich-feature stages add ~35 columns one at a time, which
+    # leaves the frame's blocks fragmented; pandas then warns on every further insert.
+    # A copy consolidates the block manager so the ~30 inserts below stay contiguous.
+    out = out.copy()
     ret = out["ret"]
 
     # Publication lag (trading days) mapping for FRED monthly/quarterly series
@@ -753,8 +757,9 @@ def _add_extended_features(
         std = ret.rolling(w, min_periods=w // 2).std()
         out[name] = (mean.abs() / std.replace(0, np.nan)).shift(1)
 
-    for col in _EXTENDED_FEATURE_NAMES:
-        if col not in out.columns:
-            out[col] = np.nan
+    missing = [c for c in _EXTENDED_FEATURE_NAMES if c not in out.columns]
+    if missing:
+        nan_block = pd.DataFrame(np.nan, index=out.index, columns=missing)
+        out = pd.concat([out, nan_block], axis=1)
 
     return out

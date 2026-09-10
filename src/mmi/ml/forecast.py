@@ -89,6 +89,22 @@ def _model_kwargs(model_name: str, loss: str = "squared_error") -> dict:
     return kw
 
 
+def _non_const_feature_mask(X: np.ndarray) -> np.ndarray:
+    """Columns with >= 2 valid rows and strictly positive std (nanstd-safe).
+
+    ``np.nanstd`` on an all-NaN column emits a "Degrees of freedom <= 0" RuntimeWarning;
+    skipping such columns (they carry no signal anyway) keeps the walk-forward path
+    warning-free with missing-feature matrices.
+    """
+    valid = ~np.isnan(X)
+    counts = valid.sum(axis=0)
+    safe = np.where(counts >= 2)[0]
+    std = np.full(X.shape[1], np.nan)
+    if len(safe) > 0:
+        std[safe] = np.nanstd(X[:, safe], axis=0)
+    return (counts >= 2) & (std > 0)
+
+
 def tune_model_kwargs(
     model_name: str, X_train: np.ndarray, y_train: np.ndarray, loss: str = "squared_error"
 ) -> dict:
@@ -229,8 +245,7 @@ def evaluate_forecast(
         y_train = _build_target(df_train, target_type, "target_next_ret").to_numpy().ravel()
         X_train = df_train[available_cols].to_numpy()
         X_test = df_test[available_cols].to_numpy()
-        train_std = np.nanstd(X_train, axis=0)
-        non_const = train_std > 0
+        non_const = _non_const_feature_mask(X_train)
         used_cols = available_cols
         if non_const.sum() >= 2:
             X_train = X_train[:, non_const]
@@ -256,6 +271,9 @@ def evaluate_forecast(
         kw = {**base_kw, **model_kwargs}
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=UserWarning, message=".*early_stopping.*")
+            warnings.filterwarnings(
+                "ignore", category=UserWarning, message=".*fitted with feature names"
+            )
             clf = model_cls(**kw)
             clf.fit(X_train, y_train)
             all_preds.iloc[test_idx] = clf.predict(X_test)
@@ -284,8 +302,7 @@ def evaluate_forecast(
             X_test = df_test[available_cols].to_numpy()
 
             # Drop constant features (std==0) — HistGB crashes on them
-            train_std = np.nanstd(X_train, axis=0)
-            non_const = train_std > 0
+            non_const = _non_const_feature_mask(X_train)
             if non_const.sum() < 2:
                 continue
             used_cols = [col for col, nc in zip(available_cols, non_const, strict=False) if nc]
@@ -316,10 +333,13 @@ def evaluate_forecast(
                 warnings.filterwarnings(
                     "ignore", category=UserWarning, message=".*early_stopping.*"
                 )
+                warnings.filterwarnings(
+                    "ignore", category=UserWarning, message=".*fitted with feature names"
+                )
                 clf = model_cls(**kw)
                 clf.fit(X_train, y_train)
+                preds_fold = clf.predict(X_test)
 
-            preds_fold = clf.predict(X_test)
             if hasattr(clf, "feature_importances_"):
                 fi = clf.feature_importances_
                 for col_name, val in zip(used_cols, fi, strict=False):
@@ -399,8 +419,7 @@ def train_latest_forecast(
     X_train = df_train_raw[available_cols].to_numpy()
     X_pred = last_row[available_cols].to_numpy()
 
-    train_std = np.nanstd(X_train, axis=0)
-    non_const = train_std > 0
+    non_const = _non_const_feature_mask(X_train)
     if non_const.sum() < 2:
         return {"as_of": last_row["date"].iloc[0], "prediction": None}
 
@@ -429,6 +448,9 @@ def train_latest_forecast(
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=UserWarning, message=".*early_stopping.*")
+        warnings.filterwarnings(
+            "ignore", category=UserWarning, message=".*fitted with feature names"
+        )
         clf = model_cls(**kw)
         clf.fit(X_train, y_train)
 
