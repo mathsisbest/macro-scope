@@ -824,6 +824,113 @@ def yield_curve_chart(df: pd.DataFrame) -> go.Figure:
     return style_fig(fig, height=HEIGHT_DEFAULT)
 
 
+def erp_chart(df: pd.DataFrame, height: int = HEIGHT_DEFAULT) -> go.Figure:
+    """Equity Risk Premium (ERP) chart: S&P 500 earnings yield vs 10Y Treasury yield.
+
+    Plots ERP spread (earnings yield - 10Y Treasury yield), earnings yield, nominal 10Y yield,
+    and optional 10Y TIPS real rate. Features a shaded zero-line threshold.
+    """
+    fig = go.Figure()
+
+    if not df.empty:
+        # Shaded zero line & reference
+        fig.add_hline(
+            y=0,
+            line_color=PALETTE["down"],
+            line_dash="dot",
+            annotation_text="0% ERP threshold",
+            annotation_font_color=PALETTE["down"],
+            annotation_position="top left",
+        )
+
+        if "erp" in df.columns and df["erp"].notna().any():
+            fig.add_scatter(
+                x=df["date"],
+                y=df["erp"],
+                name="Equity Risk Premium (ERP)",
+                line=dict(color=PALETTE["accent"], width=2.5),
+                hovertemplate="%{x|%Y-%m-%d}: %{y:+.2f} pp<extra></extra>",
+            )
+
+        if "earn_yield" in df.columns and df["earn_yield"].notna().any():
+            fig.add_scatter(
+                x=df["date"],
+                y=df["earn_yield"],
+                name="S&P 500 Earnings Yield (1/CAPE)",
+                line=dict(color=SERIES_RETURN, dash="dash"),
+                hovertemplate="%{x|%Y-%m-%d}: %{y:.2f}%<extra></extra>",
+            )
+
+        if "us_10y" in df.columns and df["us_10y"].notna().any():
+            fig.add_scatter(
+                x=df["date"],
+                y=df["us_10y"],
+                name="10Y Treasury Yield (DGS10)",
+                line=dict(color=SERIES_YIELD, dash="dash"),
+                hovertemplate="%{x|%Y-%m-%d}: %{y:.2f}%<extra></extra>",
+            )
+
+        if "tips_10y" in df.columns and df["tips_10y"].notna().any():
+            fig.add_scatter(
+                x=df["date"],
+                y=df["tips_10y"],
+                name="10Y TIPS Real Yield (DFII10)",
+                line=dict(color=SERIES_ALT, dash="dot"),
+                hovertemplate="%{x|%Y-%m-%d}: %{y:+.2f}%<extra></extra>",
+            )
+
+    fig.update_layout(
+        title=dict(
+            text="Equity Risk Premium (ERP = S&P 500 Earnings Yield − 10Y Treasury Yield)",
+            font=_TITLE_FONT,
+        ),
+        yaxis=dict(
+            title="Yield / Spread (%)",
+            tickformat="+.1f",
+        ),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+    )
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=height)
+
+
+def cape_ratio_chart(df: pd.DataFrame, height: int = HEIGHT_DEFAULT) -> go.Figure:
+    """Shiller CAPE (Cyclically Adjusted P/E) ratio over time."""
+    fig = go.Figure()
+
+    if not df.empty and "cape" in df.columns and df["cape"].notna().any():
+        fig.add_scatter(
+            x=df["date"],
+            y=df["cape"],
+            name="Shiller CAPE",
+            line=dict(color=SERIES_PRICE, width=2),
+            hovertemplate="%{x|%Y-%m-%d}: %{y:.1f}x<extra></extra>",
+        )
+
+        # Historical median line (~16.8x)
+        fig.add_hline(
+            y=16.8,
+            line_color=PALETTE["muted"],
+            line_dash="dot",
+            annotation_text="Historical median (~16.8x)",
+            annotation_font_color=PALETTE["muted"],
+            annotation_position="bottom right",
+        )
+
+    fig.update_layout(
+        title=dict(
+            text="Shiller CAPE Ratio (S&P 500 Valuation)",
+            font=_TITLE_FONT,
+        ),
+        yaxis=dict(
+            title="CAPE Ratio (x)",
+            tickformat=".1f",
+        ),
+    )
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=height)
+
+
 # ---------------------------------------------------------------------------
 # Macro tab — recession-risk panel (E3)
 # ---------------------------------------------------------------------------

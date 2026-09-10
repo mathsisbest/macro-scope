@@ -92,6 +92,7 @@ def _macro_df(n_days: int = 120, seed: int = 42) -> pd.DataFrame:
             "DGS10": rng.normal(4.0, 0.5, n_days),
             "DGS2": rng.normal(3.5, 0.5, n_days),
             "DGS3MO": rng.normal(3.0, 1.0, n_days),
+            "DFII10": rng.normal(1.5, 0.3, n_days),
             "FEDFUNDS": rng.normal(3.0, 1.0, n_days),
             "VIXCLS": rng.normal(20, 5, n_days),
             "DCOILWTICO": 70 + rng.normal(0, 2, n_days),
