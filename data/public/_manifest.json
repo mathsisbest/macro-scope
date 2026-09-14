@@ -4,38 +4,53 @@
       "rows": 9
     },
     "fct_asset_daily": {
-      "rows": 53684
+      "rows": 53695
     },
     "fct_macro_indicator": {
-      "rows": 93672
+      "rows": 93678
     },
     "fct_market_macro": {
-      "rows": 8461
+      "rows": 8462
+    },
+    "fct_performance_attribution": {
+      "rows": 10
     },
     "fct_portfolio_attribution": {
-      "rows": 0
+      "rows": 10
     },
     "fct_portfolio_btc_effect": {
-      "rows": 0
+      "rows": 3
     },
     "fct_portfolio_ml_gate": {
       "rows": 0
     },
     "fct_portfolio_regime_performance": {
-      "rows": 0
+      "rows": 27
     },
     "fct_portfolio_returns": {
-      "rows": 0
+      "rows": 32793
     },
     "fct_portfolio_strategy_pairs": {
-      "rows": 0
+      "rows": 9
     },
     "fct_portfolio_strategy_stats": {
-      "rows": 0
+      "rows": 9
     },
     "fct_recession_risk": {
-      "rows": 12565
+      "rows": 12566
+    },
+    "fct_regime": {
+      "rows": 53677
+    },
+    "market_brief": {
+      "rows": 1
+    },
+    "ml_forecast": {
+      "rows": 17
+    },
+    "model_metrics": {
+      "rows": 313
     }
   },
-  "generated_at": "2026-09-11T10:40:38.762847+00:00"
+  "generated_at": "2026-09-14T09:37:20.519451+00:00"
 }
