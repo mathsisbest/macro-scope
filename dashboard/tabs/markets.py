@@ -101,7 +101,13 @@ def render_markets_tab(rng_start: str | None, chart_wrapper: Callable[[go.Figure
     if not d.empty:
         mc1, mc2 = st.columns(2)
         with mc1:
-            chart_wrapper(charts.price_chart(d, sym))
+            chart_kind = st.radio(
+                "Price view", ["Line", "Candlestick"], horizontal=True, key="drill_chart_kind"
+            )
+            if chart_kind == "Candlestick":
+                chart_wrapper(charts.candlestick_chart(d, sym))
+            else:
+                chart_wrapper(charts.price_chart(d, sym))
         with mc2:
             chart_wrapper(charts.vol_chart(d, sym))
     else:

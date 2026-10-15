@@ -373,6 +373,70 @@ def price_chart(df: pd.DataFrame, symbol: str, regime_df: pd.DataFrame | None = 
     return style_fig(fig, height=HEIGHT_DEFAULT)
 
 
+def candlestick_chart(
+    df: pd.DataFrame,
+    symbol: str,
+    regime_df: pd.DataFrame | None = None,
+    height: int = HEIGHT_DEFAULT,
+) -> go.Figure:
+    """OHLC candlesticks with a volume overlay, mirrored against the repo styling.
+
+    Requires ``open``/``high``/``low``/``close`` columns; missing OHLC columns or an
+    empty frame renders an empty styled figure. Volume follows ``volume_bars`` so
+    FX pairs (zero volume) render no bars. Pure + unit-tested.
+    """
+    fig = go.Figure()
+    _add_regime_shading(fig, regime_df, symbol=symbol)
+    if df.empty or not {"open", "high", "low", "close"}.issubset(df.columns):
+        return style_fig(fig, height=height)
+
+    fig.add_trace(
+        go.Candlestick(
+            x=df["date"],
+            open=df["open"],
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            name=symbol,
+            increasing_line_color=PALETTE["up"],
+            decreasing_line_color=PALETTE["down"],
+        )
+    )
+    volume = volume_bars(df)
+    if volume is not None:
+        fig.add_bar(
+            x=df["date"],
+            y=volume,
+            name="Volume",
+            marker=dict(color=SERIES_ALT, opacity=0.45),
+            yaxis="y2",
+            hovertemplate="Volume: %{y:~s}<extra></extra>",
+        )
+    title = f"{symbol} — candlesticks"
+    if volume is not None:
+        title += " · volume"
+    fig.update_layout(title=dict(text=title, font=_TITLE_FONT))
+    if volume is not None:
+        fig.update_layout(
+            yaxis2=dict(
+                title="Volume",
+                overlaying="y",
+                side="right",
+                showgrid=False,
+                rangemode="tozero",
+                tickformat="~s",
+                hoverformat="~s",
+            )
+        )
+    # Plotly's rangeslider is enabled by default for candlesticks; the repo renders
+    # self-contained figures, so disable it like every other chart builder here.
+    fig.update_layout(xaxis_rangeslider_visible=False)
+    _apply_axis_fonts(fig)
+    # Same USD axis convention as price_chart.
+    fig.update_layout(yaxis=dict(tickformat="$,.2f", hoverformat="$,.2f"))
+    return style_fig(fig, height=height)
+
+
 def volume_bars(df: pd.DataFrame) -> pd.Series | None:
     """Volume values ready for bar rendering, or ``None`` when the asset has no volume.
 
