@@ -141,3 +141,20 @@ def render_macro_tab(
         if rr_caption:
             st.caption(rr_caption)
         glossary.glossary_tooltip("yield_curve_spread")
+
+    val_df = data.valuation_data(rng_start)
+    with st.expander("📊 Valuation & Equity Risk Premium", expanded=not val_df.empty):
+        if val_df.empty:
+            st.info(
+                "Valuation & Equity Risk Premium data not available yet. "
+                "Requires FRED 10Y Treasury yield (DGS10) and Shiller CAPE data."
+            )
+        else:
+            chart_wrapper(charts.erp_chart(val_df))
+            st.divider()
+            chart_wrapper(charts.cape_ratio_chart(val_df))
+            st.caption(
+                "Equity Risk Premium (ERP) is defined as S&P 500 earnings yield (1/CAPE) minus "
+                "10Y Treasury yield (DGS10). Real rates plotted using 10Y TIPS (DFII10). "
+                "Sources: FRED (St. Louis Fed) and Robert Shiller / Yale University."
+            )
