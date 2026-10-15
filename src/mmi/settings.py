@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # type stays a clean local Path.
     duckdb_path: Path = Field(default=REPO_ROOT / "data" / "mmi.duckdb", alias="MMI_DUCKDB_PATH")
     assets_path: Path = Field(default=REPO_ROOT / "config" / "assets.yml", alias="MMI_ASSETS_PATH")
+    events_path: Path = Field(default=REPO_ROOT / "config" / "events.yml", alias="MMI_EVENTS_PATH")
     # The static Parquet snapshot of the marts schema: `mmi snapshot` writes it, and the public
     # demo dashboard reads from it (no DB, no secrets) when MMI_SNAPSHOT_DIR is set.
     snapshot_dir: Path = Field(default=REPO_ROOT / "data" / "public", alias="MMI_SNAPSHOT_DIR")
@@ -126,6 +127,50 @@ def load_assets(path: Path | None = None) -> dict[str, Any]:
     path = path or get_settings().assets_path
     with open(path, encoding="utf-8") as fh:
         return yaml.safe_load(fh)
+
+
+DEFAULT_EVENTS: list[dict[str, str]] = [
+    {
+        "date": "2008-09-15",
+        "label": "Lehman Collapse",
+        "description": "Lehman Brothers files for bankruptcy.",
+        "category": "crisis",
+    },
+    {
+        "date": "2020-03-23",
+        "label": "COVID Market Low",
+        "description": "S&P 500 bottoms at the peak of pandemic panic.",
+        "category": "market_shock",
+    },
+    {
+        "date": "2022-03-16",
+        "label": "Fed First Rate Hike",
+        "description": "Federal Reserve initiates tightening cycle.",
+        "category": "monetary_policy",
+    },
+    {
+        "date": "2023-03-10",
+        "label": "SVB Collapse",
+        "description": "Silicon Valley Bank fails.",
+        "category": "crisis",
+    },
+]
+
+
+def load_events(path: Path | None = None) -> dict[str, Any]:
+    """Load the declarative major market and macro events from ``config/events.yml``."""
+    target = path or get_settings().events_path
+    try:
+        if target and Path(target).exists():
+            with open(target, encoding="utf-8") as fh:
+                loaded = yaml.safe_load(fh)
+                if isinstance(loaded, dict) and "events" in loaded:
+                    return loaded
+    except Exception as exc:  # noqa: BLE001
+        _settings_log.warning(
+            "Failed to load events from %s (%s); using fallback defaults", target, exc
+        )
+    return {"events": DEFAULT_EVENTS}
 
 
 # Convenience module-level singleton.

@@ -12,7 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from mmi.portfolio import windows
-from mmi.settings import load_assets, settings
+from mmi.settings import load_assets, load_events, settings
 from mmi.utils.db import connect
 
 
@@ -276,6 +276,37 @@ def macro_catalog() -> list[MacroCatalogItem]:
                 "label": raw.get("label", raw["id"]),
                 "category": raw.get("category", "Other"),
                 "units": raw.get("units", ""),
+            }
+        )
+    return out
+
+
+class EventItem(TypedDict):
+    """Metadata for one configured major market/macro event."""
+
+    date: str
+    label: str
+    description: str
+    category: str
+
+
+def events() -> list[EventItem]:
+    """Load configured major market/macro events with fallback to defaults."""
+    try:
+        raw_events = load_events().get("events", []) or []
+    except Exception:  # noqa: BLE001
+        return []
+    out: list[EventItem] = []
+    for item in raw_events:
+        if not isinstance(item, dict) or "date" not in item or "label" not in item:
+            continue
+        raw = dict(item)
+        out.append(
+            {
+                "date": str(raw["date"]),
+                "label": str(raw["label"]),
+                "description": str(raw.get("description", "")),
+                "category": str(raw.get("category", "market_shock")),
             }
         )
     return out
