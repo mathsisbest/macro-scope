@@ -703,3 +703,83 @@ def test_ratio_zscore_chart_has_extreme_bands_and_named_tokens():
 def test_ratio_zscore_chart_degrades_on_empty():
     fig = charts.ratio_zscore_chart(pd.DataFrame(), "SYM", "BEN")
     assert len(fig.data) == 0  # reference lines only, no crash
+
+
+# --- gross vs net return & cost drag attribution (R8) --------------------------------------------
+
+
+def test_attribution_chart_renders_cost_drag_in_down_color():
+    attr = pd.DataFrame(
+        {
+            "strategy": ["equal_weight", "equal_weight", "equal_weight"],
+            "symbol": ["SPY", "TLT", "(costs)"],
+            "contribution_to_return": [0.08, 0.04, -0.015],
+            "contribution_to_risk": [0.6, 0.4, 0.0],
+        }
+    )
+    fig = charts.attribution_chart(attr, "equal_weight")
+    bar = fig.data[0]
+    assert set(bar.y) == {"SPY", "TLT", "(costs)"}
+    # (costs) is styled with down color
+    cost_idx = list(bar.y).index("(costs)")
+    assert bar.marker.color[cost_idx] == charts.PALETTE["down"]
+
+
+def test_portfolio_cost_summary_computes_drag_and_share():
+    attr = pd.DataFrame(
+        {
+            "strategy": [
+                "equal_weight",
+                "equal_weight",
+                "equal_weight",
+                "sixty_forty",
+                "sixty_forty",
+            ],
+            "symbol": ["SPY", "TLT", "(costs)", "SPY", "(costs)"],
+            "contribution_to_return": [0.10, 0.05, -0.015, 0.08, -0.005],
+            "contribution_to_risk": [0.6, 0.4, 0.0, 1.0, 0.0],
+        }
+    )
+    summary = charts.portfolio_cost_summary(attr)
+    assert not summary.empty
+    assert "Equal weight" in summary.index
+    assert "60/40 benchmark" in summary.index
+    ew = summary.loc["Equal weight"]
+    assert math.isclose(ew["Gross return"], 0.15, rel_tol=1e-6)
+    assert math.isclose(ew["Cost drag"], -0.015, rel_tol=1e-6)
+    assert math.isclose(ew["Net return"], 0.135, rel_tol=1e-6)
+    assert math.isclose(ew["Cost drag %"], 0.10, rel_tol=1e-6)
+
+
+def test_portfolio_cost_summary_handles_empty():
+    assert charts.portfolio_cost_summary(pd.DataFrame()).empty
+
+
+def test_portfolio_gross_net_chart_renders_dual_traces_and_band():
+    dates = pd.bdate_range("2024-01-01", periods=5)
+    gross_df = pd.DataFrame(
+        {
+            "strategy": ["equal_weight"] * 5,
+            "date": dates,
+            "cumulative_return": [0.0, 0.01, 0.02, 0.03, 0.04],
+        }
+    )
+    net_df = pd.DataFrame(
+        {
+            "strategy": ["equal_weight"] * 5,
+            "date": dates,
+            "cumulative_return": [0.0, 0.008, 0.017, 0.026, 0.035],
+        }
+    )
+    fig = charts.portfolio_gross_net_chart(gross_df, net_df, "equal_weight")
+    assert len(fig.data) == 2
+    assert "Gross" in fig.data[0].name
+    assert "Net" in fig.data[1].name
+    assert fig.data[1].fill == "tonexty"
+    assert "Cost Drag" in fig.layout.title.text
+
+
+def test_portfolio_gross_net_chart_handles_empty():
+    fig = charts.portfolio_gross_net_chart(pd.DataFrame(), pd.DataFrame(), "equal_weight")
+    assert len(fig.data) == 0
+
