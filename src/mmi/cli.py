@@ -375,6 +375,7 @@ def _run_single_portfolio_window(
     n_boot: int,
     *,
     ml_mu_override=None,
+    regime_df=None,
 ):
     """Run a single portfolio window backtest, computing returns, stats, and attribution."""
     import pandas as pd
@@ -394,7 +395,11 @@ def _run_single_portfolio_window(
             asset_dfs=asset_dfs_macro,
         )
     results = compute.compute_portfolio_returns(
-        wad, ml_mu_panel=ml_mu_panel, window=window_id, asset_daily_full=wad
+        wad,
+        ml_mu_panel=ml_mu_panel,
+        window=window_id,
+        asset_daily_full=wad,
+        regime_df=regime_df,
     )
     n = loader.upsert("raw.portfolio_returns", results, ["window_id", "strategy", "date"])
     per_strategy, pairs = bootstrap_strategy_stats(results, window=window_id, n_boot=n_boot)
@@ -430,6 +435,17 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
         ).df()
 
         macro_wide, asset_dfs_macro = _load_portfolio_macro_context(con)
+
+        regime_df = None
+        try:
+            regime_query = con.execute(
+                "select date, regime from marts.fct_regime where symbol = 'SPY'"
+            ).df()
+            if not regime_query.empty:
+                regime_df = regime_query
+                log.info("portfolio: using SPY regime labels from marts.fct_regime")
+        except Exception as exc:
+            log.warning("no marts.fct_regime SPY rows; falling back to 63d momentum: %s", exc)
 
         btc_aligned = compute.btc_aligned_returns(asset_daily)
         valid = btc_aligned.dropna(subset=["daily_return"])
@@ -507,6 +523,7 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
                 asset_dfs_macro,
                 n_boot,
                 ml_mu_override=override,
+                regime_df=regime_df,
             )
             results_by_window[window_id] = results
             log.info("portfolio[%s]: %s rows / %s strategies", window_id, n, n_strategies)

@@ -156,3 +156,96 @@ class TestComputePortfolioReturns:
         regime_capped = res_capped[res_capped["strategy"] == "ml_regime"]
         assert not regime_capped.empty
         np.testing.assert_allclose(regime_capped["daily_return"].iloc[65:], -0.00100, atol=1e-5)
+
+    def test_ml_regime_uses_regime_df_over_momentum(self):
+        # Negative-momentum returns (63d trigger would pick the negative multiplier 1.5x),
+        # but an explicit "Low" regime_df overrides it with the positive multiplier 0.7x.
+        dates = pd.bdate_range("2020-01-01", periods=100)
+        panel_rows = []
+        for d in dates:
+            panel_rows.append({"date": d, "symbol": "SPY", "daily_return": -0.001})
+            panel_rows.append({"date": d, "symbol": "TLT", "daily_return": 0.000})
+            panel_rows.append({"date": d, "symbol": "GLD", "daily_return": 0.000})
+        panel_df = pd.DataFrame(panel_rows)
+
+        mu_rows = []
+        for d in dates:
+            mu_rows.append({"date": d, "symbol": "SPY", "mu": 0.50})
+            mu_rows.append({"date": d, "symbol": "TLT", "mu": 0.00})
+            mu_rows.append({"date": d, "symbol": "GLD", "mu": 0.00})
+        mu_df = pd.DataFrame(mu_rows)
+
+        regime_df = pd.DataFrame({"date": dates, "regime": "Low"})
+
+        res = compute_portfolio_returns(
+            panel_df,
+            ml_mu_panel=mu_df,
+            regime_mult_negative=1.5,
+            regime_mult_positive=0.7,
+            regime_df=regime_df,
+        )
+        regime = res[res["strategy"] == "ml_regime"]
+        assert not regime.empty
+        # 0.7x (regime_df "Low") instead of the momentum-driven 1.5x
+        np.testing.assert_allclose(regime["daily_return"].iloc[65:], -0.00070, atol=1e-5)
+
+    def test_ml_regime_high_regime_uses_negative_multiplier(self):
+        dates = pd.bdate_range("2020-01-01", periods=100)
+        panel_rows = []
+        for d in dates:
+            panel_rows.append({"date": d, "symbol": "SPY", "daily_return": 0.001})
+            panel_rows.append({"date": d, "symbol": "TLT", "daily_return": 0.000})
+            panel_rows.append({"date": d, "symbol": "GLD", "daily_return": 0.000})
+        panel_df = pd.DataFrame(panel_rows)
+
+        mu_rows = []
+        for d in dates:
+            mu_rows.append({"date": d, "symbol": "SPY", "mu": 0.50})
+            mu_rows.append({"date": d, "symbol": "TLT", "mu": 0.00})
+            mu_rows.append({"date": d, "symbol": "GLD", "mu": 0.00})
+        mu_df = pd.DataFrame(mu_rows)
+
+        # "High" vol regime -> negative multiplier (1.5x) even though momentum is positive
+        regime_df = pd.DataFrame({"date": dates, "regime": "High"})
+
+        res = compute_portfolio_returns(
+            panel_df,
+            ml_mu_panel=mu_df,
+            regime_mult_negative=1.5,
+            regime_mult_positive=0.7,
+            regime_df=regime_df,
+            max_leverage=2.0,
+        )
+        regime = res[res["strategy"] == "ml_regime"]
+        assert not regime.empty
+        np.testing.assert_allclose(regime["daily_return"].iloc[65:], 0.00150, atol=1e-5)
+
+    def test_regime_df_missing_dates_falls_back_to_momentum(self):
+        # regime_df covers only a prefix; later dates must fall back to momentum.
+        dates = pd.bdate_range("2020-01-01", periods=100)
+        panel_rows = []
+        for d in dates:
+            panel_rows.append({"date": d, "symbol": "SPY", "daily_return": -0.001})
+            panel_rows.append({"date": d, "symbol": "TLT", "daily_return": 0.000})
+        panel_df = pd.DataFrame(panel_rows)
+
+        mu_rows = []
+        for d in dates:
+            mu_rows.append({"date": d, "symbol": "SPY", "mu": 0.50})
+            mu_rows.append({"date": d, "symbol": "TLT", "mu": 0.00})
+        mu_df = pd.DataFrame(mu_rows)
+
+        regime_df = pd.DataFrame({"date": dates[:20], "regime": "Low"})
+
+        res = compute_portfolio_returns(
+            panel_df,
+            ml_mu_panel=mu_df,
+            regime_mult_negative=1.5,
+            regime_mult_positive=0.7,
+            regime_df=regime_df,
+            max_leverage=2.0,
+        )
+        regime = res[res["strategy"] == "ml_regime"]
+        assert not regime.empty
+        # After the regime_df prefix runs out, momentum (negative) drives 1.5x
+        np.testing.assert_allclose(regime["daily_return"].iloc[65:], -0.00150, atol=1e-5)
