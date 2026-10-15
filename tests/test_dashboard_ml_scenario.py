@@ -79,12 +79,27 @@ class TestRenderSmoke:
         monkeypatch.setattr(ml_scenario.data, "ml_forecast", lambda: _fc([]))
         monkeypatch.setattr(ml_scenario.charts, "return_forecast_table", lambda _df: fc)
         captured = {}
+
+        def _fake_scenario_chart(
+            _fc_df,
+            delta_rate_bps=0.0,
+            delta_vix=0.0,
+            delta_slope_bps=0.0,
+            delta_oil_pct=0.0,
+            height=300,
+        ):
+            captured.update(
+                rate=delta_rate_bps,
+                vix=delta_vix,
+                slope=delta_slope_bps,
+                oil=delta_oil_pct,
+                height=height,
+            )
+
         monkeypatch.setattr(
             ml_scenario.charts,
             "scenario_simulation_chart",
-            lambda _fc_df, delta_rate_bps=0.0, delta_vix=0.0, height=300: captured.update(
-                rate=delta_rate_bps, vix=delta_vix, height=height
-            ),
+            _fake_scenario_chart,
         )
 
         calls = []
@@ -92,8 +107,13 @@ class TestRenderSmoke:
 
         assert self.seen["subheaders"] == ["⚡ Interactive Macro Scenario Stress-Tester"]
         assert self.seen["dividers"] == 1
-        assert self.seen["sliders"] == {"Fed Funds Rate Shift (bps)": 0, "VIX Index Shift": 0}
-        assert captured == {"rate": 0, "vix": 0, "height": 300}
+        assert self.seen["sliders"] == {
+            "Fed Funds Rate Shift (bps)": 0,
+            "VIX Index Shift": 0,
+            "Yield Curve Slope Shock (10Y-2Y bps)": 0,
+            "Oil Price Shock (%)": 0,
+        }
+        assert captured == {"rate": 0, "vix": 0, "slope": 0, "oil": 0, "height": 300}
         assert len(calls) == 1  # the fake chart_wrapper received the figure once
 
     def test_no_chart_without_forecasts(self, monkeypatch):
@@ -116,7 +136,9 @@ class TestScenarioChartShape:
                 ("GLD", "2026-08-01", 20, 0.005, 0.001),
             ]
         )
-        fig = charts.scenario_simulation_chart(fc, delta_rate_bps=25, delta_vix=2, height=300)
+        fig = charts.scenario_simulation_chart(
+            fc, delta_rate_bps=25, delta_vix=2, delta_slope_bps=50, delta_oil_pct=10, height=300
+        )
 
         names = [tr.name for tr in fig.data]
         assert names == ["Baseline Forecast", "Simulated Macro Shock"]
@@ -124,12 +146,29 @@ class TestScenarioChartShape:
 
     def test_shock_shift_direction(self):
         fc = _return_fc([("SPY", "2026-08-01", 20, 0.01, 0.001)])
-        fig = charts.scenario_simulation_chart(fc, delta_rate_bps=25, delta_vix=2)
+        fig = charts.scenario_simulation_chart(
+            fc, delta_rate_bps=25, delta_vix=2, delta_slope_bps=50, delta_oil_pct=10
+        )
         baseline = fig.data[0].y[0]
         shocked = fig.data[1].y[0]
-        # SPY has negative rate & vix sensitivities → a hike/spike lowers the forecast.
-        assert shocked < baseline
-        assert shocked == pytest.approx(baseline + (25 / 100.0) * -0.05 + 2 * -0.008)
+        # SPY sensitivities: rate=-0.05, vix=-0.008, slope=+0.02, oil=-0.03
+        expected = (
+            baseline
+            + (25 / 100.0) * -0.05
+            + 2 * -0.008
+            + (50 / 100.0) * 0.02
+            + (10 / 100.0) * -0.03
+        )
+        assert shocked == pytest.approx(expected)
+
+    def test_yield_curve_and_oil_individual_shocks(self):
+        fc = _return_fc([("GLD", "2026-08-01", 20, 0.005, 0.001)])
+        # GLD sensitivities: slope=-0.01, oil=+0.08
+        fig = charts.scenario_simulation_chart(fc, delta_slope_bps=100, delta_oil_pct=20)
+        baseline = fig.data[0].y[0]
+        shocked = fig.data[1].y[0]
+        expected = baseline + (100 / 100.0) * -0.01 + (20 / 100.0) * 0.08
+        assert shocked == pytest.approx(expected)
 
     def test_empty_forecast_renders_placeholder(self):
         fig = charts.scenario_simulation_chart(_return_fc([]))
@@ -154,6 +193,8 @@ class TestDataShape:
         assert set(table["symbol"]) == {"SPY", "TLT"}  # non-return models filtered out
         assert table["predicted_return"].iloc[0] == pytest.approx(0.01)  # sorted desc
 
-        fig = charts.scenario_simulation_chart(table, delta_rate_bps=0, delta_vix=0)
+        fig = charts.scenario_simulation_chart(
+            table, delta_rate_bps=0, delta_vix=0, delta_slope_bps=0, delta_oil_pct=0
+        )
         assert len(fig.data) == 2
         assert list(fig.data[0].x) == ["SPY", "TLT"]

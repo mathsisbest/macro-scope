@@ -1,9 +1,9 @@
 """ML Scenario Analysis Tab Module.
 
 Interactive what-if stress-testing of the ML 20-day return forecasts against
-macro shocks (Fed Funds rate shift, VIX spike). Rendered on the ML tab, after
-the forecast section — the scenario simulator is meaningless without the
-forecasts it perturbs.
+macro shocks (Fed Funds rate shift, VIX spike, yield curve slope, oil price).
+Rendered on the ML tab, after the forecast section — the scenario simulator
+is meaningless without the forecasts it perturbs.
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ def render_ml_scenario_tab(chart_wrapper) -> None:
     st.divider()
     st.subheader("⚡ Interactive Macro Scenario Stress-Tester")
     st.caption(
-        "Simulate custom macro shocks (Fed Funds rate shift, VIX spike) "
-        "on 20-day predicted asset returns."
+        "Simulate custom macro shocks (Fed Funds rate shift, VIX spike, "
+        "yield curve slope, oil price) on 20-day predicted asset returns."
     )
     sim_col1, sim_col2 = st.columns(2)
     with sim_col1:
@@ -29,10 +29,30 @@ def render_ml_scenario_tab(chart_wrapper) -> None:
     with sim_col2:
         vix_shock = st.slider("VIX Index Shift", -10, +20, 0, step=1, key="ml_scenario_vix_shock")
 
+    sim_col3, sim_col4 = st.columns(2)
+    with sim_col3:
+        slope_shock = st.slider(
+            "Yield Curve Slope Shock (10Y-2Y bps)",
+            -100,
+            +100,
+            0,
+            step=10,
+            key="ml_scenario_slope_shock",
+        )
+    with sim_col4:
+        oil_shock = st.slider(
+            "Oil Price Shock (%)", -40, +40, 0, step=5, key="ml_scenario_oil_shock"
+        )
+
     sim_fc = charts.return_forecast_table(data.ml_forecast())
     if not sim_fc.empty:
         chart_wrapper(
             charts.scenario_simulation_chart(
-                sim_fc, delta_rate_bps=rate_shock, delta_vix=vix_shock, height=300
+                sim_fc,
+                delta_rate_bps=rate_shock,
+                delta_vix=vix_shock,
+                delta_slope_bps=slope_shock,
+                delta_oil_pct=oil_shock,
+                height=300,
             )
         )
