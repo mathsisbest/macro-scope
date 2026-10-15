@@ -16,7 +16,7 @@ where series_id not in (
     -- Labor
     'UNRATE', 'PAYEMS', 'ICSA',
     -- Rates & curve
-    'DGS10', 'DGS2', 'DGS3MO', 'T10Y2Y', 'FEDFUNDS',
+    'DGS10', 'DGS2', 'DGS3MO', 'T10Y2Y', 'FEDFUNDS', 'DFII10',
     -- Fiscal
     'GFDEGDQ188S',
     -- Money & liquidity

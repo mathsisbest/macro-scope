@@ -26,6 +26,45 @@ def sharpe(returns: np.ndarray) -> float:
     return float(np.mean(returns) / sd * np.sqrt(TRADING_DAYS))
 
 
+def calmar_ratio(ann_return: float, max_drawdown: float) -> float:
+    if max_drawdown == 0.0:
+        return 0.0
+    return float(ann_return / abs(max_drawdown))
+
+
+def max_drawdown_duration(cumulative_returns: pd.Series) -> int:
+    roll_max = cumulative_returns.cummax()
+    drawdown = cumulative_returns / roll_max - 1.0
+
+    is_dd = drawdown < 0
+    duration = 0
+    max_duration = 0
+    for val in is_dd:
+        if val:
+            duration += 1
+            if duration > max_duration:
+                max_duration = duration
+        else:
+            duration = 0
+    return max_duration
+
+
+def sharpe_diff_pvalue(returns_a: pd.Series, returns_b: pd.Series, n_boot: int = 1000) -> float:
+    a_arr = returns_a.to_numpy(dtype=float)
+    b_arr = returns_b.to_numpy(dtype=float)
+    n = len(a_arr)
+    if n < 2:
+        return 1.0
+    rng = np.random.default_rng(12345)
+    idx = stationary_bootstrap_indices(n, n_boot, 21, rng)
+    boot_a = _bootstrap_sharpe(a_arr, idx)
+    boot_b = _bootstrap_sharpe(b_arr, idx)
+    diff = boot_a - boot_b
+    obs_diff = sharpe(a_arr) - sharpe(b_arr)
+    p_val = np.mean(diff <= 0) * 2 if obs_diff > 0 else np.mean(diff >= 0) * 2
+    return min(float(p_val), 1.0)
+
+
 def stationary_bootstrap_indices(
     n: int, n_boot: int, avg_block: float, rng: np.random.Generator
 ) -> np.ndarray:
@@ -207,6 +246,9 @@ def bootstrap_strategy_stats(
     point = {s: sharpe(arrs[s]) for s in strategies}
     boot = {s: _bootstrap_sharpe(arrs[s], idx) for s in strategies}  # same idx => paired
 
+    for s in strategies:
+        point[s] = sharpe(arrs[s])
+
     per_strategy = pd.DataFrame(
         [
             {
@@ -215,6 +257,11 @@ def bootstrap_strategy_stats(
                 "sharpe": point[s],
                 "sharpe_lo": float(np.percentile(boot[s], lo_q)),
                 "sharpe_hi": float(np.percentile(boot[s], hi_q)),
+                "calmar_ratio": calmar_ratio(
+                    float(wide[s].mean() * TRADING_DAYS),
+                    float(((1 + wide[s]).cumprod() / (1 + wide[s]).cumprod().cummax() - 1.0).min()),
+                ),
+                "max_drawdown_duration": max_drawdown_duration((1 + wide[s]).cumprod()),
                 "n_obs": n,
                 "n_boot": n_boot,
                 "ci_pct": ci,
@@ -241,6 +288,7 @@ def bootstrap_strategy_stats(
                     "diff_lo": lo,
                     "diff_hi": hi,
                     "distinguishable": bool(lo > 0.0 or hi < 0.0),
+                    "p_value": sharpe_diff_pvalue(wide[a], wide[b], n_boot=n_boot),
                 }
             )
     return per_strategy, pd.DataFrame(pairs)

@@ -1,0 +1,11 @@
+events:
+  - date: "2020-03-23"
+    label: "COVID low"
+  - date: "2022-03-16"
+    label: "First rate hike"
+  - date: "2022-06-16"
+    label: "Peak inflation"
+  - date: "2023-03-10"
+    label: "SVB collapse"
+  - date: "2024-03-20"
+    label: "BOJ ends NIRP"

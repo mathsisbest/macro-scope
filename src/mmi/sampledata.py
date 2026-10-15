@@ -102,6 +102,7 @@ def _macro() -> pd.DataFrame:
         "DGS10": 4.3,
         "DGS2": 4.7,
         "DGS3MO": 5.3,
+        "DFII10": 2.0,
         "T10Y2Y": -0.2,
         "FEDFUNDS": 5.3,
         "A191RL1Q225SBEA": 2.2,
