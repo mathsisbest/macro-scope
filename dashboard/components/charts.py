@@ -24,6 +24,7 @@ from dashboard.theme import (
 )
 
 from mmi.ml.skill_gate import skill_verdict
+from mmi.settings import load_events
 
 # ---------------------------------------------------------------------------
 # Shared layout helpers
@@ -315,14 +316,115 @@ def _add_vix_spike_annotations(fig: go.Figure, spikes: pd.DataFrame) -> None:
         )
 
 
+def get_chart_events(
+    start: str | pd.Timestamp | None = None,
+    end: str | pd.Timestamp | None = None,
+    events_list: list[dict[str, str]] | None = None,
+) -> list[dict[str, str]]:
+    """Return major market/macro events within optional [start, end] date window.
+
+    Loads dynamically from config/events.yml (via load_events) when events_list is None.
+    """
+    if events_list is None:
+        try:
+            raw = load_events().get("events", []) or []
+        except Exception:  # noqa: BLE001
+            raw = []
+    else:
+        raw = events_list
+
+    out: list[dict[str, str]] = []
+    start_ts = pd.Timestamp(start) if start is not None else None
+    end_ts = pd.Timestamp(end) if end is not None else None
+
+    for ev in raw:
+        if not isinstance(ev, dict) or "date" not in ev or "label" not in ev:
+            continue
+        try:
+            ev_ts = pd.Timestamp(ev["date"])
+        except (ValueError, TypeError):
+            continue
+
+        if start_ts is not None and ev_ts < start_ts:
+            continue
+        if end_ts is not None and ev_ts > end_ts:
+            continue
+
+        out.append(
+            {
+                "date": str(ev["date"]),
+                "label": str(ev["label"]),
+                "description": str(ev.get("description", "")),
+                "category": str(ev.get("category", "market_shock")),
+            }
+        )
+    return out
+
+
+def add_event_annotations(
+    fig: go.Figure,
+    events_list: list[dict[str, str]] | None = None,
+    start: str | pd.Timestamp | None = None,
+    end: str | pd.Timestamp | None = None,
+) -> go.Figure:
+    """Apply vertical annotation lines and milestone markers for major market/macro events.
+
+    Each event adds a muted dashed vertical line and a label marker at the top of the chart.
+    """
+    evs = get_chart_events(start=start, end=end, events_list=events_list)
+    if not evs:
+        return fig
+
+    cat_colors = {
+        "monetary_policy": PALETTE["accent"],
+        "crisis": PALETTE["down"],
+        "market_shock": SERIES_VOL,
+        "geopolitics": PALETTE["muted"],
+    }
+
+    for ev in evs:
+        date_val = ev["date"]
+        label = ev["label"]
+        cat = ev.get("category", "market_shock")
+        color = cat_colors.get(cat, PALETTE["muted"])
+
+        fig.add_vline(
+            x=date_val,
+            line_color=PALETTE["muted"],
+            line_dash="dot",
+            line_width=1,
+            opacity=0.6,
+        )
+        fig.add_annotation(
+            x=date_val,
+            y=1.0,
+            yref="paper",
+            text=label,
+            showarrow=False,
+            yanchor="bottom",
+            font=dict(size=8, color=color),
+        )
+    return fig
+
+
 # ---------------------------------------------------------------------------
 # Markets tab
 # ---------------------------------------------------------------------------
 
 
-def price_chart(df: pd.DataFrame, symbol: str, regime_df: pd.DataFrame | None = None) -> go.Figure:
+def price_chart(
+    df: pd.DataFrame,
+    symbol: str,
+    regime_df: pd.DataFrame | None = None,
+    events: bool = False,
+    events_list: list[dict[str, str]] | None = None,
+) -> go.Figure:
     fig = go.Figure()
     _add_regime_shading(fig, regime_df, symbol=symbol)
+    if events and not df.empty and "date" in df.columns:
+        lo = df["date"].min()
+        hi = df["date"].max()
+        add_event_annotations(fig, events_list=events_list, start=lo, end=hi)
     fig.add_scatter(
         x=df["date"],
         y=df["close"],
@@ -389,9 +491,19 @@ def volume_bars(df: pd.DataFrame) -> pd.Series | None:
     return vol
 
 
-def vol_chart(df: pd.DataFrame, symbol: str, regime_df: pd.DataFrame | None = None) -> go.Figure:
+def vol_chart(
+    df: pd.DataFrame,
+    symbol: str,
+    regime_df: pd.DataFrame | None = None,
+    events: bool = False,
+    events_list: list[dict[str, str]] | None = None,
+) -> go.Figure:
     fig = go.Figure()
     _add_regime_shading(fig, regime_df, symbol=symbol)
+    if events and not df.empty and "date" in df.columns:
+        lo = df["date"].min()
+        hi = df["date"].max()
+        add_event_annotations(fig, events_list=events_list, start=lo, end=hi)
     fig.add_scatter(
         x=df["date"],
         y=df["vol_20d"],
@@ -540,6 +652,8 @@ def rebased_performance_chart(
     perf_long: pd.DataFrame,
     height: int = HEIGHT_TALL,
     regime_df: pd.DataFrame | None = None,
+    events: bool = False,
+    events_list: list[dict[str, str]] | None = None,
 ) -> go.Figure:
     """One class-coloured line per symbol over the window, each rebased to 0% at the start.
 
@@ -548,6 +662,10 @@ def rebased_performance_chart(
     the Plotly colourway cycle when ``asset_class`` is missing or None in the data."""
     fig = go.Figure()
     _add_regime_shading(fig, regime_df)
+    if events and not perf_long.empty and "date" in perf_long.columns:
+        lo = perf_long["date"].min()
+        hi = perf_long["date"].max()
+        add_event_annotations(fig, events_list=events_list, start=lo, end=hi)
     colorway = PALETTE["series"]
     if not perf_long.empty:
         for idx, (symbol, grp) in enumerate(perf_long.groupby("symbol", sort=False)):
@@ -759,6 +877,8 @@ def macro_chart(
     units: str = "",
     height: int | None = None,
     spikes: pd.DataFrame | None = None,
+    events: bool = False,
+    events_list: list[dict[str, str]] | None = None,
 ) -> go.Figure:
     fig = go.Figure()
     # A sparse series — quarterly data, or any series viewed over a short date range — reads as a
@@ -781,13 +901,21 @@ def macro_chart(
     # derived from data; None/empty degrades to the plain chart.
     if spikes is not None and not spikes.empty and {"date", "zscore"} <= set(spikes.columns):
         _add_vix_spike_annotations(fig, spikes)
+    if events and not df.empty and "date" in df.columns:
+        lo = df["date"].min()
+        hi = df["date"].max()
+        add_event_annotations(fig, events_list=events_list, start=lo, end=hi)
     title = f"{label} · {units}" if units else label
     fig.update_layout(title=dict(text=title, font=_TITLE_FONT))
     _apply_axis_fonts(fig)
     return style_fig(fig, height=height or HEIGHT_DEFAULT)
 
 
-def yield_curve_chart(df: pd.DataFrame) -> go.Figure:
+def yield_curve_chart(
+    df: pd.DataFrame,
+    events: bool = False,
+    events_list: list[dict[str, str]] | None = None,
+) -> go.Figure:
     """Yield-curve spread — canonical 10Y−3M when available, else the 10Y−2Y proxy.
 
     The recession-risk panel uses the 10Y−3M spread (NY Fed / Estrella-Mishkin canonical), so this
@@ -807,6 +935,10 @@ def yield_curve_chart(df: pd.DataFrame) -> go.Figure:
         hovertemplate="%{x|%Y-%m-%d}: %{y:+.2f} pp<extra></extra>",
     )
     fig.add_hline(y=0, line_color=PALETTE["down"], line_dash="dot")
+    if events and not df.empty and "date" in df.columns:
+        lo = df["date"].min()
+        hi = df["date"].max()
+        add_event_annotations(fig, events_list=events_list, start=lo, end=hi)
     fig.update_layout(
         title=dict(
             text=f"Yield-curve spread ({label}) — inversion below 0",
@@ -1602,6 +1734,8 @@ def portfolio_cumulative_chart(
     height: int = HEIGHT_TALL,
     regime_df: pd.DataFrame | None = None,
     min_gap_days: int | None = REGIME_BOUNDARY_MIN_GAP_DAYS,
+    events: bool = False,
+    events_list: list[dict[str, str]] | None = None,
 ) -> go.Figure:
     """Cumulative return by strategy, with optional volatility-regime boundary markers.
 
@@ -1620,6 +1754,10 @@ def portfolio_cumulative_chart(
         _add_regime_boundary_annotations(
             fig, regime_boundary_dates(regime_df, start=lo, end=hi, min_gap_days=min_gap_days)
         )
+    if events and not df.empty and "date" in df.columns:
+        lo = pd.Timestamp(df["date"].min())
+        hi = pd.Timestamp(df["date"].max())
+        add_event_annotations(fig, events_list=events_list, start=lo, end=hi)
     fig.update_layout(
         title=dict(
             text="Cumulative return by strategy (vs 60/40 benchmark)",
@@ -1771,9 +1909,18 @@ def return_significance_verdict(pairs: pd.DataFrame) -> str:
 
 
 def attribution_chart(attr: pd.DataFrame, strategy: str) -> go.Figure:
-    """Horizontal bar of each asset's contribution to a strategy's return (greens up, reds down)."""
+    """Horizontal bar of each asset's contribution to a strategy's return (greens up, reds down).
+
+    Cost drag row '(costs)' is styled with a distinct muted down color so transaction friction
+    is visually distinguished from asset returns.
+    """
     df = attr[attr["strategy"] == strategy].sort_values("contribution_to_return")
-    colors = [PALETTE["up"] if v >= 0 else PALETTE["down"] for v in df["contribution_to_return"]]
+    colors = []
+    for row in df.itertuples():
+        if row.symbol in ("(costs)", "__cost__"):
+            colors.append(PALETTE["down"])
+        else:
+            colors.append(PALETTE["up"] if row.contribution_to_return >= 0 else PALETTE["down"])
     fig = go.Figure()
     fig.add_bar(
         x=df["contribution_to_return"],
@@ -1784,10 +1931,92 @@ def attribution_chart(attr: pd.DataFrame, strategy: str) -> go.Figure:
     fig.update_xaxes(tickformat=".1%")
     label = _STRATEGY_LABELS.get(strategy, strategy)
     fig.update_layout(
-        title=dict(text=f"{label} — return contribution by asset", font=_TITLE_FONT),
+        title=dict(text=f"{label} — return contribution by asset & cost drag", font=_TITLE_FONT),
     )
     _apply_axis_fonts(fig)
     return style_fig(fig, height=HEIGHT_MEDIUM + 20)
+
+
+def portfolio_gross_net_chart(
+    gross_df: pd.DataFrame,
+    net_df: pd.DataFrame,
+    strategy: str,
+    height: int = HEIGHT_MEDIUM + 20,
+) -> go.Figure:
+    """Dual-line cumulative return chart comparing gross return vs net return for a strategy.
+
+    Shades the area between gross and net lines to visually highlight transaction cost drag.
+    """
+    fig = go.Figure()
+    label = _STRATEGY_LABELS.get(strategy, strategy)
+    g_grp = (
+        gross_df[gross_df["strategy"] == strategy].sort_values("date")
+        if not gross_df.empty
+        else pd.DataFrame()
+    )
+    n_grp = (
+        net_df[net_df["strategy"] == strategy].sort_values("date")
+        if not net_df.empty
+        else pd.DataFrame()
+    )
+
+    if not g_grp.empty and "cumulative_return" in g_grp.columns:
+        fig.add_scatter(
+            x=g_grp["date"],
+            y=g_grp["cumulative_return"],
+            name=f"{label} (Gross)",
+            line=dict(color=PALETTE["accent"], width=2),
+        )
+    if not n_grp.empty and "cumulative_return" in n_grp.columns:
+        fig.add_scatter(
+            x=n_grp["date"],
+            y=n_grp["cumulative_return"],
+            name=f"{label} (Net)",
+            line=dict(color=SERIES_RETURN, width=2, dash="dash"),
+            fill="tonexty",
+            fillcolor="rgba(255, 93, 108, 0.12)",  # faint cost drag band
+        )
+
+    fig.update_layout(
+        title=dict(text=f"{label} — Gross vs Net Cumulative Return (Cost Drag)", font=_TITLE_FONT),
+    )
+    fig.update_yaxes(tickformat=".0%")
+    _apply_axis_fonts(fig)
+    return style_fig(fig, height=height)
+
+
+def portfolio_cost_summary(attr: pd.DataFrame) -> pd.DataFrame:
+    """Summarise gross return, net return, cost drag, and cost drag share per strategy."""
+    cols = ["Strategy", "Gross return", "Net return", "Cost drag", "Cost drag %"]
+    if attr.empty:
+        return pd.DataFrame(columns=cols)
+    rows = []
+    for strat in sorted(attr["strategy"].unique()):
+        grp = attr[attr["strategy"] == strat]
+        cost_row = grp[grp["symbol"].isin(["(costs)", "__cost__"])]
+        cost_drag = (
+            float(cost_row["contribution_to_return"].iloc[0]) if not cost_row.empty else 0.0
+        )
+        # Asset rows (excluding cost row)
+        asset_rows = grp[~grp["symbol"].isin(["(costs)", "__cost__"])]
+        if "strategy_gross_return" in grp.columns and grp["strategy_gross_return"].notna().any():
+            gross_ret = float(grp["strategy_gross_return"].dropna().iloc[0])
+        else:
+            gross_ret = (
+                float(asset_rows["contribution_to_return"].sum()) if not asset_rows.empty else 0.0
+            )
+        net_ret = gross_ret + cost_drag
+        cost_pct = abs(cost_drag) / gross_ret if gross_ret > 0 else 0.0
+        rows.append(
+            {
+                "Strategy": _STRATEGY_LABELS.get(strat, strat),
+                "Gross return": gross_ret,
+                "Net return": net_ret,
+                "Cost drag": cost_drag,
+                "Cost drag %": cost_pct,
+            }
+        )
+    return pd.DataFrame(rows).set_index("Strategy")
 
 
 def regime_sharpe_chart(regime: pd.DataFrame) -> go.Figure:
