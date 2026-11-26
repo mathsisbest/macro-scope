@@ -4,10 +4,10 @@
       "rows": 9
     },
     "fct_asset_daily": {
-      "rows": 54189
+      "rows": 54192
     },
     "fct_macro_indicator": {
-      "rows": 93348
+      "rows": 93357
     },
     "fct_market_macro": {
       "rows": 8515
@@ -34,8 +34,8 @@
       "rows": 0
     },
     "fct_recession_risk": {
-      "rows": 12616
+      "rows": 12617
     }
   },
-  "generated_at": "2026-11-25T16:51:12.395986+00:00"
+  "generated_at": "2026-11-26T16:27:21.893816+00:00"
 }
